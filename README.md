@@ -46,7 +46,6 @@ go mod tidy
 make run
 ```
 
-如果本地没有 MySQL，服务会自动降级到 SQLite（默认文件：`./testpilot_demo.db`）。
 Redis 不可用时仅关闭缓存，不影响主流程。
 
 手动补种子：
