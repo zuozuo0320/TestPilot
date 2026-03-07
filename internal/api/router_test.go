@@ -84,6 +84,21 @@ func TestAuthRequired(t *testing.T) {
 	}
 }
 
+func TestLogin(t *testing.T) {
+	router, _ := setupTestRouter(t)
+
+	body := map[string]any{"email": "tester@test.local"}
+	payload, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected login 200, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+}
+
 func TestRunAndDefectFlow(t *testing.T) {
 	router, _ := setupTestRouter(t)
 
@@ -162,6 +177,7 @@ func TestProjectDemoOverview(t *testing.T) {
 
 	overviewReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/demo-overview", nil)
 	overviewReq.Header.Set("X-User-ID", "2")
+	overviewReq.Header.Set("Origin", "http://localhost:5173")
 	overviewResp := httptest.NewRecorder()
 	router.ServeHTTP(overviewResp, overviewReq)
 
@@ -188,5 +204,9 @@ func TestProjectDemoOverview(t *testing.T) {
 	}
 	if qualityGate["status"] == nil {
 		t.Fatalf("missing quality gate status")
+	}
+
+	if got := overviewResp.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Fatalf("expected CORS allow origin, got %q", got)
 	}
 }

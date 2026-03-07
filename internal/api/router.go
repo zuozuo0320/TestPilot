@@ -21,18 +21,27 @@ import (
 
 const currentUserKey = "current-user"
 
+var defaultAllowedOrigins = []string{
+	"http://localhost:5173",
+	"http://127.0.0.1:5173",
+	"http://localhost:3000",
+	"http://127.0.0.1:3000",
+}
+
 type Dependencies struct {
-	DB       *gorm.DB
-	Redis    *redis.Client
-	Logger   *slog.Logger
-	Executor *execution.MockExecutor
+	DB             *gorm.DB
+	Redis          *redis.Client
+	Logger         *slog.Logger
+	Executor       *execution.MockExecutor
+	AllowedOrigins string
 }
 
 type API struct {
-	db       *gorm.DB
-	redis    *redis.Client
-	logger   *slog.Logger
-	executor *execution.MockExecutor
+	db             *gorm.DB
+	redis          *redis.Client
+	logger         *slog.Logger
+	executor       *execution.MockExecutor
+	allowedOrigins []string
 }
 
 type createUserRequest struct {
@@ -81,6 +90,10 @@ type createDefectRequest struct {
 	Severity    string `json:"severity"`
 }
 
+type loginRequest struct {
+	Email string `json:"email"`
+}
+
 func NewRouter(deps Dependencies) *gin.Engine {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
@@ -90,18 +103,21 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	}
 
 	api := &API{
-		db:       deps.DB,
-		redis:    deps.Redis,
-		logger:   deps.Logger,
-		executor: deps.Executor,
+		db:             deps.DB,
+		redis:          deps.Redis,
+		logger:         deps.Logger,
+		executor:       deps.Executor,
+		allowedOrigins: parseAllowedOrigins(deps.AllowedOrigins),
 	}
 
 	router := gin.New()
-	router.Use(gin.Recovery(), api.requestLogger())
+	router.Use(gin.Recovery(), api.corsMiddleware(), api.requestLogger())
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	router.POST("/api/v1/auth/login", api.login)
 
 	v1 := router.Group("/api/v1")
 	v1.Use(api.authMiddleware())
@@ -159,6 +175,27 @@ func (a *API) requestLogger() gin.HandlerFunc {
 	}
 }
 
+func (a *API) corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if origin != "" && a.isAllowedOrigin(origin) {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, X-User-ID")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			c.Header("Vary", "Origin")
+		}
+
+		if c.Request.Method == http.MethodOptions {
+			c.Status(http.StatusNoContent)
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func (a *API) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userIDText := c.GetHeader("X-User-ID")
@@ -185,6 +222,32 @@ func (a *API) authMiddleware() gin.HandlerFunc {
 		c.Set(currentUserKey, user)
 		c.Next()
 	}
+}
+
+func (a *API) login(c *gin.Context) {
+	var req loginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" {
+		respondError(c, http.StatusBadRequest, "email is required")
+		return
+	}
+
+	var user model.User
+	if err := a.db.Where("email = ?", email).First(&user).Error; err != nil {
+		respondError(c, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token":   fmt.Sprintf("demo-user-%d", user.ID),
+		"user_id": user.ID,
+		"user":    user,
+	})
 }
 
 func (a *API) listUsers(c *gin.Context) {
@@ -1012,4 +1075,32 @@ func uniqueUint(values []uint) []uint {
 
 func isNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+func parseAllowedOrigins(raw string) []string {
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, p := range parts {
+		item := strings.TrimSpace(p)
+		if item == "" {
+			continue
+		}
+		origins = append(origins, item)
+	}
+	if len(origins) == 0 {
+		return append([]string(nil), defaultAllowedOrigins...)
+	}
+	return origins
+}
+
+func (a *API) isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	for _, allowed := range a.allowedOrigins {
+		if allowed == "*" || strings.EqualFold(allowed, origin) {
+			return true
+		}
+	}
+	return false
 }
