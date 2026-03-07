@@ -26,6 +26,8 @@ type Config struct {
 	RedisDB            int
 	AutoSeed           bool
 	RunFailRate        float64
+	CORSAllowOrigins   string
+	SQLitePath         string
 }
 
 func Load() Config {
@@ -47,6 +49,8 @@ func Load() Config {
 		RedisDB:            getEnvInt("REDIS_DB", 0),
 		AutoSeed:           getEnvBool("AUTO_SEED", false),
 		RunFailRate:        getEnvFloat("RUN_FAIL_RATE", 0.25),
+		CORSAllowOrigins:   getEnv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"),
+		SQLitePath:         getEnv("SQLITE_PATH", "./testpilot_demo.db"),
 	}
 }
 

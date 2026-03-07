@@ -28,6 +28,7 @@ make docker-up
 
 - API: `http://localhost:8080`
 - Health: `GET /health`
+- CORS 默认允许前端本地开发源：`http://localhost:5173`、`http://127.0.0.1:5173`、`http://localhost:3000`、`http://127.0.0.1:3000`
 
 停止并清理：
 
@@ -44,6 +45,9 @@ cp .env.example .env
 go mod tidy
 make run
 ```
+
+如果本地没有 MySQL，服务会自动降级到 SQLite（默认文件：`./testpilot_demo.db`）。
+Redis 不可用时仅关闭缓存，不影响主流程。
 
 手动补种子：
 

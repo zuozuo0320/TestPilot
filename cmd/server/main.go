@@ -21,8 +21,12 @@ func main() {
 
 	db, err := store.NewMySQL(cfg, logger)
 	if err != nil {
-		logger.Error("mysql init failed", "error", err)
-		os.Exit(1)
+		logger.Warn("mysql init failed, fallback to sqlite", "error", err)
+		db, err = store.NewSQLite(cfg, logger)
+		if err != nil {
+			logger.Error("sqlite init failed", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	if err := model.AutoMigrate(db); err != nil {
@@ -69,6 +73,7 @@ func main() {
 		Redis:    redisClient,
 		Logger:   logger,
 		Executor: execution.NewMockExecutor(logger, cfg.RunFailRate),
+		AllowedOrigins: cfg.CORSAllowOrigins,
 	})
 
 	server := &http.Server{
