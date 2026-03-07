@@ -53,13 +53,20 @@ type Requirement struct {
 }
 
 type TestCase struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	ProjectID uint      `json:"project_id" gorm:"not null;index;uniqueIndex:idx_project_testcase_title"`
-	Title     string    `json:"title" gorm:"size:200;not null;uniqueIndex:idx_project_testcase_title"`
-	Steps     string    `json:"steps" gorm:"type:text"`
-	Priority  string    `json:"priority" gorm:"size:20;default:medium"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	ProjectID    uint      `json:"project_id" gorm:"not null;index;uniqueIndex:idx_project_testcase_title"`
+	Title        string    `json:"title" gorm:"size:200;not null;uniqueIndex:idx_project_testcase_title"`
+	Level        string    `json:"level" gorm:"size:10;default:P1"`
+	ReviewResult string    `json:"review_result" gorm:"size:30;default:未评审"`
+	ExecResult   string    `json:"exec_result" gorm:"size:30;default:未执行"`
+	ModulePath   string    `json:"module_path" gorm:"size:255;default:/未分类"`
+	Tags         string    `json:"tags" gorm:"size:255"`
+	Steps        string    `json:"steps" gorm:"type:text"`
+	Priority     string    `json:"priority" gorm:"size:20;default:medium"`
+	CreatedBy    uint      `json:"created_by" gorm:"not null;default:0;index"`
+	UpdatedBy    uint      `json:"updated_by" gorm:"not null;default:0;index"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type Script struct {

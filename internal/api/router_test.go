@@ -162,9 +162,14 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	router, _ := setupTestRouter(t)
 
 	createPayload := map[string]any{
-		"title":    "Login success case",
-		"steps":    "open page -> input -> submit",
-		"priority": "high",
+		"title":         "Login success case",
+		"level":         "P0",
+		"review_result": "未评审",
+		"exec_result":   "未执行",
+		"module_path":   "/登录",
+		"tags":          "smoke,auth",
+		"steps":         "open page -> input -> submit",
+		"priority":      "high",
 	}
 	createBody, _ := json.Marshal(createPayload)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/testcases", bytes.NewReader(createBody))
@@ -210,10 +215,33 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	if len(listBody.Items) == 0 {
 		t.Fatalf("expected at least one item")
 	}
+	if listBody.Items[0].Title == "" {
+		t.Fatalf("expected title field")
+	}
+	if listBody.Items[0].Level == "" {
+		t.Fatalf("expected level field")
+	}
+	if listBody.Items[0].ReviewResult == "" {
+		t.Fatalf("expected review_result field")
+	}
+	if listBody.Items[0].ExecResult == "" {
+		t.Fatalf("expected exec_result field")
+	}
+	if listBody.Items[0].ModulePath == "" {
+		t.Fatalf("expected module_path field")
+	}
+	if listBody.Items[0].Tags == "" {
+		t.Fatalf("expected tags field")
+	}
 
 	updatePayload := map[string]any{
-		"title":    "Login success case updated",
-		"priority": "medium",
+		"title":         "Login success case updated",
+		"level":         "P1",
+		"review_result": "已通过",
+		"exec_result":   "成功",
+		"module_path":   "/登录/主流程",
+		"tags":          "smoke",
+		"priority":      "medium",
 	}
 	updateBody, _ := json.Marshal(updatePayload)
 	updateReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/projects/1/testcases/%d", created.ID), bytes.NewReader(updateBody))
@@ -231,6 +259,21 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	}
 	if updated.Title != "Login success case updated" {
 		t.Fatalf("unexpected updated title: %s", updated.Title)
+	}
+	if updated.Level != "P1" {
+		t.Fatalf("unexpected updated level: %s", updated.Level)
+	}
+	if updated.ReviewResult != "已通过" {
+		t.Fatalf("unexpected updated review_result: %s", updated.ReviewResult)
+	}
+	if updated.ExecResult != "成功" {
+		t.Fatalf("unexpected updated exec_result: %s", updated.ExecResult)
+	}
+	if updated.ModulePath != "/登录/主流程" {
+		t.Fatalf("unexpected updated module_path: %s", updated.ModulePath)
+	}
+	if updated.Tags != "smoke" {
+		t.Fatalf("unexpected updated tags: %s", updated.Tags)
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/projects/1/testcases/%d", created.ID), nil)

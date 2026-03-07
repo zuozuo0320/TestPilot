@@ -55,8 +55,32 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 	}
 
 	testCases := []model.TestCase{
-		{ProjectID: project.ID, Title: "TC-LOGIN-SUCCESS", Steps: "1. open login page 2. input valid creds 3. submit", Priority: "high"},
-		{ProjectID: project.ID, Title: "TC-ORDER-CREATE", Steps: "1. add cart 2. checkout 3. confirm", Priority: "medium"},
+		{
+			ProjectID:    project.ID,
+			Title:        "TC-LOGIN-SUCCESS",
+			Level:        "P0",
+			ReviewResult: "已通过",
+			ExecResult:   "成功",
+			ModulePath:   "/登录",
+			Tags:         "smoke,auth",
+			Steps:        "1. open login page 2. input valid creds 3. submit",
+			Priority:     "high",
+			CreatedBy:    users[0].ID,
+			UpdatedBy:    users[1].ID,
+		},
+		{
+			ProjectID:    project.ID,
+			Title:        "TC-ORDER-CREATE",
+			Level:        "P1",
+			ReviewResult: "未评审",
+			ExecResult:   "未执行",
+			ModulePath:   "/内容/文章",
+			Tags:         "regression",
+			Steps:        "1. add cart 2. checkout 3. confirm",
+			Priority:     "medium",
+			CreatedBy:    users[1].ID,
+			UpdatedBy:    users[1].ID,
+		},
 	}
 	for i := range testCases {
 		if err := db.Where(model.TestCase{ProjectID: project.ID, Title: testCases[i].Title}).

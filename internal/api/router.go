@@ -66,15 +66,25 @@ type createRequirementRequest struct {
 }
 
 type createTestCaseRequest struct {
-	Title    string `json:"title"`
-	Steps    string `json:"steps"`
-	Priority string `json:"priority"`
+	Title        string `json:"title"`
+	Level        string `json:"level"`
+	ReviewResult string `json:"review_result"`
+	ExecResult   string `json:"exec_result"`
+	ModulePath   string `json:"module_path"`
+	Tags         string `json:"tags"`
+	Steps        string `json:"steps"`
+	Priority     string `json:"priority"`
 }
 
 type updateTestCaseRequest struct {
-	Title    *string `json:"title"`
-	Steps    *string `json:"steps"`
-	Priority *string `json:"priority"`
+	Title        *string `json:"title"`
+	Level        *string `json:"level"`
+	ReviewResult *string `json:"review_result"`
+	ExecResult   *string `json:"exec_result"`
+	ModulePath   *string `json:"module_path"`
+	Tags         *string `json:"tags"`
+	Steps        *string `json:"steps"`
+	Priority     *string `json:"priority"`
 }
 
 type createScriptRequest struct {
@@ -500,8 +510,37 @@ func (a *API) createTestCase(c *gin.Context) {
 	if priority == "" {
 		priority = "medium"
 	}
+	level := strings.ToUpper(strings.TrimSpace(req.Level))
+	if level == "" {
+		level = "P1"
+	}
+	reviewResult := strings.TrimSpace(req.ReviewResult)
+	if reviewResult == "" {
+		reviewResult = "未评审"
+	}
+	execResult := strings.TrimSpace(req.ExecResult)
+	if execResult == "" {
+		execResult = "未执行"
+	}
+	modulePath := strings.TrimSpace(req.ModulePath)
+	if modulePath == "" {
+		modulePath = "/未分类"
+	}
+	tags := strings.TrimSpace(req.Tags)
 
-	entity := model.TestCase{ProjectID: projectID, Title: strings.TrimSpace(req.Title), Steps: strings.TrimSpace(req.Steps), Priority: priority}
+	entity := model.TestCase{
+		ProjectID:    projectID,
+		Title:        strings.TrimSpace(req.Title),
+		Level:        level,
+		ReviewResult: reviewResult,
+		ExecResult:   execResult,
+		ModulePath:   modulePath,
+		Tags:         tags,
+		Steps:        strings.TrimSpace(req.Steps),
+		Priority:     priority,
+		CreatedBy:    user.ID,
+		UpdatedBy:    user.ID,
+	}
 	if err := a.db.Create(&entity).Error; err != nil {
 		if isDuplicateError(err) {
 			respondError(c, http.StatusConflict, "testcase already exists")
@@ -530,7 +569,11 @@ func (a *API) listTestCases(c *gin.Context) {
 	query := a.db.Model(&model.TestCase{}).Where("project_id = ?", projectID)
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		query = query.Where("title LIKE ? OR steps LIKE ?", like, like)
+		if idKeyword, err := strconv.Atoi(keyword); err == nil && idKeyword > 0 {
+			query = query.Where("id = ? OR title LIKE ? OR tags LIKE ?", idKeyword, like, like)
+		} else {
+			query = query.Where("title LIKE ? OR tags LIKE ?", like, like)
+		}
 	}
 
 	var total int64
@@ -589,6 +632,37 @@ func (a *API) updateTestCase(c *gin.Context) {
 			return
 		}
 		updates["title"] = title
+	}
+	if req.Level != nil {
+		level := strings.ToUpper(strings.TrimSpace(*req.Level))
+		if level == "" {
+			level = "P1"
+		}
+		updates["level"] = level
+	}
+	if req.ReviewResult != nil {
+		reviewResult := strings.TrimSpace(*req.ReviewResult)
+		if reviewResult == "" {
+			reviewResult = "未评审"
+		}
+		updates["review_result"] = reviewResult
+	}
+	if req.ExecResult != nil {
+		execResult := strings.TrimSpace(*req.ExecResult)
+		if execResult == "" {
+			execResult = "未执行"
+		}
+		updates["exec_result"] = execResult
+	}
+	if req.ModulePath != nil {
+		modulePath := strings.TrimSpace(*req.ModulePath)
+		if modulePath == "" {
+			modulePath = "/未分类"
+		}
+		updates["module_path"] = modulePath
+	}
+	if req.Tags != nil {
+		updates["tags"] = strings.TrimSpace(*req.Tags)
 	}
 	if req.Steps != nil {
 		updates["steps"] = strings.TrimSpace(*req.Steps)
