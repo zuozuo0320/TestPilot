@@ -87,7 +87,7 @@ func TestAuthRequired(t *testing.T) {
 func TestLogin(t *testing.T) {
 	router, _ := setupTestRouter(t)
 
-	body := map[string]any{"email": "tester@test.local"}
+	body := map[string]any{"email": "tester@test.local", "password": "TestPilot@2026"}
 	payload, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")

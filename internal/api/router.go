@@ -91,7 +91,8 @@ type createDefectRequest struct {
 }
 
 type loginRequest struct {
-	Email string `json:"email"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 func NewRouter(deps Dependencies) *gin.Engine {
@@ -232,13 +233,20 @@ func (a *API) login(c *gin.Context) {
 	}
 
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	if email == "" {
-		respondError(c, http.StatusBadRequest, "email is required")
+	password := strings.TrimSpace(req.Password)
+	if email == "" || password == "" {
+		respondError(c, http.StatusBadRequest, "email/password is required")
 		return
 	}
 
 	var user model.User
 	if err := a.db.Where("email = ?", email).First(&user).Error; err != nil {
+		respondError(c, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	// Demo password strategy: same fixed password for seeded accounts.
+	if password != "TestPilot@2026" {
 		respondError(c, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
