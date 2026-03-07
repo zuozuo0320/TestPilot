@@ -198,10 +198,20 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	}
 
 	var listBody struct {
-		Items    []model.TestCase `json:"items"`
-		Total    int64            `json:"total"`
-		Page     int              `json:"page"`
-		PageSize int              `json:"pageSize"`
+		Items []struct {
+			ID            uint   `json:"id"`
+			Title         string `json:"title"`
+			Level         string `json:"level"`
+			ReviewResult  string `json:"review_result"`
+			ExecResult    string `json:"exec_result"`
+			ModulePath    string `json:"module_path"`
+			Tags          string `json:"tags"`
+			CreatedByName string `json:"created_by_name"`
+			UpdatedByName string `json:"updated_by_name"`
+		} `json:"items"`
+		Total    int64 `json:"total"`
+		Page     int   `json:"page"`
+		PageSize int   `json:"pageSize"`
 	}
 	if err := json.Unmarshal(listResp.Body.Bytes(), &listBody); err != nil {
 		t.Fatalf("parse list response failed: %v", err)
@@ -232,6 +242,31 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	}
 	if listBody.Items[0].Tags == "" {
 		t.Fatalf("expected tags field")
+	}
+	if listBody.Items[0].CreatedByName == "" {
+		t.Fatalf("expected created_by_name field")
+	}
+	if listBody.Items[0].UpdatedByName == "" {
+		t.Fatalf("expected updated_by_name field")
+	}
+
+	listSortReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/testcases?page=1&pageSize=10&sortBy=id&sortOrder=asc", nil)
+	listSortReq.Header.Set("X-User-ID", "2")
+	listSortResp := httptest.NewRecorder()
+	router.ServeHTTP(listSortResp, listSortReq)
+	if listSortResp.Code != http.StatusOK {
+		t.Fatalf("expected sorted list 200, got %d, body=%s", listSortResp.Code, listSortResp.Body.String())
+	}
+	var sortedBody struct {
+		Items []struct {
+			ID uint `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listSortResp.Body.Bytes(), &sortedBody); err != nil {
+		t.Fatalf("parse sorted list response failed: %v", err)
+	}
+	if len(sortedBody.Items) >= 2 && sortedBody.Items[0].ID > sortedBody.Items[1].ID {
+		t.Fatalf("expected id asc sort")
 	}
 
 	updatePayload := map[string]any{

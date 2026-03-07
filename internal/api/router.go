@@ -87,6 +87,25 @@ type updateTestCaseRequest struct {
 	Priority     *string `json:"priority"`
 }
 
+type testCaseListItem struct {
+	ID            uint      `json:"id"`
+	ProjectID     uint      `json:"project_id"`
+	Title         string    `json:"title"`
+	Level         string    `json:"level"`
+	ReviewResult  string    `json:"review_result"`
+	ExecResult    string    `json:"exec_result"`
+	ModulePath    string    `json:"module_path"`
+	Tags          string    `json:"tags"`
+	Steps         string    `json:"steps"`
+	Priority      string    `json:"priority"`
+	CreatedBy     uint      `json:"created_by"`
+	CreatedByName string    `json:"created_by_name"`
+	UpdatedBy     uint      `json:"updated_by"`
+	UpdatedByName string    `json:"updated_by_name"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type createScriptRequest struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
@@ -565,32 +584,66 @@ func (a *API) listTestCases(c *gin.Context) {
 		pageSize = 100
 	}
 	keyword := strings.TrimSpace(c.Query("keyword"))
+	sortBy := strings.TrimSpace(c.Query("sortBy"))
+	sortOrder := strings.ToLower(strings.TrimSpace(c.Query("sortOrder")))
+	if sortOrder != "asc" {
+		sortOrder = "desc"
+	}
 
-	query := a.db.Model(&model.TestCase{}).Where("project_id = ?", projectID)
+	baseQuery := a.db.Model(&model.TestCase{}).Where("project_id = ?", projectID)
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		if idKeyword, err := strconv.Atoi(keyword); err == nil && idKeyword > 0 {
-			query = query.Where("id = ? OR title LIKE ? OR tags LIKE ?", idKeyword, like, like)
+			baseQuery = baseQuery.Where("id = ? OR title LIKE ? OR tags LIKE ?", idKeyword, like, like)
 		} else {
-			query = query.Where("title LIKE ? OR tags LIKE ?", like, like)
+			baseQuery = baseQuery.Where("title LIKE ? OR tags LIKE ?", like, like)
 		}
 	}
 
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := baseQuery.Count(&total).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	var entities []model.TestCase
+	orderColumn := "test_cases.updated_at"
+	switch sortBy {
+	case "id":
+		orderColumn = "test_cases.id"
+	case "created_at":
+		orderColumn = "test_cases.created_at"
+	case "updated_at", "":
+		orderColumn = "test_cases.updated_at"
+	default:
+		orderColumn = "test_cases.updated_at"
+	}
+
+	var items []testCaseListItem
 	offset := (page - 1) * pageSize
-	if err := query.Order("id desc").Offset(offset).Limit(pageSize).Find(&entities).Error; err != nil {
+	err := baseQuery.
+		Select("test_cases.id, test_cases.project_id, test_cases.title, test_cases.level, test_cases.review_result, test_cases.exec_result, test_cases.module_path, test_cases.tags, test_cases.steps, test_cases.priority, test_cases.created_by, test_cases.updated_by, test_cases.created_at, test_cases.updated_at, cu.name AS created_by_name, uu.name AS updated_by_name").
+		Joins("LEFT JOIN users cu ON cu.id = test_cases.created_by").
+		Joins("LEFT JOIN users uu ON uu.id = test_cases.updated_by").
+		Order(orderColumn + " " + sortOrder).
+		Offset(offset).
+		Limit(pageSize).
+		Scan(&items).Error
+	if err != nil {
 		respondError(c, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	for i := range items {
+		if strings.TrimSpace(items[i].CreatedByName) == "" {
+			items[i].CreatedByName = "-"
+		}
+		if strings.TrimSpace(items[i].UpdatedByName) == "" {
+			items[i].UpdatedByName = "-"
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"items":    entities,
+		"items":    items,
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,
