@@ -131,6 +131,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 
 		v1.POST("/projects/:projectID/defects", api.createDefect)
 		v1.GET("/projects/:projectID/defects", api.listDefects)
+		v1.GET("/projects/:projectID/demo-overview", api.projectDemoOverview)
 
 		v1.POST("/integrations/mock-gitlab/webhook", api.mockGitLabWebhook)
 	}
@@ -737,6 +738,105 @@ func (a *API) listDefects(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"defects": defects})
+}
+
+func (a *API) projectDemoOverview(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok || !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+
+	var project model.Project
+	if err := a.db.First(&project, projectID).Error; err != nil {
+		respondError(c, http.StatusNotFound, "project not found")
+		return
+	}
+
+	summary := gin.H{
+		"project": project,
+		"counts":  gin.H{},
+		"latest_run": gin.H{},
+		"quality_gate": gin.H{
+			"status": "no_runs",
+			"reason": "no execution data",
+		},
+	}
+
+	counts := map[string]int64{}
+	countTargets := map[string]any{
+		"requirements": &model.Requirement{},
+		"testcases":    &model.TestCase{},
+		"scripts":      &model.Script{},
+		"runs":         &model.Run{},
+		"defects":      &model.Defect{},
+	}
+
+	for key, target := range countTargets {
+		var count int64
+		if err := a.db.Model(target).Where("project_id = ?", projectID).Count(&count).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		counts[key] = count
+	}
+	summary["counts"] = counts
+
+	var latestRun model.Run
+	if err := a.db.Where("project_id = ?", projectID).Order("id desc").First(&latestRun).Error; err != nil {
+		if !isNotFound(err) {
+			respondError(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		c.JSON(http.StatusOK, summary)
+		return
+	}
+
+	var totalResults int64
+	if err := a.db.Model(&model.RunResult{}).Where("run_id = ?", latestRun.ID).Count(&totalResults).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var passedResults int64
+	if err := a.db.Model(&model.RunResult{}).Where("run_id = ? AND status = ?", latestRun.ID, "passed").Count(&passedResults).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	passRate := 0.0
+	if totalResults > 0 {
+		passRate = (float64(passedResults) / float64(totalResults)) * 100
+	}
+
+	qualityStatus := "blocked"
+	reason := "pass_rate_below_threshold"
+	if totalResults == 0 {
+		qualityStatus = "no_runs"
+		reason = "no execution data"
+	} else if passRate >= 95 {
+		qualityStatus = "pass"
+		reason = "pass_rate_meets_threshold"
+	}
+
+	summary["latest_run"] = gin.H{
+		"id":             latestRun.ID,
+		"status":         latestRun.Status,
+		"mode":           latestRun.Mode,
+		"created_at":     latestRun.CreatedAt,
+		"total_results":  totalResults,
+		"passed_results": passedResults,
+		"pass_rate":      passRate,
+	}
+	summary["quality_gate"] = gin.H{
+		"status":      qualityStatus,
+		"threshold":   95,
+		"pass_rate":   passRate,
+		"latest_run":  latestRun.ID,
+		"reason":      reason,
+	}
+
+	c.JSON(http.StatusOK, summary)
 }
 
 func (a *API) mockGitLabWebhook(c *gin.Context) {

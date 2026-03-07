@@ -142,3 +142,51 @@ func TestProjectACL(t *testing.T) {
 		t.Fatalf("expected 403, got %d", resp.Code)
 	}
 }
+
+func TestProjectDemoOverview(t *testing.T) {
+	router, _ := setupTestRouter(t)
+
+	runReqBody := map[string]any{
+		"mode":      "one",
+		"script_id": 1,
+	}
+	payload, _ := json.Marshal(runReqBody)
+	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/runs", bytes.NewReader(payload))
+	runReq.Header.Set("Content-Type", "application/json")
+	runReq.Header.Set("X-User-ID", "2")
+	runResp := httptest.NewRecorder()
+	router.ServeHTTP(runResp, runReq)
+	if runResp.Code != http.StatusCreated {
+		t.Fatalf("expected run 201, got %d, body=%s", runResp.Code, runResp.Body.String())
+	}
+
+	overviewReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/demo-overview", nil)
+	overviewReq.Header.Set("X-User-ID", "2")
+	overviewResp := httptest.NewRecorder()
+	router.ServeHTTP(overviewResp, overviewReq)
+
+	if overviewResp.Code != http.StatusOK {
+		t.Fatalf("expected overview 200, got %d, body=%s", overviewResp.Code, overviewResp.Body.String())
+	}
+
+	var overview map[string]any
+	if err := json.Unmarshal(overviewResp.Body.Bytes(), &overview); err != nil {
+		t.Fatalf("parse overview response failed: %v", err)
+	}
+
+	counts, ok := overview["counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing counts in overview")
+	}
+	if counts["scripts"] == nil {
+		t.Fatalf("missing scripts count")
+	}
+
+	qualityGate, ok := overview["quality_gate"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing quality_gate in overview")
+	}
+	if qualityGate["status"] == nil {
+		t.Fatalf("missing quality gate status")
+	}
+}

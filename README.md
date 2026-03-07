@@ -79,6 +79,7 @@ make seed        # 执行 seed 数据写入
 - `/api/v1/projects/:projectID/scripts`
 - `/api/v1/projects/:projectID/runs`
 - `/api/v1/projects/:projectID/defects`
+- `/api/v1/projects/:projectID/demo-overview`
 - `/api/v1/integrations/mock-gitlab/webhook`
 
 完整清单和 curl 示例见：
