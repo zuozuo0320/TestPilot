@@ -488,7 +488,7 @@ func (a *API) listRequirements(c *gin.Context) {
 
 func (a *API) createTestCase(c *gin.Context) {
 	user := currentUser(c)
-	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager, model.GlobalRoleTester) {
 		return
 	}
 
@@ -599,7 +599,7 @@ func (a *API) listTestCases(c *gin.Context) {
 
 func (a *API) updateTestCase(c *gin.Context) {
 	user := currentUser(c)
-	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager, model.GlobalRoleTester) {
 		return
 	}
 
@@ -698,7 +698,7 @@ func (a *API) updateTestCase(c *gin.Context) {
 
 func (a *API) deleteTestCase(c *gin.Context) {
 	user := currentUser(c)
-	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager, model.GlobalRoleTester) {
 		return
 	}
 
