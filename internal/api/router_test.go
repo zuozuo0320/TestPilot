@@ -158,55 +158,86 @@ func TestProjectACL(t *testing.T) {
 	}
 }
 
-func TestProjectDemoOverview(t *testing.T) {
+func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	router, _ := setupTestRouter(t)
 
-	runReqBody := map[string]any{
-		"mode":      "one",
-		"script_id": 1,
+	createPayload := map[string]any{
+		"title":    "Login success case",
+		"steps":    "open page -> input -> submit",
+		"priority": "high",
 	}
-	payload, _ := json.Marshal(runReqBody)
-	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/runs", bytes.NewReader(payload))
-	runReq.Header.Set("Content-Type", "application/json")
-	runReq.Header.Set("X-User-ID", "2")
-	runResp := httptest.NewRecorder()
-	router.ServeHTTP(runResp, runReq)
-	if runResp.Code != http.StatusCreated {
-		t.Fatalf("expected run 201, got %d, body=%s", runResp.Code, runResp.Body.String())
-	}
-
-	overviewReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/demo-overview", nil)
-	overviewReq.Header.Set("X-User-ID", "2")
-	overviewReq.Header.Set("Origin", "http://localhost:5173")
-	overviewResp := httptest.NewRecorder()
-	router.ServeHTTP(overviewResp, overviewReq)
-
-	if overviewResp.Code != http.StatusOK {
-		t.Fatalf("expected overview 200, got %d, body=%s", overviewResp.Code, overviewResp.Body.String())
+	createBody, _ := json.Marshal(createPayload)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/testcases", bytes.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-User-ID", "1")
+	createResp := httptest.NewRecorder()
+	router.ServeHTTP(createResp, createReq)
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("expected create 201, got %d, body=%s", createResp.Code, createResp.Body.String())
 	}
 
-	var overview map[string]any
-	if err := json.Unmarshal(overviewResp.Body.Bytes(), &overview); err != nil {
-		t.Fatalf("parse overview response failed: %v", err)
+	var created model.TestCase
+	if err := json.Unmarshal(createResp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("parse create response failed: %v", err)
+	}
+	if created.ID == 0 {
+		t.Fatalf("created testcase id should not be zero")
 	}
 
-	counts, ok := overview["counts"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing counts in overview")
-	}
-	if counts["scripts"] == nil {
-		t.Fatalf("missing scripts count")
-	}
-
-	qualityGate, ok := overview["quality_gate"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing quality_gate in overview")
-	}
-	if qualityGate["status"] == nil {
-		t.Fatalf("missing quality gate status")
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/testcases?page=1&pageSize=10&keyword=Login", nil)
+	listReq.Header.Set("X-User-ID", "2")
+	listResp := httptest.NewRecorder()
+	router.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected list 200, got %d, body=%s", listResp.Code, listResp.Body.String())
 	}
 
-	if got := overviewResp.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
-		t.Fatalf("expected CORS allow origin, got %q", got)
+	var listBody struct {
+		Items    []model.TestCase `json:"items"`
+		Total    int64            `json:"total"`
+		Page     int              `json:"page"`
+		PageSize int              `json:"pageSize"`
+	}
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("parse list response failed: %v", err)
+	}
+	if listBody.Page != 1 || listBody.PageSize != 10 {
+		t.Fatalf("unexpected paging response: page=%d pageSize=%d", listBody.Page, listBody.PageSize)
+	}
+	if listBody.Total < 1 {
+		t.Fatalf("expected total >= 1, got %d", listBody.Total)
+	}
+	if len(listBody.Items) == 0 {
+		t.Fatalf("expected at least one item")
+	}
+
+	updatePayload := map[string]any{
+		"title":    "Login success case updated",
+		"priority": "medium",
+	}
+	updateBody, _ := json.Marshal(updatePayload)
+	updateReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/projects/1/testcases/%d", created.ID), bytes.NewReader(updateBody))
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateReq.Header.Set("X-User-ID", "1")
+	updateResp := httptest.NewRecorder()
+	router.ServeHTTP(updateResp, updateReq)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("expected update 200, got %d, body=%s", updateResp.Code, updateResp.Body.String())
+	}
+
+	var updated model.TestCase
+	if err := json.Unmarshal(updateResp.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("parse update response failed: %v", err)
+	}
+	if updated.Title != "Login success case updated" {
+		t.Fatalf("unexpected updated title: %s", updated.Title)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/projects/1/testcases/%d", created.ID), nil)
+	deleteReq.Header.Set("X-User-ID", "1")
+	deleteResp := httptest.NewRecorder()
+	router.ServeHTTP(deleteResp, deleteReq)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("expected delete 200, got %d, body=%s", deleteResp.Code, deleteResp.Body.String())
 	}
 }

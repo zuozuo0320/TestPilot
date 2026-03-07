@@ -71,6 +71,12 @@ type createTestCaseRequest struct {
 	Priority string `json:"priority"`
 }
 
+type updateTestCaseRequest struct {
+	Title    *string `json:"title"`
+	Steps    *string `json:"steps"`
+	Priority *string `json:"priority"`
+}
+
 type createScriptRequest struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
@@ -136,6 +142,8 @@ func NewRouter(deps Dependencies) *gin.Engine {
 
 		v1.POST("/projects/:projectID/testcases", api.createTestCase)
 		v1.GET("/projects/:projectID/testcases", api.listTestCases)
+		v1.PUT("/projects/:projectID/testcases/:testcaseID", api.updateTestCase)
+		v1.DELETE("/projects/:projectID/testcases/:testcaseID", api.deleteTestCase)
 
 		v1.POST("/projects/:projectID/scripts", api.createScript)
 		v1.GET("/projects/:projectID/scripts", api.listScripts)
@@ -512,12 +520,134 @@ func (a *API) listTestCases(c *gin.Context) {
 		return
 	}
 
-	var entities []model.TestCase
-	if err := a.db.Where("project_id = ?", projectID).Order("id asc").Find(&entities).Error; err != nil {
+	page := parsePositiveIntWithDefault(c.Query("page"), 1)
+	pageSize := parsePositiveIntWithDefault(c.Query("pageSize"), 20)
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	keyword := strings.TrimSpace(c.Query("keyword"))
+
+	query := a.db.Model(&model.TestCase{}).Where("project_id = ?", projectID)
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("title LIKE ? OR steps LIKE ?", like, like)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"testcases": entities})
+
+	var entities []model.TestCase
+	offset := (page - 1) * pageSize
+	if err := query.Order("id desc").Offset(offset).Limit(pageSize).Find(&entities).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"items":    entities,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
+}
+
+func (a *API) updateTestCase(c *gin.Context) {
+	user := currentUser(c)
+	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+		return
+	}
+
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok || !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	testCaseID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+
+	var entity model.TestCase
+	if err := a.db.Where("id = ? AND project_id = ?", testCaseID, projectID).First(&entity).Error; err != nil {
+		respondError(c, http.StatusNotFound, "testcase not found")
+		return
+	}
+
+	var req updateTestCaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	updates := map[string]any{}
+	if req.Title != nil {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			respondError(c, http.StatusBadRequest, "title is required")
+			return
+		}
+		updates["title"] = title
+	}
+	if req.Steps != nil {
+		updates["steps"] = strings.TrimSpace(*req.Steps)
+	}
+	if req.Priority != nil {
+		priority := strings.ToLower(strings.TrimSpace(*req.Priority))
+		if priority == "" {
+			priority = "medium"
+		}
+		updates["priority"] = priority
+	}
+	if len(updates) == 0 {
+		respondError(c, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	if err := a.db.Model(&entity).Updates(updates).Error; err != nil {
+		if isDuplicateError(err) {
+			respondError(c, http.StatusConflict, "testcase already exists")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := a.db.First(&entity, entity.ID).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, entity)
+}
+
+func (a *API) deleteTestCase(c *gin.Context) {
+	user := currentUser(c)
+	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+		return
+	}
+
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok || !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	testCaseID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+
+	result := a.db.Where("id = ? AND project_id = ?", testCaseID, projectID).Delete(&model.TestCase{})
+	if result.Error != nil {
+		respondError(c, http.StatusInternalServerError, result.Error.Error())
+		return
+	}
+	if result.RowsAffected == 0 {
+		respondError(c, http.StatusNotFound, "testcase not found")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "testcase deleted"})
 }
 
 func (a *API) createScript(c *gin.Context) {
@@ -1039,6 +1169,17 @@ func parseUintParam(c *gin.Context, key string) (uint, bool) {
 		return 0, false
 	}
 	return uint(value), true
+}
+
+func parsePositiveIntWithDefault(raw string, defaultValue int) int {
+	if strings.TrimSpace(raw) == "" {
+		return defaultValue
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v <= 0 {
+		return defaultValue
+	}
+	return v
 }
 
 func respondError(c *gin.Context, status int, message string) {
