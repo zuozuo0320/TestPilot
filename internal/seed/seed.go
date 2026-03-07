@@ -1,0 +1,103 @@
+package seed
+
+import (
+	"fmt"
+	"log/slog"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	"testpilot/internal/model"
+)
+
+func Seed(db *gorm.DB, logger *slog.Logger) error {
+	users := []model.User{
+		{Name: "Alice Admin", Email: "admin@testpilot.local", Role: model.GlobalRoleAdmin},
+		{Name: "Mia Manager", Email: "manager@testpilot.local", Role: model.GlobalRoleManager},
+		{Name: "Tom Tester", Email: "tester@testpilot.local", Role: model.GlobalRoleTester},
+	}
+
+	for i := range users {
+		if err := db.Where(model.User{Email: users[i].Email}).FirstOrCreate(&users[i]).Error; err != nil {
+			return fmt.Errorf("seed user failed: %w", err)
+		}
+	}
+
+	project := model.Project{Name: "Demo Project", Description: "TestPilot runnable demo project"}
+	if err := db.Where(model.Project{Name: project.Name}).FirstOrCreate(&project).Error; err != nil {
+		return fmt.Errorf("seed project failed: %w", err)
+	}
+
+	members := []model.ProjectMember{
+		{ProjectID: project.ID, UserID: users[0].ID, Role: model.MemberRoleOwner},
+		{ProjectID: project.ID, UserID: users[1].ID, Role: model.MemberRoleOwner},
+		{ProjectID: project.ID, UserID: users[2].ID, Role: model.MemberRoleMember},
+	}
+	for _, m := range members {
+		member := m
+		if err := db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"role", "updated_at"}),
+		}).Create(&member).Error; err != nil {
+			return fmt.Errorf("seed member failed: %w", err)
+		}
+	}
+
+	requirements := []model.Requirement{
+		{ProjectID: project.ID, Title: "REQ-LOGIN", Content: "User can login with email/password"},
+		{ProjectID: project.ID, Title: "REQ-ORDER", Content: "User can create order from cart"},
+	}
+	for i := range requirements {
+		if err := db.Where(model.Requirement{ProjectID: project.ID, Title: requirements[i].Title}).
+			FirstOrCreate(&requirements[i]).Error; err != nil {
+			return fmt.Errorf("seed requirement failed: %w", err)
+		}
+	}
+
+	testCases := []model.TestCase{
+		{ProjectID: project.ID, Title: "TC-LOGIN-SUCCESS", Steps: "1. open login page 2. input valid creds 3. submit", Priority: "high"},
+		{ProjectID: project.ID, Title: "TC-ORDER-CREATE", Steps: "1. add cart 2. checkout 3. confirm", Priority: "medium"},
+	}
+	for i := range testCases {
+		if err := db.Where(model.TestCase{ProjectID: project.ID, Title: testCases[i].Title}).
+			FirstOrCreate(&testCases[i]).Error; err != nil {
+			return fmt.Errorf("seed testcase failed: %w", err)
+		}
+	}
+
+	scripts := []model.Script{
+		{ProjectID: project.ID, Name: "login.cy.ts", Path: "cypress/e2e/login.cy.ts", Type: "cypress"},
+		{ProjectID: project.ID, Name: "order.cy.ts", Path: "cypress/e2e/order.cy.ts", Type: "cypress"},
+	}
+	for i := range scripts {
+		if err := db.Where(model.Script{ProjectID: project.ID, Name: scripts[i].Name}).
+			FirstOrCreate(&scripts[i]).Error; err != nil {
+			return fmt.Errorf("seed script failed: %w", err)
+		}
+	}
+
+	linksRT := []model.RequirementTestCase{
+		{RequirementID: requirements[0].ID, TestCaseID: testCases[0].ID},
+		{RequirementID: requirements[1].ID, TestCaseID: testCases[1].ID},
+	}
+	for _, link := range linksRT {
+		item := link
+		if err := db.Where(&item).FirstOrCreate(&item).Error; err != nil {
+			return fmt.Errorf("seed requirement-testcase link failed: %w", err)
+		}
+	}
+
+	linksTS := []model.TestCaseScript{
+		{TestCaseID: testCases[0].ID, ScriptID: scripts[0].ID},
+		{TestCaseID: testCases[1].ID, ScriptID: scripts[1].ID},
+	}
+	for _, link := range linksTS {
+		item := link
+		if err := db.Where(&item).FirstOrCreate(&item).Error; err != nil {
+			return fmt.Errorf("seed testcase-script link failed: %w", err)
+		}
+	}
+
+	logger.Info("seed completed", "project_id", project.ID, "users", len(users), "requirements", len(requirements), "testcases", len(testCases), "scripts", len(scripts))
+	return nil
+}
