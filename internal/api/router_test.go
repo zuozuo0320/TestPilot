@@ -269,6 +269,30 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 		t.Fatalf("expected id asc sort")
 	}
 
+	listFilterReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/testcases?page=1&pageSize=10&level=P0&review_result=未评审&exec_result=未执行", nil)
+	listFilterReq.Header.Set("X-User-ID", "2")
+	listFilterResp := httptest.NewRecorder()
+	router.ServeHTTP(listFilterResp, listFilterReq)
+	if listFilterResp.Code != http.StatusOK {
+		t.Fatalf("expected filtered list 200, got %d, body=%s", listFilterResp.Code, listFilterResp.Body.String())
+	}
+	var filteredBody struct {
+		Items []struct {
+			Level        string `json:"level"`
+			ReviewResult string `json:"review_result"`
+			ExecResult   string `json:"exec_result"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listFilterResp.Body.Bytes(), &filteredBody); err != nil {
+		t.Fatalf("parse filtered list response failed: %v", err)
+	}
+	if len(filteredBody.Items) == 0 {
+		t.Fatalf("expected filtered items")
+	}
+	if filteredBody.Items[0].Level != "P0" || filteredBody.Items[0].ReviewResult != "未评审" || filteredBody.Items[0].ExecResult != "未执行" {
+		t.Fatalf("unexpected filtered item")
+	}
+
 	updatePayload := map[string]any{
 		"title":         "Login success case updated",
 		"level":         "P1",

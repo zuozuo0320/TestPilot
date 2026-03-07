@@ -584,6 +584,9 @@ func (a *API) listTestCases(c *gin.Context) {
 		pageSize = 100
 	}
 	keyword := strings.TrimSpace(c.Query("keyword"))
+	levelFilter := strings.ToUpper(strings.TrimSpace(c.Query("level")))
+	reviewFilter := strings.TrimSpace(c.Query("review_result"))
+	execFilter := strings.TrimSpace(c.Query("exec_result"))
 	sortBy := strings.TrimSpace(c.Query("sortBy"))
 	sortOrder := strings.ToLower(strings.TrimSpace(c.Query("sortOrder")))
 	if sortOrder != "asc" {
@@ -598,6 +601,15 @@ func (a *API) listTestCases(c *gin.Context) {
 		} else {
 			baseQuery = baseQuery.Where("title LIKE ? OR tags LIKE ?", like, like)
 		}
+	}
+	if levelFilter != "" {
+		baseQuery = baseQuery.Where("level = ?", levelFilter)
+	}
+	if reviewFilter != "" {
+		baseQuery = baseQuery.Where("review_result = ?", reviewFilter)
+	}
+	if execFilter != "" {
+		baseQuery = baseQuery.Where("exec_result = ?", execFilter)
 	}
 
 	var total int64
