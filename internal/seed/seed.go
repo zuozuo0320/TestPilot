@@ -30,9 +30,48 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 		}
 	}
 
+	roles := []model.Role{
+		{Name: model.GlobalRoleAdmin, Description: "系统管理员"},
+		{Name: model.GlobalRoleManager, Description: "项目管理员"},
+		{Name: model.GlobalRoleTester, Description: "测试工程师"},
+		{Name: "reviewer", Description: "评审角色"},
+		{Name: "readonly", Description: "只读角色"},
+	}
+	roleIDByName := map[string]uint{}
+	for i := range roles {
+		if err := db.Where(model.Role{Name: roles[i].Name}).Assign(model.Role{Description: roles[i].Description}).FirstOrCreate(&roles[i]).Error; err != nil {
+			return fmt.Errorf("seed role failed: %w", err)
+		}
+		roleIDByName[roles[i].Name] = roles[i].ID
+	}
+
+	userRoles := []model.UserRole{
+		{UserID: users[0].ID, RoleID: roleIDByName[model.GlobalRoleAdmin]},
+		{UserID: users[1].ID, RoleID: roleIDByName[model.GlobalRoleManager]},
+		{UserID: users[2].ID, RoleID: roleIDByName[model.GlobalRoleTester]},
+	}
+	for _, ur := range userRoles {
+		item := ur
+		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error; err != nil {
+			return fmt.Errorf("seed user-role failed: %w", err)
+		}
+	}
+
 	project := model.Project{Name: "Demo Project", Description: "TestPilot runnable demo project"}
 	if err := db.Where(model.Project{Name: project.Name}).FirstOrCreate(&project).Error; err != nil {
 		return fmt.Errorf("seed project failed: %w", err)
+	}
+
+	userProjects := []model.UserProject{
+		{UserID: users[0].ID, ProjectID: project.ID},
+		{UserID: users[1].ID, ProjectID: project.ID},
+		{UserID: users[2].ID, ProjectID: project.ID},
+	}
+	for _, up := range userProjects {
+		item := up
+		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error; err != nil {
+			return fmt.Errorf("seed user-project failed: %w", err)
+		}
 	}
 
 	members := []model.ProjectMember{
