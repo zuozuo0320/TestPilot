@@ -12,9 +12,9 @@ import (
 
 func Seed(db *gorm.DB, logger *slog.Logger) error {
 	users := []model.User{
-		{Name: "Alice Admin", Email: "admin@testpilot.local", Role: model.GlobalRoleAdmin},
-		{Name: "Mia Manager", Email: "manager@testpilot.local", Role: model.GlobalRoleManager},
-		{Name: "Tom Tester", Email: "tester@testpilot.local", Role: model.GlobalRoleTester},
+		{Name: "Alice Admin", Email: "admin@testpilot.local", Role: model.GlobalRoleAdmin, Active: true},
+		{Name: "Mia Manager", Email: "manager@testpilot.local", Role: model.GlobalRoleManager, Active: true},
+		{Name: "Tom Tester", Email: "tester@testpilot.local", Role: model.GlobalRoleTester, Active: true},
 	}
 
 	for i := range users {

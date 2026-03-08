@@ -16,12 +16,50 @@ const (
 )
 
 type User struct {
+	ID        uint           `json:"id" gorm:"primaryKey"`
+	Name      string         `json:"name" gorm:"size:80;not null"`
+	Email     string         `json:"email" gorm:"size:120;index;not null"`
+	Phone     string         `json:"phone" gorm:"size:30;index"`
+	Avatar    string         `json:"avatar" gorm:"size:500"`
+	Role      string         `json:"role" gorm:"size:20;not null;index"`
+	Active    bool           `json:"active" gorm:"not null;default:true"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+}
+
+type Role struct {
+	ID          uint           `json:"id" gorm:"primaryKey"`
+	Name        string         `json:"name" gorm:"size:80;uniqueIndex;not null"`
+	Description string         `json:"description" gorm:"size:500"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+}
+
+type UserRole struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
-	Name      string    `json:"name" gorm:"size:80;not null"`
-	Email     string    `json:"email" gorm:"size:120;uniqueIndex;not null"`
-	Role      string    `json:"role" gorm:"size:20;not null;index"`
+	UserID    uint      `json:"user_id" gorm:"not null;index:idx_user_role,unique"`
+	RoleID    uint      `json:"role_id" gorm:"not null;index:idx_user_role,unique"`
 	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type UserProject struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	UserID    uint      `json:"user_id" gorm:"not null;index:idx_user_project,unique"`
+	ProjectID uint      `json:"project_id" gorm:"not null;index:idx_user_project,unique"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type AuditLog struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	ActorID    uint      `json:"actor_id" gorm:"not null;index"`
+	Action     string    `json:"action" gorm:"size:80;not null"`
+	TargetType string    `json:"target_type" gorm:"size:50;not null;index"`
+	TargetID   uint      `json:"target_id" gorm:"not null;index"`
+	BeforeData string    `json:"before_data" gorm:"type:text"`
+	AfterData  string    `json:"after_data" gorm:"type:text"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type Project struct {
@@ -127,8 +165,11 @@ type Defect struct {
 
 func AutoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(
-		&User{},
-		&Project{},
+		&Role{},
+		&UserRole{},
+		&UserProject{},
+		&AuditLog{},
+
 		&ProjectMember{},
 		&Requirement{},
 		&TestCase{},

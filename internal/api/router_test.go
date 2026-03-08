@@ -45,12 +45,37 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 func seedTestData(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	users := []model.User{
-		{ID: 1, Name: "Admin", Email: "admin@test.local", Role: model.GlobalRoleAdmin},
-		{ID: 2, Name: "Tester", Email: "tester@test.local", Role: model.GlobalRoleTester},
-		{ID: 3, Name: "Outsider", Email: "outsider@test.local", Role: model.GlobalRoleTester},
+		{ID: 1, Name: "Admin", Email: "admin@test.local", Role: model.GlobalRoleAdmin, Active: true},
+		{ID: 2, Name: "Tester", Email: "tester@test.local", Role: model.GlobalRoleTester, Active: true},
+		{ID: 3, Name: "Outsider", Email: "outsider@test.local", Role: model.GlobalRoleTester, Active: true},
 	}
 	if err := db.Create(&users).Error; err != nil {
 		t.Fatalf("seed users failed: %v", err)
+	}
+
+	roles := []model.Role{
+		{ID: 1, Name: "admin", Description: "admin role"},
+		{ID: 2, Name: "tester", Description: "tester role"},
+	}
+	if err := db.Create(&roles).Error; err != nil {
+		t.Fatalf("seed roles failed: %v", err)
+	}
+
+	userRoles := []model.UserRole{
+		{UserID: 1, RoleID: 1},
+		{UserID: 2, RoleID: 2},
+		{UserID: 3, RoleID: 2},
+	}
+	if err := db.Create(&userRoles).Error; err != nil {
+		t.Fatalf("seed user roles failed: %v", err)
+	}
+
+	userProjects := []model.UserProject{
+		{UserID: 1, ProjectID: 1},
+		{UserID: 2, ProjectID: 1},
+	}
+	if err := db.Create(&userProjects).Error; err != nil {
+		t.Fatalf("seed user projects failed: %v", err)
 	}
 
 	project := model.Project{ID: 1, Name: "Demo", Description: "demo"}

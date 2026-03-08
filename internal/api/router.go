@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -45,9 +46,48 @@ type API struct {
 }
 
 type createUserRequest struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Role  string `json:"role"`
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	Phone      string `json:"phone"`
+	Avatar     string `json:"avatar"`
+	Role       string `json:"role"`
+	RoleIDs    []uint `json:"role_ids"`
+	ProjectIDs []uint `json:"project_ids"`
+}
+
+type updateUserRequest struct {
+	Name       *string `json:"name"`
+	Email      *string `json:"email"`
+	Phone      *string `json:"phone"`
+	Avatar     *string `json:"avatar"`
+	Active     *bool   `json:"active"`
+	RoleIDs    []uint  `json:"role_ids"`
+	ProjectIDs []uint  `json:"project_ids"`
+}
+
+type createRoleRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type updateRoleRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+}
+
+type updateProfileRequest struct {
+	Name   *string `json:"name"`
+	Email  *string `json:"email"`
+	Phone  *string `json:"phone"`
+	Avatar *string `json:"avatar"`
+}
+
+type assignUserRolesRequest struct {
+	RoleIDs []uint `json:"role_ids"`
+}
+
+type assignUserProjectsRequest struct {
+	ProjectIDs []uint `json:"project_ids"`
 }
 
 type createProjectRequest struct {
@@ -160,6 +200,16 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	{
 		v1.GET("/users", api.listUsers)
 		v1.POST("/users", api.createUser)
+		v1.PUT("/users/:userID", api.updateUser)
+		v1.DELETE("/users/:userID", api.deleteUser)
+		v1.POST("/users/:userID/roles", api.assignUserRoles)
+		v1.POST("/users/:userID/projects", api.assignUserProjects)
+		v1.PUT("/users/me/profile", api.updateProfile)
+
+		v1.GET("/roles", api.listRoles)
+		v1.POST("/roles", api.createRole)
+		v1.PUT("/roles/:roleID", api.updateRole)
+		v1.DELETE("/roles/:roleID", api.deleteRole)
 
 		v1.POST("/projects", api.createProject)
 		v1.GET("/projects", api.listProjects)
@@ -251,8 +301,18 @@ func (a *API) authMiddleware() gin.HandlerFunc {
 		}
 
 		var user model.User
-		if err := a.db.First(&user, uint(userID64)).Error; err != nil {
+		if err := a.db.Unscoped().First(&user, uint(userID64)).Error; err != nil {
 			respondError(c, http.StatusUnauthorized, "user not found")
+			c.Abort()
+			return
+		}
+		if user.DeletedAt.Valid {
+			respondError(c, http.StatusUnauthorized, "user deleted")
+			c.Abort()
+			return
+		}
+		if !user.Active {
+			respondError(c, http.StatusForbidden, "user is frozen")
 			c.Abort()
 			return
 		}
@@ -279,6 +339,14 @@ func (a *API) login(c *gin.Context) {
 	var user model.User
 	if err := a.db.Where("email = ?", email).First(&user).Error; err != nil {
 		respondError(c, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if user.DeletedAt.Valid {
+		respondError(c, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if !user.Active {
+		respondError(c, http.StatusForbidden, "user is frozen")
 		return
 	}
 
@@ -311,8 +379,8 @@ func (a *API) listUsers(c *gin.Context) {
 }
 
 func (a *API) createUser(c *gin.Context) {
-	user := currentUser(c)
-	if !a.requireRole(c, user, model.GlobalRoleAdmin) {
+	actor := currentUser(c)
+	if !a.requireRole(c, actor, model.GlobalRoleAdmin) {
 		return
 	}
 
@@ -324,15 +392,85 @@ func (a *API) createUser(c *gin.Context) {
 
 	req.Name = strings.TrimSpace(req.Name)
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.Avatar = strings.TrimSpace(req.Avatar)
 	req.Role = strings.ToLower(strings.TrimSpace(req.Role))
+	req.RoleIDs = uniqueUint(req.RoleIDs)
+	req.ProjectIDs = uniqueUint(req.ProjectIDs)
 
-	if req.Name == "" || req.Email == "" || !model.IsValidGlobalRole(req.Role) {
-		respondError(c, http.StatusBadRequest, "name/email/role is invalid")
+	if req.Name == "" || req.Email == "" {
+		respondError(c, http.StatusBadRequest, "name/email is required")
+		return
+	}
+	if len(req.RoleIDs) == 0 {
+		respondError(c, http.StatusBadRequest, "role_ids is required")
+		return
+	}
+	if len(req.ProjectIDs) == 0 {
+		respondError(c, http.StatusBadRequest, "project_ids is required")
 		return
 	}
 
-	entity := model.User{Name: req.Name, Email: req.Email, Role: req.Role}
-	if err := a.db.Create(&entity).Error; err != nil {
+	if exists, err := a.emailExists(req.Email, 0); err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	} else if exists {
+		respondError(c, http.StatusConflict, "email already exists")
+		return
+	}
+	if req.Phone != "" {
+		if exists, err := a.phoneExists(req.Phone, 0); err != nil {
+			respondError(c, http.StatusInternalServerError, err.Error())
+			return
+		} else if exists {
+			respondError(c, http.StatusConflict, "phone already exists")
+			return
+		}
+	}
+
+	roles, err := a.fetchRoles(req.RoleIDs)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.ensureProjectsExist(req.ProjectIDs); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	globalRole := req.Role
+	if !model.IsValidGlobalRole(globalRole) {
+		globalRole = strings.ToLower(strings.TrimSpace(roles[0].Name))
+		if !model.IsValidGlobalRole(globalRole) {
+			globalRole = model.GlobalRoleTester
+		}
+	}
+
+	entity := model.User{
+		Name:   req.Name,
+		Email:  req.Email,
+		Phone:  req.Phone,
+		Avatar: req.Avatar,
+		Role:   globalRole,
+		Active: true,
+	}
+
+	err = a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&entity).Error; err != nil {
+			return err
+		}
+		if err := a.replaceUserRolesTx(tx, entity.ID, req.RoleIDs); err != nil {
+			return err
+		}
+		if err := a.replaceUserProjectsTx(tx, entity.ID, req.ProjectIDs); err != nil {
+			return err
+		}
+		if err := a.syncProjectMembersTx(tx, entity.ID, req.ProjectIDs); err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "user.create", "user", entity.ID, nil, entity)
+	})
+	if err != nil {
 		if isDuplicateError(err) {
 			respondError(c, http.StatusConflict, "user already exists")
 			return
@@ -342,6 +480,464 @@ func (a *API) createUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, entity)
+}
+
+func (a *API) updateUser(c *gin.Context) {
+	actor := currentUser(c)
+	if !a.requireRole(c, actor, model.GlobalRoleAdmin) {
+		return
+	}
+	userID, ok := parseUintParam(c, "userID")
+	if !ok {
+		return
+	}
+
+	var target model.User
+	if err := a.db.Unscoped().First(&target, userID).Error; err != nil {
+		respondError(c, http.StatusNotFound, "user not found")
+		return
+	}
+	if target.DeletedAt.Valid {
+		respondError(c, http.StatusBadRequest, "cannot update deleted user")
+		return
+	}
+
+	var req updateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	updates := map[string]any{}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			respondError(c, http.StatusBadRequest, "name is invalid")
+			return
+		}
+		updates["name"] = name
+	}
+	if req.Email != nil {
+		email := strings.ToLower(strings.TrimSpace(*req.Email))
+		if email == "" {
+			respondError(c, http.StatusBadRequest, "email is invalid")
+			return
+		}
+		if exists, err := a.emailExists(email, target.ID); err != nil {
+			respondError(c, http.StatusInternalServerError, err.Error())
+			return
+		} else if exists {
+			respondError(c, http.StatusConflict, "email already exists")
+			return
+		}
+		updates["email"] = email
+	}
+	if req.Phone != nil {
+		phone := strings.TrimSpace(*req.Phone)
+		if phone != "" {
+			if exists, err := a.phoneExists(phone, target.ID); err != nil {
+				respondError(c, http.StatusInternalServerError, err.Error())
+				return
+			} else if exists {
+				respondError(c, http.StatusConflict, "phone already exists")
+				return
+			}
+		}
+		updates["phone"] = phone
+	}
+	if req.Avatar != nil {
+		updates["avatar"] = strings.TrimSpace(*req.Avatar)
+	}
+	if req.Active != nil {
+		updates["active"] = *req.Active
+	}
+
+	roleIDs := uniqueUint(req.RoleIDs)
+	projectIDs := uniqueUint(req.ProjectIDs)
+	if req.RoleIDs != nil {
+		if len(roleIDs) == 0 {
+			respondError(c, http.StatusBadRequest, "role_ids is required")
+			return
+		}
+		if _, err := a.fetchRoles(roleIDs); err != nil {
+			respondError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.ProjectIDs != nil {
+		if len(projectIDs) == 0 {
+			respondError(c, http.StatusBadRequest, "project_ids is required")
+			return
+		}
+		if err := a.ensureProjectsExist(projectIDs); err != nil {
+			respondError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	before := target
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if len(updates) > 0 {
+			if err := tx.Model(&model.User{}).Where("id = ?", target.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		if req.RoleIDs != nil {
+			if err := a.replaceUserRolesTx(tx, target.ID, roleIDs); err != nil {
+				return err
+			}
+		}
+		if req.ProjectIDs != nil {
+			if err := a.replaceUserProjectsTx(tx, target.ID, projectIDs); err != nil {
+				return err
+			}
+			if err := a.syncProjectMembersTx(tx, target.ID, projectIDs); err != nil {
+				return err
+			}
+		}
+		var after model.User
+		if err := tx.First(&after, target.ID).Error; err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "user.update", "user", target.ID, before, after)
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var updated model.User
+	_ = a.db.First(&updated, target.ID).Error
+	c.JSON(http.StatusOK, updated)
+}
+
+func (a *API) deleteUser(c *gin.Context) {
+	actor := currentUser(c)
+	if !a.requireRole(c, actor, model.GlobalRoleAdmin) {
+		return
+	}
+	userID, ok := parseUintParam(c, "userID")
+	if !ok {
+		return
+	}
+
+	var target model.User
+	if err := a.db.First(&target, userID).Error; err != nil {
+		respondError(c, http.StatusNotFound, "user not found")
+		return
+	}
+	before := target
+
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&target).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", target.ID).Delete(&model.UserRole{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", target.ID).Delete(&model.UserProject{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", target.ID).Delete(&model.ProjectMember{}).Error; err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "user.delete", "user", target.ID, before, gin.H{"deleted_at": time.Now()})
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "user deleted"})
+}
+
+func (a *API) assignUserRoles(c *gin.Context) {
+	actor := currentUser(c)
+	if !a.requireRole(c, actor, model.GlobalRoleAdmin) {
+		return
+	}
+	userID, ok := parseUintParam(c, "userID")
+	if !ok {
+		return
+	}
+	var req assignUserRolesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	roleIDs := uniqueUint(req.RoleIDs)
+	if len(roleIDs) == 0 {
+		respondError(c, http.StatusBadRequest, "role_ids is required")
+		return
+	}
+	if _, err := a.fetchRoles(roleIDs); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := a.replaceUserRolesTx(tx, userID, roleIDs); err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "user.assign_roles", "user", userID, nil, gin.H{"role_ids": roleIDs})
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "roles assigned"})
+}
+
+func (a *API) assignUserProjects(c *gin.Context) {
+	actor := currentUser(c)
+	if !a.requireRole(c, actor, model.GlobalRoleAdmin) {
+		return
+	}
+	userID, ok := parseUintParam(c, "userID")
+	if !ok {
+		return
+	}
+	var req assignUserProjectsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	projectIDs := uniqueUint(req.ProjectIDs)
+	if len(projectIDs) == 0 {
+		respondError(c, http.StatusBadRequest, "project_ids is required")
+		return
+	}
+	if err := a.ensureProjectsExist(projectIDs); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := a.replaceUserProjectsTx(tx, userID, projectIDs); err != nil {
+			return err
+		}
+		if err := a.syncProjectMembersTx(tx, userID, projectIDs); err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "user.assign_projects", "user", userID, nil, gin.H{"project_ids": projectIDs})
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "projects assigned"})
+}
+
+func (a *API) updateProfile(c *gin.Context) {
+	actor := currentUser(c)
+	var req updateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	updates := map[string]any{}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			respondError(c, http.StatusBadRequest, "name is invalid")
+			return
+		}
+		updates["name"] = name
+	}
+	if req.Email != nil {
+		email := strings.ToLower(strings.TrimSpace(*req.Email))
+		if email == "" {
+			respondError(c, http.StatusBadRequest, "email is invalid")
+			return
+		}
+		if exists, err := a.emailExists(email, actor.ID); err != nil {
+			respondError(c, http.StatusInternalServerError, err.Error())
+			return
+		} else if exists {
+			respondError(c, http.StatusConflict, "email already exists")
+			return
+		}
+		updates["email"] = email
+	}
+	if req.Phone != nil {
+		phone := strings.TrimSpace(*req.Phone)
+		if phone != "" {
+			if exists, err := a.phoneExists(phone, actor.ID); err != nil {
+				respondError(c, http.StatusInternalServerError, err.Error())
+				return
+			} else if exists {
+				respondError(c, http.StatusConflict, "phone already exists")
+				return
+			}
+		}
+		updates["phone"] = phone
+	}
+	if req.Avatar != nil {
+		updates["avatar"] = strings.TrimSpace(*req.Avatar)
+	}
+	if len(updates) == 0 {
+		respondError(c, http.StatusBadRequest, "no valid fields to update")
+		return
+	}
+
+	before := actor
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.User{}).Where("id = ?", actor.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+		var after model.User
+		if err := tx.First(&after, actor.ID).Error; err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "profile.update", "user", actor.ID, before, after)
+	})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var updated model.User
+	_ = a.db.First(&updated, actor.ID).Error
+	c.JSON(http.StatusOK, updated)
+}
+
+func (a *API) listRoles(c *gin.Context) {
+	user := currentUser(c)
+	if !a.requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+		return
+	}
+	var roles []model.Role
+	if err := a.db.Order("id asc").Find(&roles).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"roles": roles})
+}
+
+func (a *API) createRole(c *gin.Context) {
+	actor := currentUser(c)
+	if !a.requireRole(c, actor, model.GlobalRoleAdmin) {
+		return
+	}
+	var req createRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		respondError(c, http.StatusBadRequest, "name is required")
+		return
+	}
+	entity := model.Role{Name: name, Description: strings.TrimSpace(req.Description)}
+	err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&entity).Error; err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "role.create", "role", entity.ID, nil, entity)
+	})
+	if err != nil {
+		if isDuplicateError(err) {
+			respondError(c, http.StatusConflict, "role already exists")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, entity)
+}
+
+func (a *API) updateRole(c *gin.Context) {
+	actor := currentUser(c)
+	if !a.requireRole(c, actor, model.GlobalRoleAdmin) {
+		return
+	}
+	roleID, ok := parseUintParam(c, "roleID")
+	if !ok {
+		return
+	}
+	var req updateRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	updates := map[string]any{}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			respondError(c, http.StatusBadRequest, "name is invalid")
+			return
+		}
+		updates["name"] = name
+	}
+	if req.Description != nil {
+		updates["description"] = strings.TrimSpace(*req.Description)
+	}
+	if len(updates) == 0 {
+		respondError(c, http.StatusBadRequest, "no valid fields to update")
+		return
+	}
+	var before model.Role
+	if err := a.db.First(&before, roleID).Error; err != nil {
+		respondError(c, http.StatusNotFound, "role not found")
+		return
+	}
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Role{}).Where("id = ?", roleID).Updates(updates).Error; err != nil {
+			return err
+		}
+		var after model.Role
+		if err := tx.First(&after, roleID).Error; err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "role.update", "role", roleID, before, after)
+	}); err != nil {
+		if isDuplicateError(err) {
+			respondError(c, http.StatusConflict, "role already exists")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var updated model.Role
+	_ = a.db.First(&updated, roleID).Error
+	c.JSON(http.StatusOK, updated)
+}
+
+func (a *API) deleteRole(c *gin.Context) {
+	actor := currentUser(c)
+	if !a.requireRole(c, actor, model.GlobalRoleAdmin) {
+		return
+	}
+	roleID, ok := parseUintParam(c, "roleID")
+	if !ok {
+		return
+	}
+	var role model.Role
+	if err := a.db.First(&role, roleID).Error; err != nil {
+		respondError(c, http.StatusNotFound, "role not found")
+		return
+	}
+	var used int64
+	if err := a.db.Model(&model.UserRole{}).Where("role_id = ?", roleID).Count(&used).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if used > 0 {
+		respondError(c, http.StatusConflict, "role is in use")
+		return
+	}
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&role).Error; err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "role.delete", "role", roleID, role, gin.H{"deleted_at": time.Now()})
+	}); err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "role deleted"})
 }
 
 func (a *API) createProject(c *gin.Context) {
@@ -1244,6 +1840,146 @@ func (a *API) belongsToProject(entity any, id, projectID uint) bool {
 	var count int64
 	err := a.db.Model(entity).Where("id = ? AND project_id = ?", id, projectID).Count(&count).Error
 	return err == nil && count > 0
+}
+
+func (a *API) writeAuditLogTx(tx *gorm.DB, actorID uint, action, targetType string, targetID uint, before any, after any) error {
+	beforeJSON, err := marshalJSON(before)
+	if err != nil {
+		return err
+	}
+	afterJSON, err := marshalJSON(after)
+	if err != nil {
+		return err
+	}
+	log := model.AuditLog{
+		ActorID:    actorID,
+		Action:     action,
+		TargetType: targetType,
+		TargetID:   targetID,
+		BeforeData: beforeJSON,
+		AfterData:  afterJSON,
+	}
+	return tx.Create(&log).Error
+}
+
+func marshalJSON(v any) (string, error) {
+	if v == nil {
+		return "", nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func (a *API) ensureProjectsExist(projectIDs []uint) error {
+	if len(projectIDs) == 0 {
+		return errors.New("project_ids is required")
+	}
+	var count int64
+	if err := a.db.Model(&model.Project{}).Where("id IN ?", projectIDs).Count(&count).Error; err != nil {
+		return err
+	}
+	if int(count) != len(projectIDs) {
+		return errors.New("project_ids contains invalid id")
+	}
+	return nil
+}
+
+func (a *API) fetchRoles(roleIDs []uint) ([]model.Role, error) {
+	if len(roleIDs) == 0 {
+		return nil, errors.New("role_ids is required")
+	}
+	var roles []model.Role
+	if err := a.db.Where("id IN ?", roleIDs).Find(&roles).Error; err != nil {
+		return nil, err
+	}
+	if len(roles) != len(roleIDs) {
+		return nil, errors.New("role_ids contains invalid id")
+	}
+	return roles, nil
+}
+
+func (a *API) replaceUserRolesTx(tx *gorm.DB, userID uint, roleIDs []uint) error {
+	if len(roleIDs) == 0 {
+		return errors.New("role_ids is required")
+	}
+	if err := tx.Where("user_id = ?", userID).Delete(&model.UserRole{}).Error; err != nil {
+		return err
+	}
+	items := make([]model.UserRole, 0, len(roleIDs))
+	for _, roleID := range roleIDs {
+		items = append(items, model.UserRole{UserID: userID, RoleID: roleID})
+	}
+	return tx.Create(&items).Error
+}
+
+func (a *API) replaceUserProjectsTx(tx *gorm.DB, userID uint, projectIDs []uint) error {
+	if len(projectIDs) == 0 {
+		return errors.New("project_ids is required")
+	}
+	if err := tx.Where("user_id = ?", userID).Delete(&model.UserProject{}).Error; err != nil {
+		return err
+	}
+	items := make([]model.UserProject, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
+		items = append(items, model.UserProject{UserID: userID, ProjectID: projectID})
+	}
+	return tx.Create(&items).Error
+}
+
+func (a *API) syncProjectMembersTx(tx *gorm.DB, userID uint, projectIDs []uint) error {
+	if len(projectIDs) == 0 {
+		return nil
+	}
+	if err := tx.Where("user_id = ?", userID).Where("project_id NOT IN ?", projectIDs).Delete(&model.ProjectMember{}).Error; err != nil {
+		return err
+	}
+	for _, projectID := range projectIDs {
+		member := model.ProjectMember{ProjectID: projectID, UserID: userID, Role: model.MemberRoleMember}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"updated_at"}),
+		}).Create(&member).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *API) emailExists(email string, excludeUserID uint) (bool, error) {
+	if strings.TrimSpace(email) == "" {
+		return false, nil
+	}
+	query := a.db.Unscoped().Model(&model.User{}).
+		Where("email = ?", email).
+		Where("deleted_at IS NULL")
+	if excludeUserID > 0 {
+		query = query.Where("id <> ?", excludeUserID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (a *API) phoneExists(phone string, excludeUserID uint) (bool, error) {
+	if strings.TrimSpace(phone) == "" {
+		return false, nil
+	}
+	query := a.db.Unscoped().Model(&model.User{}).
+		Where("phone = ?", phone).
+		Where("deleted_at IS NULL")
+	if excludeUserID > 0 {
+		query = query.Where("id <> ?", excludeUserID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (a *API) requireProjectAccess(c *gin.Context, user model.User, projectID uint) bool {
