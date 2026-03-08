@@ -89,6 +89,56 @@ make seed        # 执行 seed 数据写入
 
 - `D:/hsxa/ai_project/测试管理平台/架构及需求梳理/TestPilot_Demo_API清单与示例.md`
 
+## 4.1 用例列表（/projects/:projectID/testcases）查询参数补充
+
+`GET /api/v1/projects/:projectID/testcases`
+
+支持以下查询参数：
+
+- `page`：页码（默认 `1`）
+- `pageSize`：每页条数（默认 `10`，最大 `100`）
+- `keyword`：按 `title/steps/tags/module_path` 模糊检索
+- `level`：等级筛选（如 `P0/P1/P2/P3`）
+- `review_result`：评审结果筛选（如 `未评审/通过/驳回`）
+- `exec_result`：执行结果筛选（如 `未执行/通过/失败/阻塞`）
+- `sortBy`：排序字段（`id|created_at|updated_at`）
+- `sortOrder`：排序方向（`asc|desc`，默认 `desc`）
+
+返回结构：
+
+```json
+{
+  "items": [
+    {
+      "id": 101,
+      "title": "TC-PAY-SUCCESS",
+      "level": "P1",
+      "review_result": "通过",
+      "exec_result": "未执行",
+      "module_path": "/支付/正向",
+      "tags": "smoke,payment",
+      "priority": "high",
+      "created_by": 2,
+      "created_by_name": "manager",
+      "updated_by": 3,
+      "updated_by_name": "tester",
+      "created_at": "2026-03-07T10:00:00Z",
+      "updated_at": "2026-03-08T02:00:00Z"
+    }
+  ],
+  "total": 128,
+  "page": 1,
+  "pageSize": 10
+}
+```
+
+示例：
+
+```bash
+curl -H "X-User-ID: 3" \
+  "http://localhost:8080/api/v1/projects/1/testcases?page=1&pageSize=10&keyword=pay&level=P1&review_result=通过&exec_result=未执行&sortBy=updated_at&sortOrder=desc"
+```
+
 ## 5. 文档交付
 
 - `D:/hsxa/ai_project/测试管理平台/架构及需求梳理/TestPilot_Demo_开发总结.md`
