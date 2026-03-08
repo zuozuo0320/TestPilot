@@ -21,6 +21,13 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 		if err := db.Where(model.User{Email: users[i].Email}).FirstOrCreate(&users[i]).Error; err != nil {
 			return fmt.Errorf("seed user failed: %w", err)
 		}
+		if err := db.Model(&model.User{}).Where("id = ?", users[i].ID).Updates(map[string]any{
+			"name":   users[i].Name,
+			"role":   users[i].Role,
+			"active": true,
+		}).Error; err != nil {
+			return fmt.Errorf("seed user update failed: %w", err)
+		}
 	}
 
 	project := model.Project{Name: "Demo Project", Description: "TestPilot runnable demo project"}
