@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -512,6 +513,28 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 	router.ServeHTTP(inUseDeleteResp, inUseDeleteReq)
 	if inUseDeleteResp.Code != http.StatusConflict {
 		t.Fatalf("expected delete in-use role 409, got %d, body=%s", inUseDeleteResp.Code, inUseDeleteResp.Body.String())
+	}
+
+	presetDeleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/roles/1", nil)
+	presetDeleteReq.Header.Set("X-User-ID", "1")
+	presetDeleteResp := httptest.NewRecorder()
+	router.ServeHTTP(presetDeleteResp, presetDeleteReq)
+	if presetDeleteResp.Code != http.StatusConflict {
+		t.Fatalf("expected delete preset role 409, got %d, body=%s", presetDeleteResp.Code, presetDeleteResp.Body.String())
+	}
+	if !strings.Contains(presetDeleteResp.Body.String(), "preset system role cannot be deleted") {
+		t.Fatalf("expected preset role protected message, got body=%s", presetDeleteResp.Body.String())
+	}
+
+	reviewerDeleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/roles/3", nil)
+	reviewerDeleteReq.Header.Set("X-User-ID", "1")
+	reviewerDeleteResp := httptest.NewRecorder()
+	router.ServeHTTP(reviewerDeleteResp, reviewerDeleteReq)
+	if reviewerDeleteResp.Code != http.StatusConflict {
+		t.Fatalf("expected delete reviewer preset role 409, got %d, body=%s", reviewerDeleteResp.Code, reviewerDeleteResp.Body.String())
+	}
+	if !strings.Contains(reviewerDeleteResp.Body.String(), "preset system role cannot be deleted") {
+		t.Fatalf("expected reviewer preset role protected message, got body=%s", reviewerDeleteResp.Body.String())
 	}
 
 	deleteRoleReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/roles/%d", createdRole.ID), nil)
