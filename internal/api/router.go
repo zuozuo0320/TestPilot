@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,10 @@ import (
 )
 
 const currentUserKey = "current-user"
+
+const defaultUserAvatar = "https://api.dicebear.com/7.x/initials/svg?seed=TestPilot"
+
+var phonePattern = regexp.MustCompile(`^1\d{10}$`)
 
 var defaultAllowedOrigins = []string{
 	"http://localhost:5173",
@@ -402,6 +407,18 @@ func (a *API) createUser(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "name/email is required")
 		return
 	}
+	if !isValidPersonName(req.Name) {
+		respondError(c, http.StatusBadRequest, "name is invalid")
+		return
+	}
+	if !isValidEmail(req.Email) {
+		respondError(c, http.StatusBadRequest, "email is invalid")
+		return
+	}
+	if req.Phone != "" && !isValidPhone(req.Phone) {
+		respondError(c, http.StatusBadRequest, "phone is invalid")
+		return
+	}
 	if len(req.RoleIDs) == 0 {
 		respondError(c, http.StatusBadRequest, "role_ids is required")
 		return
@@ -433,6 +450,10 @@ func (a *API) createUser(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	if containsRoleName(roles, model.GlobalRoleAdmin) {
+		respondError(c, http.StatusBadRequest, "admin role cannot be assigned when creating user")
+		return
+	}
 	if err := a.ensureProjectsExist(req.ProjectIDs); err != nil {
 		respondError(c, http.StatusBadRequest, err.Error())
 		return
@@ -450,7 +471,7 @@ func (a *API) createUser(c *gin.Context) {
 		Name:   req.Name,
 		Email:  req.Email,
 		Phone:  req.Phone,
-		Avatar: req.Avatar,
+		Avatar: defaultUserAvatar,
 		Role:   globalRole,
 		Active: true,
 	}
@@ -511,7 +532,7 @@ func (a *API) updateUser(c *gin.Context) {
 	updates := map[string]any{}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
-		if name == "" {
+		if !isValidPersonName(name) {
 			respondError(c, http.StatusBadRequest, "name is invalid")
 			return
 		}
@@ -519,7 +540,7 @@ func (a *API) updateUser(c *gin.Context) {
 	}
 	if req.Email != nil {
 		email := strings.ToLower(strings.TrimSpace(*req.Email))
-		if email == "" {
+		if !isValidEmail(email) {
 			respondError(c, http.StatusBadRequest, "email is invalid")
 			return
 		}
@@ -535,6 +556,10 @@ func (a *API) updateUser(c *gin.Context) {
 	if req.Phone != nil {
 		phone := strings.TrimSpace(*req.Phone)
 		if phone != "" {
+			if !isValidPhone(phone) {
+				respondError(c, http.StatusBadRequest, "phone is invalid")
+				return
+			}
 			if exists, err := a.phoneExists(phone, target.ID); err != nil {
 				respondError(c, http.StatusInternalServerError, err.Error())
 				return
@@ -739,7 +764,7 @@ func (a *API) updateProfile(c *gin.Context) {
 	updates := map[string]any{}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
-		if name == "" {
+		if !isValidPersonName(name) {
 			respondError(c, http.StatusBadRequest, "name is invalid")
 			return
 		}
@@ -747,7 +772,7 @@ func (a *API) updateProfile(c *gin.Context) {
 	}
 	if req.Email != nil {
 		email := strings.ToLower(strings.TrimSpace(*req.Email))
-		if email == "" {
+		if !isValidEmail(email) {
 			respondError(c, http.StatusBadRequest, "email is invalid")
 			return
 		}
@@ -763,6 +788,10 @@ func (a *API) updateProfile(c *gin.Context) {
 	if req.Phone != nil {
 		phone := strings.TrimSpace(*req.Phone)
 		if phone != "" {
+			if !isValidPhone(phone) {
+				respondError(c, http.StatusBadRequest, "phone is invalid")
+				return
+			}
 			if exists, err := a.phoneExists(phone, actor.ID); err != nil {
 				respondError(c, http.StatusInternalServerError, err.Error())
 				return
@@ -2099,6 +2128,59 @@ func uniqueUint(values []uint) []uint {
 		result = append(result, v)
 	}
 	return result
+}
+
+func containsRoleName(roles []model.Role, roleName string) bool {
+	for _, item := range roles {
+		if strings.EqualFold(strings.TrimSpace(item.Name), strings.TrimSpace(roleName)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidPersonName(name string) bool {
+	name = strings.TrimSpace(name)
+	if len(name) < 2 || len(name) > 40 {
+		return false
+	}
+	for _, r := range name {
+		if r == ' ' || r == '·' || r == '-' || r == '_' {
+			continue
+		}
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= 0x4e00 && r <= 0x9fa5) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isValidEmail(email string) bool {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" || len(email) > 120 {
+		return false
+	}
+	if strings.Count(email, "@") != 1 {
+		return false
+	}
+	parts := strings.Split(email, "@")
+	local, domain := parts[0], parts[1]
+	if len(local) < 1 || len(domain) < 3 || !strings.Contains(domain, ".") {
+		return false
+	}
+	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return false
+	}
+	return true
+}
+
+func isValidPhone(phone string) bool {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return false
+	}
+	return phonePattern.MatchString(phone)
 }
 
 func isNotFound(err error) bool {
