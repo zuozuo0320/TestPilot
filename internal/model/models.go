@@ -10,6 +10,8 @@ const (
 	GlobalRoleAdmin   = "admin"
 	GlobalRoleManager = "manager"
 	GlobalRoleTester  = "tester"
+	GlobalRoleReviewer = "reviewer"
+	GlobalRoleReadonly = "readonly"
 
 	MemberRoleOwner  = "owner"
 	MemberRoleMember = "member"
@@ -180,6 +182,15 @@ func AutoMigrate(db *gorm.DB) error {
 		&RunResult{},
 		&Defect{},
 	)
+}
+
+func IsPresetSystemRole(role string) bool {
+	switch role {
+	case GlobalRoleAdmin, GlobalRoleManager, GlobalRoleTester, GlobalRoleReviewer, GlobalRoleReadonly:
+		return true
+	default:
+		return false
+	}
 }
 
 func IsValidGlobalRole(role string) bool {

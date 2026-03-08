@@ -34,8 +34,8 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 		{Name: model.GlobalRoleAdmin, Description: "系统管理员"},
 		{Name: model.GlobalRoleManager, Description: "项目管理员"},
 		{Name: model.GlobalRoleTester, Description: "测试工程师"},
-		{Name: "reviewer", Description: "评审角色"},
-		{Name: "readonly", Description: "只读角色"},
+		{Name: model.GlobalRoleReviewer, Description: "评审角色"},
+		{Name: model.GlobalRoleReadonly, Description: "只读角色"},
 	}
 	roleIDByName := map[string]uint{}
 	for i := range roles {
