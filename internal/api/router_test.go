@@ -368,3 +368,165 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 		t.Fatalf("expected delete 200, got %d, body=%s", deleteResp.Code, deleteResp.Body.String())
 	}
 }
+
+func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
+	router, db := setupTestRouter(t)
+
+	invalidCreate := map[string]any{
+		"name":        "NoBind",
+		"email":       "nobind@test.local",
+		"role_ids":    []uint{2},
+		"project_ids": []uint{},
+	}
+	invalidBody, _ := json.Marshal(invalidCreate)
+	invalidReq := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(invalidBody))
+	invalidReq.Header.Set("Content-Type", "application/json")
+	invalidReq.Header.Set("X-User-ID", "1")
+	invalidResp := httptest.NewRecorder()
+	router.ServeHTTP(invalidResp, invalidReq)
+	if invalidResp.Code != http.StatusBadRequest {
+		t.Fatalf("expected create user without project 400, got %d, body=%s", invalidResp.Code, invalidResp.Body.String())
+	}
+
+	project2 := model.Project{ID: 2, Name: "Demo-2", Description: "demo2"}
+	if err := db.Create(&project2).Error; err != nil {
+		t.Fatalf("seed project2 failed: %v", err)
+	}
+	role3 := model.Role{ID: 3, Name: "reviewer", Description: "review role"}
+	if err := db.Create(&role3).Error; err != nil {
+		t.Fatalf("seed role3 failed: %v", err)
+	}
+
+	createPayload := map[string]any{
+		"name":        "IAM User",
+		"email":       "iam.user@test.local",
+		"phone":       "13800001234",
+		"avatar":      "https://example.com/a.png",
+		"role":        "tester",
+		"role_ids":    []uint{2, 3},
+		"project_ids": []uint{1, 2},
+	}
+	createBody, _ := json.Marshal(createPayload)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-User-ID", "1")
+	createResp := httptest.NewRecorder()
+	router.ServeHTTP(createResp, createReq)
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("expected create user 201, got %d, body=%s", createResp.Code, createResp.Body.String())
+	}
+	var created model.User
+	if err := json.Unmarshal(createResp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("parse created user failed: %v", err)
+	}
+
+	profilePayload := map[string]any{
+		"name":   "Tester Updated",
+		"email":  "tester.updated@test.local",
+		"phone":  "13900005678",
+		"avatar": "https://example.com/new.png",
+	}
+	profileBody, _ := json.Marshal(profilePayload)
+	profileReq := httptest.NewRequest(http.MethodPut, "/api/v1/users/me/profile", bytes.NewReader(profileBody))
+	profileReq.Header.Set("Content-Type", "application/json")
+	profileReq.Header.Set("X-User-ID", "2")
+	profileResp := httptest.NewRecorder()
+	router.ServeHTTP(profileResp, profileReq)
+	if profileResp.Code != http.StatusOK {
+		t.Fatalf("expected profile update 200, got %d, body=%s", profileResp.Code, profileResp.Body.String())
+	}
+
+	freezePayload := map[string]any{"active": false}
+	freezeBody, _ := json.Marshal(freezePayload)
+	freezeReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/users/%d", created.ID), bytes.NewReader(freezeBody))
+	freezeReq.Header.Set("Content-Type", "application/json")
+	freezeReq.Header.Set("X-User-ID", "1")
+	freezeResp := httptest.NewRecorder()
+	router.ServeHTTP(freezeResp, freezeReq)
+	if freezeResp.Code != http.StatusOK {
+		t.Fatalf("expected freeze user 200, got %d, body=%s", freezeResp.Code, freezeResp.Body.String())
+	}
+
+	loginBody, _ := json.Marshal(map[string]any{"email": "iam.user@test.local", "password": "TestPilot@2026"})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginResp := httptest.NewRecorder()
+	router.ServeHTTP(loginResp, loginReq)
+	if loginResp.Code != http.StatusForbidden {
+		t.Fatalf("expected frozen login 403, got %d, body=%s", loginResp.Code, loginResp.Body.String())
+	}
+
+	delReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/users/%d", created.ID), nil)
+	delReq.Header.Set("X-User-ID", "1")
+	delResp := httptest.NewRecorder()
+	router.ServeHTTP(delResp, delReq)
+	if delResp.Code != http.StatusOK {
+		t.Fatalf("expected delete user 200, got %d, body=%s", delResp.Code, delResp.Body.String())
+	}
+
+	reusePayload := map[string]any{
+		"name":        "IAM User 2",
+		"email":       "iam.user@test.local",
+		"phone":       "13800001234",
+		"role":        "tester",
+		"role_ids":    []uint{2},
+		"project_ids": []uint{1},
+	}
+	reuseBody, _ := json.Marshal(reusePayload)
+	reuseReq := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(reuseBody))
+	reuseReq.Header.Set("Content-Type", "application/json")
+	reuseReq.Header.Set("X-User-ID", "1")
+	reuseResp := httptest.NewRecorder()
+	router.ServeHTTP(reuseResp, reuseReq)
+	if reuseResp.Code != http.StatusCreated {
+		t.Fatalf("expected reuse email/phone create 201, got %d, body=%s", reuseResp.Code, reuseResp.Body.String())
+	}
+
+	roleCreateBody, _ := json.Marshal(map[string]any{"name": "ops", "description": "ops role"})
+	roleCreateReq := httptest.NewRequest(http.MethodPost, "/api/v1/roles", bytes.NewReader(roleCreateBody))
+	roleCreateReq.Header.Set("Content-Type", "application/json")
+	roleCreateReq.Header.Set("X-User-ID", "1")
+	roleCreateResp := httptest.NewRecorder()
+	router.ServeHTTP(roleCreateResp, roleCreateReq)
+	if roleCreateResp.Code != http.StatusCreated {
+		t.Fatalf("expected create role 201, got %d, body=%s", roleCreateResp.Code, roleCreateResp.Body.String())
+	}
+	var createdRole model.Role
+	if err := json.Unmarshal(roleCreateResp.Body.Bytes(), &createdRole); err != nil {
+		t.Fatalf("parse role create failed: %v", err)
+	}
+
+	roleUpdateBody, _ := json.Marshal(map[string]any{"description": "ops role updated"})
+	roleUpdateReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/roles/%d", createdRole.ID), bytes.NewReader(roleUpdateBody))
+	roleUpdateReq.Header.Set("Content-Type", "application/json")
+	roleUpdateReq.Header.Set("X-User-ID", "1")
+	roleUpdateResp := httptest.NewRecorder()
+	router.ServeHTTP(roleUpdateResp, roleUpdateReq)
+	if roleUpdateResp.Code != http.StatusOK {
+		t.Fatalf("expected update role 200, got %d, body=%s", roleUpdateResp.Code, roleUpdateResp.Body.String())
+	}
+
+	inUseDeleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/roles/2", nil)
+	inUseDeleteReq.Header.Set("X-User-ID", "1")
+	inUseDeleteResp := httptest.NewRecorder()
+	router.ServeHTTP(inUseDeleteResp, inUseDeleteReq)
+	if inUseDeleteResp.Code != http.StatusConflict {
+		t.Fatalf("expected delete in-use role 409, got %d, body=%s", inUseDeleteResp.Code, inUseDeleteResp.Body.String())
+	}
+
+	deleteRoleReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/roles/%d", createdRole.ID), nil)
+	deleteRoleReq.Header.Set("X-User-ID", "1")
+	deleteRoleResp := httptest.NewRecorder()
+	router.ServeHTTP(deleteRoleResp, deleteRoleReq)
+	if deleteRoleResp.Code != http.StatusOK {
+		t.Fatalf("expected delete role 200, got %d, body=%s", deleteRoleResp.Code, deleteRoleResp.Body.String())
+	}
+
+	var auditCount int64
+	if err := db.Model(&model.AuditLog{}).Count(&auditCount).Error; err != nil {
+		t.Fatalf("query audit log failed: %v", err)
+	}
+	if auditCount == 0 {
+		t.Fatalf("expected audit logs > 0")
+	}
+}
