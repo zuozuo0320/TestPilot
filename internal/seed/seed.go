@@ -31,15 +31,15 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 	}
 
 	roles := []model.Role{
-		{Name: model.GlobalRoleAdmin, Description: "系统管理员"},
-		{Name: model.GlobalRoleManager, Description: "项目管理员"},
-		{Name: model.GlobalRoleTester, Description: "测试工程师"},
-		{Name: "reviewer", Description: "评审角色"},
-		{Name: "readonly", Description: "只读角色"},
+		{Name: model.GlobalRoleAdmin, Description: "系统管理员", Builtin: true},
+		{Name: model.GlobalRoleManager, Description: "项目管理员", Builtin: true},
+		{Name: model.GlobalRoleTester, Description: "测试工程师", Builtin: true},
+		{Name: "reviewer", Description: "评审角色", Builtin: true},
+		{Name: "readonly", Description: "只读角色", Builtin: true},
 	}
 	roleIDByName := map[string]uint{}
 	for i := range roles {
-		if err := db.Where(model.Role{Name: roles[i].Name}).Assign(model.Role{Description: roles[i].Description}).FirstOrCreate(&roles[i]).Error; err != nil {
+		if err := db.Where(model.Role{Name: roles[i].Name}).Assign(model.Role{Description: roles[i].Description, Builtin: roles[i].Builtin}).FirstOrCreate(&roles[i]).Error; err != nil {
 			return fmt.Errorf("seed role failed: %w", err)
 		}
 		roleIDByName[roles[i].Name] = roles[i].ID

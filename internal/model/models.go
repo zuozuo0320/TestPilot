@@ -32,6 +32,7 @@ type Role struct {
 	ID          uint           `json:"id" gorm:"primaryKey"`
 	Name        string         `json:"name" gorm:"size:80;uniqueIndex;not null"`
 	Description string         `json:"description" gorm:"size:500"`
+	Builtin     bool           `json:"builtin" gorm:"not null;default:false;index"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `json:"deleted_at" gorm:"index"`
