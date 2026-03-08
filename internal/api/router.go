@@ -656,9 +656,22 @@ func (a *API) deleteUser(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "user not found")
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(target.Role), model.GlobalRoleAdmin) {
+		respondError(c, http.StatusConflict, "admin user cannot be deleted")
+		return
+	}
+	hasAdminRole, err := a.userHasRoleName(target.ID, model.GlobalRoleAdmin)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if hasAdminRole {
+		respondError(c, http.StatusConflict, "admin user cannot be deleted")
+		return
+	}
 	before := target
 
-	err := a.db.Transaction(func(tx *gorm.DB) error {
+	err = a.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(&target).Error; err != nil {
 			return err
 		}
@@ -2074,6 +2087,21 @@ func (a *API) phoneExists(phone string, excludeUserID uint) (bool, error) {
 	}
 	var count int64
 	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (a *API) userHasRoleName(userID uint, roleName string) (bool, error) {
+	if userID == 0 || strings.TrimSpace(roleName) == "" {
+		return false, nil
+	}
+	var count int64
+	err := a.db.Model(&model.UserRole{}).
+		Joins("JOIN roles ON roles.id = user_roles.role_id").
+		Where("user_roles.user_id = ? AND LOWER(roles.name) = ?", userID, strings.ToLower(strings.TrimSpace(roleName))).
+		Count(&count).Error
+	if err != nil {
 		return false, err
 	}
 	return count > 0, nil
