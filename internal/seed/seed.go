@@ -39,10 +39,26 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 	}
 	roleIDByName := map[string]uint{}
 	for i := range roles {
-		if err := db.Where(model.Role{Name: roles[i].Name}).Assign(model.Role{Description: roles[i].Description}).FirstOrCreate(&roles[i]).Error; err != nil {
-			return fmt.Errorf("seed role failed: %w", err)
+		var existing model.Role
+		if err := db.Unscoped().Where("name = ?", roles[i].Name).First(&existing).Error; err != nil {
+			if err != gorm.ErrRecordNotFound {
+				return fmt.Errorf("seed role query failed: %w", err)
+			}
+			if err := db.Create(&roles[i]).Error; err != nil {
+				return fmt.Errorf("seed role create failed: %w", err)
+			}
+			roleIDByName[roles[i].Name] = roles[i].ID
+			continue
 		}
-		roleIDByName[roles[i].Name] = roles[i].ID
+
+		if err := db.Unscoped().Model(&model.Role{}).Where("id = ?", existing.ID).Updates(map[string]any{
+			"name":        roles[i].Name,
+			"description": roles[i].Description,
+			"deleted_at":  nil,
+		}).Error; err != nil {
+			return fmt.Errorf("seed role update failed: %w", err)
+		}
+		roleIDByName[roles[i].Name] = existing.ID
 	}
 
 	userRoles := []model.UserRole{
