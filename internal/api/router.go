@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -826,19 +827,29 @@ func (a *API) updateProfile(c *gin.Context) {
 
 func (a *API) uploadMyAvatar(c *gin.Context) {
 	actor := currentUser(c)
-	file, err := c.FormFile("avatar")
+	if actor.ID == 0 {
+		respondError(c, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := c.Request.ParseMultipartForm(2 << 20); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+	file, header, err := c.Request.FormFile("avatar")
 	if err != nil {
 		respondError(c, http.StatusBadRequest, "avatar file is required")
 		return
 	}
-	ext := strings.ToLower(filepath.Ext(file.Filename))
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
 	switch ext {
 	case ".jpg", ".jpeg", ".png", ".webp":
 	default:
 		respondError(c, http.StatusBadRequest, "avatar type only supports jpg/jpeg/png/webp")
 		return
 	}
-	if file.Size > 2*1024*1024 {
+	if header.Size > 2*1024*1024 {
 		respondError(c, http.StatusBadRequest, "avatar size cannot exceed 2MB")
 		return
 	}
@@ -850,7 +861,17 @@ func (a *API) uploadMyAvatar(c *gin.Context) {
 	}
 	filename := fmt.Sprintf("u%d_%d%s", actor.ID, time.Now().UnixNano(), ext)
 	savePath := filepath.Join(dir, filename)
-	if err := c.SaveUploadedFile(file, savePath); err != nil {
+	out, err := os.Create(savePath)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := io.Copy(out, file); err != nil {
+		_ = out.Close()
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := out.Close(); err != nil {
 		respondError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
