@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -197,6 +199,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	router.Static("/uploads", "./uploads")
 
 	router.POST("/api/v1/auth/login", api.login)
 
@@ -210,6 +213,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		v1.POST("/users/:userID/roles", api.assignUserRoles)
 		v1.POST("/users/:userID/projects", api.assignUserProjects)
 		v1.PUT("/users/me/profile", api.updateProfile)
+		v1.POST("/users/me/avatar", api.uploadMyAvatar)
 
 		v1.GET("/roles", api.listRoles)
 		v1.POST("/roles", api.createRole)
@@ -771,19 +775,8 @@ func (a *API) updateProfile(c *gin.Context) {
 		updates["name"] = name
 	}
 	if req.Email != nil {
-		email := strings.ToLower(strings.TrimSpace(*req.Email))
-		if !isValidEmail(email) {
-			respondError(c, http.StatusBadRequest, "email is invalid")
-			return
-		}
-		if exists, err := a.emailExists(email, actor.ID); err != nil {
-			respondError(c, http.StatusInternalServerError, err.Error())
-			return
-		} else if exists {
-			respondError(c, http.StatusConflict, "email already exists")
-			return
-		}
-		updates["email"] = email
+		respondError(c, http.StatusBadRequest, "email cannot be modified")
+		return
 	}
 	if req.Phone != nil {
 		phone := strings.TrimSpace(*req.Phone)
@@ -829,6 +822,56 @@ func (a *API) updateProfile(c *gin.Context) {
 	var updated model.User
 	_ = a.db.First(&updated, actor.ID).Error
 	c.JSON(http.StatusOK, updated)
+}
+
+func (a *API) uploadMyAvatar(c *gin.Context) {
+	actor := currentUser(c)
+	file, err := c.FormFile("avatar")
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "avatar file is required")
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp":
+	default:
+		respondError(c, http.StatusBadRequest, "avatar type only supports jpg/jpeg/png/webp")
+		return
+	}
+	if file.Size > 2*1024*1024 {
+		respondError(c, http.StatusBadRequest, "avatar size cannot exceed 2MB")
+		return
+	}
+
+	dir := filepath.Join("uploads", "avatars")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	filename := fmt.Sprintf("u%d_%d%s", actor.ID, time.Now().UnixNano(), ext)
+	savePath := filepath.Join(dir, filename)
+	if err := c.SaveUploadedFile(file, savePath); err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	avatarURL := "/uploads/avatars/" + filename
+
+	before := actor
+	if err := a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.User{}).Where("id = ?", actor.ID).Update("avatar", avatarURL).Error; err != nil {
+			return err
+		}
+		var after model.User
+		if err := tx.First(&after, actor.ID).Error; err != nil {
+			return err
+		}
+		return a.writeAuditLogTx(tx, actor.ID, "profile.avatar_upload", "user", actor.ID, before, after)
+	}); err != nil {
+		respondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"avatar": avatarURL})
 }
 
 func (a *API) listRoles(c *gin.Context) {

@@ -423,7 +423,6 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 
 	profilePayload := map[string]any{
 		"name":   "Tester Updated",
-		"email":  "tester.updated@test.local",
 		"phone":  "13900005678",
 		"avatar": "https://example.com/new.png",
 	}
