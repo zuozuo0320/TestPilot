@@ -73,8 +73,8 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 		}
 	}
 
-	project := model.Project{Name: "Demo Project", Description: "TestPilot runnable demo project"}
-	if err := db.Where(model.Project{Name: project.Name}).FirstOrCreate(&project).Error; err != nil {
+	project := model.Project{Name: "示例项目", Description: "测试管理平台默认示例项目"}
+	if err := db.Where(model.Project{Name: project.Name}).Assign(model.Project{Description: project.Description}).FirstOrCreate(&project).Error; err != nil {
 		return fmt.Errorf("seed project failed: %w", err)
 	}
 
