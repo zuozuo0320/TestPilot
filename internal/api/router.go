@@ -919,10 +919,6 @@ func (a *API) deleteRole(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "role not found")
 		return
 	}
-	if role.Builtin {
-		respondError(c, http.StatusConflict, "builtin role cannot be deleted")
-		return
-	}
 	var used int64
 	if err := a.db.Model(&model.UserRole{}).Where("role_id = ?", roleID).Count(&used).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, err.Error())
