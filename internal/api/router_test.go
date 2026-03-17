@@ -17,9 +17,12 @@ import (
 
 	"testpilot/internal/execution"
 	"testpilot/internal/model"
+	pkgauth "testpilot/internal/pkg/auth"
+	"testpilot/internal/repository"
+	"testpilot/internal/service"
 )
 
-func setupTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
+func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -33,14 +36,71 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Repository 层
+	txMgr := repository.NewTxManager(db)
+	userRepo := repository.NewUserRepo(db)
+	roleRepo := repository.NewRoleRepo(db)
+	projectRepo := repository.NewProjectRepo(db)
+	testCaseRepo := repository.NewTestCaseRepo(db)
+	auditRepo := repository.NewAuditRepo(db)
+	executionRepo := repository.NewExecutionRepo(db)
+	defectRepo := repository.NewDefectRepo(db)
+	requirementRepo := repository.NewRequirementRepo(db)
+	scriptRepo := repository.NewScriptRepo(db)
+
+	// Service 层
+	mockExecutor := execution.NewMockExecutor(logger, 0)
+	jwtCfg := pkgauth.DefaultConfig("test-secret")
+
 	router := NewRouter(Dependencies{
-		DB:       db,
-		Logger:   logger,
-		Executor: execution.NewMockExecutor(logger, 0),
-	})
+		Logger:             logger,
+		AuthService:        service.NewAuthService(userRepo, jwtCfg),
+		UserService:        service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr),
+		RoleService:        service.NewRoleService(roleRepo, auditRepo, txMgr),
+		ProjectService:     service.NewProjectService(projectRepo, userRepo),
+		TestCaseService:    service.NewTestCaseService(testCaseRepo),
+		ProfileService:     service.NewProfileService(userRepo, auditRepo, txMgr),
+		ExecutionService:   service.NewExecutionService(executionRepo, txMgr, mockExecutor, nil, logger),
+		DefectService:      service.NewDefectService(defectRepo, executionRepo),
+		RequirementService: service.NewRequirementService(requirementRepo, testCaseRepo),
+		ScriptService:      service.NewScriptService(scriptRepo, testCaseRepo),
+		OverviewService:    service.NewOverviewService(projectRepo, requirementRepo, testCaseRepo, scriptRepo, executionRepo, defectRepo),
+		AuditService:       service.NewAuditService(auditRepo),
+	}, "")
 
 	seedTestData(t, db)
 	return router, db
+}
+
+// getResultData 从统一响应 {code, message, data} 中提取 data 字段的原始 JSON
+func getResultData(t *testing.T, body []byte) json.RawMessage {
+	t.Helper()
+	var envelope struct {
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("parse result envelope failed: %v, body=%s", err, string(body))
+	}
+	return envelope.Data
+}
+
+// getPageResultData 从分页响应中提取 data 字段
+func getPageResultData(t *testing.T, body []byte) (json.RawMessage, int64, int, int) {
+	t.Helper()
+	var envelope struct {
+		Code     int             `json:"code"`
+		Data     json.RawMessage `json:"data"`
+		Total    int64           `json:"total"`
+		Page     int             `json:"page"`
+		PageSize int             `json:"page_size"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("parse page result envelope failed: %v, body=%s", err, string(body))
+	}
+	return envelope.Data, envelope.Total, envelope.Page, envelope.PageSize
 }
 
 func seedTestData(t *testing.T, db *gorm.DB) {
@@ -143,10 +203,11 @@ func TestRunAndDefectFlow(t *testing.T) {
 		t.Fatalf("expected run 201, got %d, body=%s", resp.Code, resp.Body.String())
 	}
 
+	runData := getResultData(t, resp.Body.Bytes())
 	var runResp struct {
 		Results []model.RunResult `json:"results"`
 	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &runResp); err != nil {
+	if err := json.Unmarshal(runData, &runResp); err != nil {
 		t.Fatalf("parse run response failed: %v", err)
 	}
 	if len(runResp.Results) != 1 {
@@ -207,8 +268,9 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 		t.Fatalf("expected create 201, got %d, body=%s", createResp.Code, createResp.Body.String())
 	}
 
+	createData := getResultData(t, createResp.Body.Bytes())
 	var created model.TestCase
-	if err := json.Unmarshal(createResp.Body.Bytes(), &created); err != nil {
+	if err := json.Unmarshal(createData, &created); err != nil {
 		t.Fatalf("parse create response failed: %v", err)
 	}
 	if created.ID == 0 {
@@ -223,56 +285,52 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 		t.Fatalf("expected list 200, got %d, body=%s", listResp.Code, listResp.Body.String())
 	}
 
-	var listBody struct {
-		Items []struct {
-			ID            uint   `json:"id"`
-			Title         string `json:"title"`
-			Level         string `json:"level"`
-			ReviewResult  string `json:"review_result"`
-			ExecResult    string `json:"exec_result"`
-			ModulePath    string `json:"module_path"`
-			Tags          string `json:"tags"`
-			CreatedByName string `json:"created_by_name"`
-			UpdatedByName string `json:"updated_by_name"`
-		} `json:"items"`
-		Total    int64 `json:"total"`
-		Page     int   `json:"page"`
-		PageSize int   `json:"pageSize"`
+	listRawData, listTotal, listPage, listPageSize := getPageResultData(t, listResp.Body.Bytes())
+	var listItems []struct {
+		ID            uint   `json:"id"`
+		Title         string `json:"title"`
+		Level         string `json:"level"`
+		ReviewResult  string `json:"review_result"`
+		ExecResult    string `json:"exec_result"`
+		ModulePath    string `json:"module_path"`
+		Tags          string `json:"tags"`
+		CreatedByName string `json:"created_by_name"`
+		UpdatedByName string `json:"updated_by_name"`
 	}
-	if err := json.Unmarshal(listResp.Body.Bytes(), &listBody); err != nil {
-		t.Fatalf("parse list response failed: %v", err)
+	if err := json.Unmarshal(listRawData, &listItems); err != nil {
+		t.Fatalf("parse list items failed: %v", err)
 	}
-	if listBody.Page != 1 || listBody.PageSize != 10 {
-		t.Fatalf("unexpected paging response: page=%d pageSize=%d", listBody.Page, listBody.PageSize)
+	if listPage != 1 || listPageSize != 10 {
+		t.Fatalf("unexpected paging response: page=%d pageSize=%d", listPage, listPageSize)
 	}
-	if listBody.Total < 1 {
-		t.Fatalf("expected total >= 1, got %d", listBody.Total)
+	if listTotal < 1 {
+		t.Fatalf("expected total >= 1, got %d", listTotal)
 	}
-	if len(listBody.Items) == 0 {
+	if len(listItems) == 0 {
 		t.Fatalf("expected at least one item")
 	}
-	if listBody.Items[0].Title == "" {
+	if listItems[0].Title == "" {
 		t.Fatalf("expected title field")
 	}
-	if listBody.Items[0].Level == "" {
+	if listItems[0].Level == "" {
 		t.Fatalf("expected level field")
 	}
-	if listBody.Items[0].ReviewResult == "" {
+	if listItems[0].ReviewResult == "" {
 		t.Fatalf("expected review_result field")
 	}
-	if listBody.Items[0].ExecResult == "" {
+	if listItems[0].ExecResult == "" {
 		t.Fatalf("expected exec_result field")
 	}
-	if listBody.Items[0].ModulePath == "" {
+	if listItems[0].ModulePath == "" {
 		t.Fatalf("expected module_path field")
 	}
-	if listBody.Items[0].Tags == "" {
+	if listItems[0].Tags == "" {
 		t.Fatalf("expected tags field")
 	}
-	if listBody.Items[0].CreatedByName == "" {
+	if listItems[0].CreatedByName == "" {
 		t.Fatalf("expected created_by_name field")
 	}
-	if listBody.Items[0].UpdatedByName == "" {
+	if listItems[0].UpdatedByName == "" {
 		t.Fatalf("expected updated_by_name field")
 	}
 
@@ -283,15 +341,14 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	if listSortResp.Code != http.StatusOK {
 		t.Fatalf("expected sorted list 200, got %d, body=%s", listSortResp.Code, listSortResp.Body.String())
 	}
-	var sortedBody struct {
-		Items []struct {
-			ID uint `json:"id"`
-		} `json:"items"`
+	sortedData, _, _, _ := getPageResultData(t, listSortResp.Body.Bytes())
+	var sortedItems []struct {
+		ID uint `json:"id"`
 	}
-	if err := json.Unmarshal(listSortResp.Body.Bytes(), &sortedBody); err != nil {
+	if err := json.Unmarshal(sortedData, &sortedItems); err != nil {
 		t.Fatalf("parse sorted list response failed: %v", err)
 	}
-	if len(sortedBody.Items) >= 2 && sortedBody.Items[0].ID > sortedBody.Items[1].ID {
+	if len(sortedItems) >= 2 && sortedItems[0].ID > sortedItems[1].ID {
 		t.Fatalf("expected id asc sort")
 	}
 
@@ -302,20 +359,19 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	if listFilterResp.Code != http.StatusOK {
 		t.Fatalf("expected filtered list 200, got %d, body=%s", listFilterResp.Code, listFilterResp.Body.String())
 	}
-	var filteredBody struct {
-		Items []struct {
-			Level        string `json:"level"`
-			ReviewResult string `json:"review_result"`
-			ExecResult   string `json:"exec_result"`
-		} `json:"items"`
+	filteredData, _, _, _ := getPageResultData(t, listFilterResp.Body.Bytes())
+	var filteredItems []struct {
+		Level        string `json:"level"`
+		ReviewResult string `json:"review_result"`
+		ExecResult   string `json:"exec_result"`
 	}
-	if err := json.Unmarshal(listFilterResp.Body.Bytes(), &filteredBody); err != nil {
+	if err := json.Unmarshal(filteredData, &filteredItems); err != nil {
 		t.Fatalf("parse filtered list response failed: %v", err)
 	}
-	if len(filteredBody.Items) == 0 {
+	if len(filteredItems) == 0 {
 		t.Fatalf("expected filtered items")
 	}
-	if filteredBody.Items[0].Level != "P0" || filteredBody.Items[0].ReviewResult != "未评审" || filteredBody.Items[0].ExecResult != "未执行" {
+	if filteredItems[0].Level != "P0" || filteredItems[0].ReviewResult != "未评审" || filteredItems[0].ExecResult != "未执行" {
 		t.Fatalf("unexpected filtered item")
 	}
 
@@ -338,8 +394,9 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 		t.Fatalf("expected update 200, got %d, body=%s", updateResp.Code, updateResp.Body.String())
 	}
 
+	updateData := getResultData(t, updateResp.Body.Bytes())
 	var updated model.TestCase
-	if err := json.Unmarshal(updateResp.Body.Bytes(), &updated); err != nil {
+	if err := json.Unmarshal(updateData, &updated); err != nil {
 		t.Fatalf("parse update response failed: %v", err)
 	}
 	if updated.Title != "Login success case updated" {
@@ -416,8 +473,9 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 	if createResp.Code != http.StatusCreated {
 		t.Fatalf("expected create user 201, got %d, body=%s", createResp.Code, createResp.Body.String())
 	}
+	createdUserData := getResultData(t, createResp.Body.Bytes())
 	var created model.User
-	if err := json.Unmarshal(createResp.Body.Bytes(), &created); err != nil {
+	if err := json.Unmarshal(createdUserData, &created); err != nil {
 		t.Fatalf("parse created user failed: %v", err)
 	}
 
@@ -491,8 +549,9 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 	if roleCreateResp.Code != http.StatusCreated {
 		t.Fatalf("expected create role 201, got %d, body=%s", roleCreateResp.Code, roleCreateResp.Body.String())
 	}
+	createdRoleData := getResultData(t, roleCreateResp.Body.Bytes())
 	var createdRole model.Role
-	if err := json.Unmarshal(roleCreateResp.Body.Bytes(), &createdRole); err != nil {
+	if err := json.Unmarshal(createdRoleData, &createdRole); err != nil {
 		t.Fatalf("parse role create failed: %v", err)
 	}
 

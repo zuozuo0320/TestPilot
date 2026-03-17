@@ -27,6 +27,7 @@ type Config struct {
 	AutoSeed           bool
 	RunFailRate        float64
 	CORSAllowOrigins   string
+	JWTSecret          string
 }
 
 func Load() Config {
@@ -49,6 +50,7 @@ func Load() Config {
 		AutoSeed:           getEnvBool("AUTO_SEED", false),
 		RunFailRate:        getEnvFloat("RUN_FAIL_RATE", 0.25),
 		CORSAllowOrigins:   getEnv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"),
+		JWTSecret:          getEnv("JWT_SECRET", "testpilot-dev-secret-change-in-production"),
 	}
 }
 
@@ -57,6 +59,23 @@ func (c Config) HTTPAddr() string {
 		return c.AppPort
 	}
 	return ":" + c.AppPort
+}
+
+// Validate 校验必填配置，缺失时返回错误
+func (c Config) Validate() error {
+	if c.DBHost == "" {
+		return fmt.Errorf("DB_HOST is required")
+	}
+	if c.DBUser == "" {
+		return fmt.Errorf("DB_USER is required")
+	}
+	if c.DBName == "" {
+		return fmt.Errorf("DB_NAME is required")
+	}
+	if c.AppPort == "" {
+		return fmt.Errorf("APP_PORT is required")
+	}
+	return nil
 }
 
 func (c Config) MySQLDSN() string {

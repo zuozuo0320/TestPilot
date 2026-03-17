@@ -8,13 +8,20 @@ import (
 	"gorm.io/gorm/clause"
 
 	"testpilot/internal/model"
+	pkgauth "testpilot/internal/pkg/auth"
 )
 
 func Seed(db *gorm.DB, logger *slog.Logger) error {
+	// 默认密码哈希
+	defaultHash, err := pkgauth.HashPassword("TestPilot@2026")
+	if err != nil {
+		return fmt.Errorf("hash default password failed: %w", err)
+	}
+
 	users := []model.User{
-		{Name: "Alice Admin", Email: "admin@testpilot.local", Role: model.GlobalRoleAdmin, Active: true},
-		{Name: "Mia Manager", Email: "manager@testpilot.local", Role: model.GlobalRoleManager, Active: true},
-		{Name: "Tom Tester", Email: "tester@testpilot.local", Role: model.GlobalRoleTester, Active: true},
+		{Name: "Alice Admin", Email: "admin@testpilot.local", Role: model.GlobalRoleAdmin, Active: true, PasswordHash: defaultHash},
+		{Name: "Mia Manager", Email: "manager@testpilot.local", Role: model.GlobalRoleManager, Active: true, PasswordHash: defaultHash},
+		{Name: "Tom Tester", Email: "tester@testpilot.local", Role: model.GlobalRoleTester, Active: true, PasswordHash: defaultHash},
 	}
 
 	for i := range users {

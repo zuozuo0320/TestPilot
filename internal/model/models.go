@@ -18,16 +18,17 @@ const (
 )
 
 type User struct {
-	ID        uint           `json:"id" gorm:"primaryKey"`
-	Name      string         `json:"name" gorm:"size:80;not null"`
-	Email     string         `json:"email" gorm:"size:120;index;not null"`
-	Phone     string         `json:"phone" gorm:"size:30;index"`
-	Avatar    string         `json:"avatar" gorm:"size:500"`
-	Role      string         `json:"role" gorm:"size:20;not null;index"`
-	Active    bool           `json:"active" gorm:"not null;default:true"`
-	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID           uint           `json:"id" gorm:"primaryKey"`
+	Name         string         `json:"name" gorm:"size:80;not null"`
+	Email        string         `json:"email" gorm:"size:120;index;not null"`
+	Phone        string         `json:"phone" gorm:"size:30;index"`
+	Avatar       string         `json:"avatar" gorm:"size:500"`
+	PasswordHash string         `json:"-" gorm:"column:password_hash;size:255;not null;default:''"`
+	Role         string         `json:"role" gorm:"size:20;not null;index"`
+	Active       bool           `json:"active" gorm:"not null;default:true"`
+	DeletedAt    gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
 type Role struct {
