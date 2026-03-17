@@ -41,9 +41,12 @@ func ErrConflict(code, message string) *BizError {
 	return &BizError{Status: 409, Code: code, Message: message}
 }
 
-// ErrInternal 500 内部错误（不暴露细节）
+// ErrInternal 500 内部错误（不暴露细节给客户端）
 func ErrInternal(code string, err error) *BizError {
-	return &BizError{Status: 500, Code: code, Message: err.Error()}
+	// 注意：Message 固定为通用提示，不暴露 err 内容
+	// err 仍可通过 Code 字段在日志中追踪
+	_ = err // TODO: 接入结构化日志后记录原始错误
+	return &BizError{Status: 500, Code: code, Message: "internal server error"}
 }
 
 // ========== 预定义错误 ==========

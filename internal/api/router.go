@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"testpilot/internal/dto/response"
-	"testpilot/internal/model"
 	"testpilot/internal/service"
 )
 
@@ -123,18 +122,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.GET("/projects/:projectID/defects", a.listDefects)
 	auth.GET("/projects/:projectID/overview", a.projectDemoOverview)
 	auth.POST("/webhooks/gitlab", a.mockGitLabWebhook)
-	auth.GET("/audit-logs", func(c *gin.Context) {
-		user := currentUser(c)
-		if !requireRole(c, user, model.GlobalRoleAdmin) {
-			return
-		}
-		logs, err := a.auditSvc.ListRecent(c.Request.Context(), 100)
-		if err != nil {
-			response.HandleError(c, err)
-			return
-		}
-		response.OK(c, gin.H{"logs": logs})
-	})
+	auth.GET("/audit-logs", a.listAuditLogs)
 
 	return r
 }

@@ -1,8 +1,6 @@
 // request.go — 所有 HTTP 请求/响应结构体定义（含 binding 校验标签）
 package api
 
-import "time"
-
 // createUserRequest 创建用户请求
 type createUserRequest struct {
 	Name       string `json:"name" binding:"required,min=2,max=80"`
@@ -95,26 +93,6 @@ type updateTestCaseRequest struct {
 	Tags         *string `json:"tags" binding:"omitempty,max=255"`
 	Steps        *string `json:"steps"`
 	Priority     *string `json:"priority" binding:"omitempty,oneof=high medium low"`
-}
-
-// testCaseListItem 用例列表项（含创建/更新人姓名）
-type testCaseListItem struct {
-	ID            uint      `json:"id"`
-	ProjectID     uint      `json:"project_id"`
-	Title         string    `json:"title"`
-	Level         string    `json:"level"`
-	ReviewResult  string    `json:"review_result"`
-	ExecResult    string    `json:"exec_result"`
-	ModulePath    string    `json:"module_path"`
-	Tags          string    `json:"tags"`
-	Steps         string    `json:"steps"`
-	Priority      string    `json:"priority"`
-	CreatedBy     uint      `json:"created_by"`
-	CreatedByName string    `json:"created_by_name"`
-	UpdatedBy     uint      `json:"updated_by"`
-	UpdatedByName string    `json:"updated_by_name"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // createScriptRequest 创建脚本请求
