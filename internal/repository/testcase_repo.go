@@ -17,6 +17,14 @@ type TestCaseFilter struct {
 	Level        string // 级别筛选
 	ReviewResult string // 评审结果筛选
 	ExecResult   string // 执行结果筛选
+	Tags         string // 标签筛选
+	ModuleID     *uint  // 目录模块筛选
+	CreatedByID  *uint  // 创建人筛选
+	UpdatedByID  *uint  // 更新人筛选
+	CreatedAfter  string // 创建时间起始
+	CreatedBefore string // 创建时间截止
+	UpdatedAfter  string // 更新时间起始
+	UpdatedBefore string // 更新时间截止
 	SortBy       string // 排序字段
 	SortOrder    string // 排序方向 asc/desc
 	Page         int    // 页码
@@ -31,9 +39,12 @@ type TestCaseListItem struct {
 	Level         string `json:"level"`
 	ReviewResult  string `json:"review_result"`
 	ExecResult    string `json:"exec_result"`
+	ModuleID      uint   `json:"module_id"`
 	ModulePath    string `json:"module_path"`
 	Tags          string `json:"tags"`
+	Precondition  string `json:"precondition"`
 	Steps         string `json:"steps"`
+	Remark        string `json:"remark"`
 	Priority      string `json:"priority"`
 	CreatedBy     uint   `json:"created_by"`
 	CreatedByName string `json:"created_by_name"`
@@ -45,20 +56,17 @@ type TestCaseListItem struct {
 
 // TestCaseRepository 用例数据访问接口
 type TestCaseRepository interface {
-	// FindByID 根据 ID + 项目 ID 查找用例
 	FindByID(ctx context.Context, id, projectID uint) (*model.TestCase, error)
-	// ListPaged 分页查询用例（支持筛选排序）
 	ListPaged(ctx context.Context, projectID uint, filter TestCaseFilter) ([]TestCaseListItem, int64, error)
-	// Create 创建用例
 	Create(ctx context.Context, tc *model.TestCase) error
-	// Updates 更新用例字段
 	Updates(ctx context.Context, tc *model.TestCase, fields map[string]any) error
-	// Delete 删除用例
 	Delete(ctx context.Context, id, projectID uint) (int64, error)
-	// BelongsToProject 检查用例是否属于指定项目
 	BelongsToProject(ctx context.Context, id, projectID uint) (bool, error)
-	// CountByProject 统计项目用例数量
 	CountByProject(ctx context.Context, projectID uint) (int64, error)
+	BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error)
+	BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error)
+	BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error)
+	CloneCase(ctx context.Context, projectID, sourceID, userID uint) (*model.TestCase, error)
 }
 
 // testCaseRepo TestCaseRepository 的 GORM 实现
@@ -100,6 +108,30 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 	if f.ExecResult != "" {
 		baseQuery = baseQuery.Where("exec_result = ?", f.ExecResult)
 	}
+	if f.Tags != "" {
+		baseQuery = baseQuery.Where("tags LIKE ?", "%"+f.Tags+"%")
+	}
+	if f.ModuleID != nil {
+		baseQuery = baseQuery.Where("module_id = ?", *f.ModuleID)
+	}
+	if f.CreatedByID != nil {
+		baseQuery = baseQuery.Where("created_by = ?", *f.CreatedByID)
+	}
+	if f.UpdatedByID != nil {
+		baseQuery = baseQuery.Where("updated_by = ?", *f.UpdatedByID)
+	}
+	if f.CreatedAfter != "" {
+		baseQuery = baseQuery.Where("test_cases.created_at >= ?", f.CreatedAfter)
+	}
+	if f.CreatedBefore != "" {
+		baseQuery = baseQuery.Where("test_cases.created_at <= ?", f.CreatedBefore)
+	}
+	if f.UpdatedAfter != "" {
+		baseQuery = baseQuery.Where("test_cases.updated_at >= ?", f.UpdatedAfter)
+	}
+	if f.UpdatedBefore != "" {
+		baseQuery = baseQuery.Where("test_cases.updated_at <= ?", f.UpdatedBefore)
+	}
 
 	// 总数
 	var total int64
@@ -124,7 +156,7 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 	var items []TestCaseListItem
 	offset := (f.Page - 1) * f.PageSize
 	err := baseQuery.
-		Select("test_cases.id, test_cases.project_id, test_cases.title, test_cases.level, test_cases.review_result, test_cases.exec_result, test_cases.module_path, test_cases.tags, test_cases.steps, test_cases.priority, test_cases.created_by, test_cases.updated_by, test_cases.created_at, test_cases.updated_at, cu.name AS created_by_name, uu.name AS updated_by_name").
+		Select("test_cases.id, test_cases.project_id, test_cases.title, test_cases.level, test_cases.review_result, test_cases.exec_result, test_cases.module_id, test_cases.module_path, test_cases.tags, test_cases.precondition, test_cases.steps, test_cases.remark, test_cases.priority, test_cases.created_by, test_cases.updated_by, test_cases.created_at, test_cases.updated_at, cu.name AS created_by_name, uu.name AS updated_by_name").
 		Joins("LEFT JOIN users cu ON cu.id = test_cases.created_by").
 		Joins("LEFT JOIN users uu ON uu.id = test_cases.updated_by").
 		Order(orderColumn + " " + sortOrder).
@@ -171,4 +203,59 @@ func (r *testCaseRepo) CountByProject(ctx context.Context, projectID uint) (int6
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.TestCase{}).Where("project_id = ?", projectID).Count(&count).Error
 	return count, err
+}
+
+func (r *testCaseRepo) BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := r.db.WithContext(ctx).Where("project_id = ? AND id IN ?", projectID, ids).Delete(&model.TestCase{})
+	return result.RowsAffected, result.Error
+}
+
+func (r *testCaseRepo) BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := r.db.WithContext(ctx).Model(&model.TestCase{}).
+		Where("project_id = ? AND id IN ?", projectID, ids).
+		Update("level", level)
+	return result.RowsAffected, result.Error
+}
+
+func (r *testCaseRepo) BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := r.db.WithContext(ctx).Model(&model.TestCase{}).
+		Where("project_id = ? AND id IN ?", projectID, ids).
+		Updates(map[string]any{"module_id": moduleID, "module_path": modulePath})
+	return result.RowsAffected, result.Error
+}
+
+func (r *testCaseRepo) CloneCase(ctx context.Context, projectID, sourceID, userID uint) (*model.TestCase, error) {
+	source, err := r.FindByID(ctx, sourceID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	clone := &model.TestCase{
+		ProjectID:    source.ProjectID,
+		Title:        source.Title + " (副本)",
+		Level:        source.Level,
+		ReviewResult: "未评审",
+		ExecResult:   "未执行",
+		ModuleID:     source.ModuleID,
+		ModulePath:   source.ModulePath,
+		Tags:         source.Tags,
+		Precondition: source.Precondition,
+		Steps:        source.Steps,
+		Remark:       source.Remark,
+		Priority:     source.Priority,
+		CreatedBy:    userID,
+		UpdatedBy:    userID,
+	}
+	if err := r.db.WithContext(ctx).Create(clone).Error; err != nil {
+		return nil, err
+	}
+	return clone, nil
 }

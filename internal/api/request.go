@@ -74,25 +74,55 @@ type createRequirementRequest struct {
 // createTestCaseRequest 创建用例请求
 type createTestCaseRequest struct {
 	Title        string `json:"title" binding:"required,min=1,max=200"`
-	Level        string `json:"level" binding:"omitempty,oneof=P0 P1 P2 P3 P4"`
+	Level        string `json:"level" binding:"omitempty,oneof=P0 P1 P2 P3"`
 	ReviewResult string `json:"review_result"`
 	ExecResult   string `json:"exec_result"`
+	ModuleID     uint   `json:"module_id"`
 	ModulePath   string `json:"module_path" binding:"omitempty,max=255"`
-	Tags         string `json:"tags" binding:"omitempty,max=255"`
+	Tags         string `json:"tags" binding:"omitempty,max=500"`
+	Precondition string `json:"precondition"`
 	Steps        string `json:"steps"`
+	Remark       string `json:"remark"`
 	Priority     string `json:"priority" binding:"omitempty,oneof=high medium low"`
 }
 
 // updateTestCaseRequest 更新用例请求（字段可选）
 type updateTestCaseRequest struct {
 	Title        *string `json:"title" binding:"omitempty,min=1,max=200"`
-	Level        *string `json:"level" binding:"omitempty,oneof=P0 P1 P2 P3 P4"`
+	Level        *string `json:"level" binding:"omitempty,oneof=P0 P1 P2 P3"`
 	ReviewResult *string `json:"review_result"`
 	ExecResult   *string `json:"exec_result"`
+	ModuleID     *uint   `json:"module_id"`
 	ModulePath   *string `json:"module_path" binding:"omitempty,max=255"`
-	Tags         *string `json:"tags" binding:"omitempty,max=255"`
+	Tags         *string `json:"tags" binding:"omitempty,max=500"`
+	Precondition *string `json:"precondition"`
 	Steps        *string `json:"steps"`
+	Remark       *string `json:"remark"`
 	Priority     *string `json:"priority" binding:"omitempty,oneof=high medium low"`
+}
+
+// batchDeleteRequest 批量删除请求
+type batchDeleteRequest struct {
+	IDs []uint `json:"ids" binding:"required,min=1"`
+}
+
+// batchUpdateLevelRequest 批量修改等级请求
+type batchUpdateLevelRequest struct {
+	IDs   []uint `json:"ids" binding:"required,min=1"`
+	Level string `json:"level" binding:"required,oneof=P0 P1 P2 P3"`
+}
+
+// batchMoveRequest 批量移动请求
+type batchMoveRequest struct {
+	IDs        []uint `json:"ids" binding:"required,min=1"`
+	ModuleID   uint   `json:"module_id"`
+	ModulePath string `json:"module_path"`
+}
+
+// createRelationRequest 创建用例关联
+type createRelationRequest struct {
+	TargetCaseID uint   `json:"target_case_id" binding:"required,min=1"`
+	RelationType string `json:"relation_type" binding:"required,oneof=precondition related"`
 }
 
 // createScriptRequest 创建脚本请求

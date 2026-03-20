@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"testpilot/internal/dto/response"
+	"testpilot/internal/repository"
 	"testpilot/internal/service"
 )
 
@@ -26,43 +27,58 @@ type Dependencies struct {
 	ScriptService      *service.ScriptService
 	OverviewService    *service.OverviewService
 	AuditService       *service.AuditService
+	ModuleService      *service.ModuleService
+	AttachmentService  *service.AttachmentService
+	CaseHistoryRepo    *repository.CaseHistoryRepo
+	CaseRelationRepo   *repository.CaseRelationRepo
+	XlsxService        *service.XlsxService
 }
 
 // API 核心结构体
 type API struct {
-	logger         *slog.Logger
-	allowedOrigins []string
-	authSvc        *service.AuthService
-	userSvc        *service.UserService
-	roleSvc        *service.RoleService
-	projectSvc     *service.ProjectService
-	testCaseSvc    *service.TestCaseService
-	profileSvc     *service.ProfileService
-	executionSvc   *service.ExecutionService
-	defectSvc      *service.DefectService
-	requirementSvc *service.RequirementService
-	scriptSvc      *service.ScriptService
-	overviewSvc    *service.OverviewService
-	auditSvc       *service.AuditService
+	logger          *slog.Logger
+	allowedOrigins  []string
+	authSvc         *service.AuthService
+	userSvc         *service.UserService
+	roleSvc         *service.RoleService
+	projectSvc      *service.ProjectService
+	testCaseSvc     *service.TestCaseService
+	profileSvc      *service.ProfileService
+	executionSvc    *service.ExecutionService
+	defectSvc       *service.DefectService
+	requirementSvc  *service.RequirementService
+	scriptSvc       *service.ScriptService
+	overviewSvc     *service.OverviewService
+	auditSvc        *service.AuditService
+	moduleSvc       *service.ModuleService
+	attachmentSvc   *service.AttachmentService
+	caseHistoryRepo *repository.CaseHistoryRepo
+	caseRelationRepo *repository.CaseRelationRepo
+	xlsxSvc          *service.XlsxService
 }
 
 // NewRouter 创建路由引擎并注册所有路由
 func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	a := &API{
-		logger:         deps.Logger,
-		allowedOrigins: parseAllowedOrigins(corsOrigins),
-		authSvc:        deps.AuthService,
-		userSvc:        deps.UserService,
-		roleSvc:        deps.RoleService,
-		projectSvc:     deps.ProjectService,
-		testCaseSvc:    deps.TestCaseService,
-		profileSvc:     deps.ProfileService,
-		executionSvc:   deps.ExecutionService,
-		defectSvc:      deps.DefectService,
-		requirementSvc: deps.RequirementService,
-		scriptSvc:      deps.ScriptService,
-		overviewSvc:    deps.OverviewService,
-		auditSvc:       deps.AuditService,
+		logger:          deps.Logger,
+		allowedOrigins:  parseAllowedOrigins(corsOrigins),
+		authSvc:         deps.AuthService,
+		userSvc:         deps.UserService,
+		roleSvc:         deps.RoleService,
+		projectSvc:      deps.ProjectService,
+		testCaseSvc:     deps.TestCaseService,
+		profileSvc:      deps.ProfileService,
+		executionSvc:    deps.ExecutionService,
+		defectSvc:       deps.DefectService,
+		requirementSvc:  deps.RequirementService,
+		scriptSvc:       deps.ScriptService,
+		overviewSvc:     deps.OverviewService,
+		auditSvc:        deps.AuditService,
+		moduleSvc:       deps.ModuleService,
+		attachmentSvc:   deps.AttachmentService,
+		caseHistoryRepo: deps.CaseHistoryRepo,
+		caseRelationRepo: deps.CaseRelationRepo,
+		xlsxSvc:          deps.XlsxService,
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -96,6 +112,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.DELETE("/users/:userID", a.deleteUser)
 	auth.POST("/users/:userID/roles", a.assignUserRoles)
 	auth.POST("/users/:userID/projects", a.assignUserProjects)
+	auth.GET("/users/me/profile", a.getProfile)
 	auth.PUT("/users/me/profile", a.updateProfile)
 	auth.POST("/users/me/avatar", a.uploadMyAvatar)
 	auth.GET("/roles", a.listRoles)
@@ -110,8 +127,29 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.GET("/projects/:projectID/requirements", a.listRequirements)
 	auth.POST("/projects/:projectID/testcases", a.createTestCase)
 	auth.GET("/projects/:projectID/testcases", a.listTestCases)
+	// Static testcase sub-paths MUST come before :testcaseID params (Gin requirement)
+	auth.POST("/projects/:projectID/testcases/batch-delete", a.batchDeleteTestCases)
+	auth.POST("/projects/:projectID/testcases/batch-update-level", a.batchUpdateLevel)
+	auth.POST("/projects/:projectID/testcases/batch-move", a.batchMoveTestCases)
+	auth.GET("/projects/:projectID/testcases/export", a.exportTestCasesXlsx)
+	auth.POST("/projects/:projectID/testcases/import", a.importTestCasesXlsx)
+	// Parameterized :testcaseID routes
 	auth.PUT("/projects/:projectID/testcases/:testcaseID", a.updateTestCase)
 	auth.DELETE("/projects/:projectID/testcases/:testcaseID", a.deleteTestCase)
+	auth.POST("/projects/:projectID/testcases/:testcaseID/clone", a.cloneTestCase)
+	auth.GET("/projects/:projectID/testcases/:testcaseID/history", a.listCaseHistory)
+	auth.GET("/projects/:projectID/testcases/:testcaseID/relations", a.listCaseRelations)
+	auth.POST("/projects/:projectID/testcases/:testcaseID/relations", a.createCaseRelation)
+	auth.DELETE("/projects/:projectID/testcases/:testcaseID/relations/:relationID", a.deleteCaseRelation)
+	auth.POST("/projects/:projectID/testcases/:testcaseID/attachments", a.uploadAttachment)
+	auth.GET("/projects/:projectID/testcases/:testcaseID/attachments", a.listAttachments)
+	auth.DELETE("/projects/:projectID/attachments/:attachmentID", a.deleteAttachment)
+	auth.GET("/projects/:projectID/attachments/:attachmentID/download", a.downloadAttachment)
+	auth.GET("/projects/:projectID/modules", a.listModules)
+	auth.POST("/projects/:projectID/modules", a.createModule)
+	auth.PUT("/projects/:projectID/modules/:moduleID", a.renameModule)
+	auth.PUT("/projects/:projectID/modules/:moduleID/move", a.moveModule)
+	auth.DELETE("/projects/:projectID/modules/:moduleID", a.deleteModule)
 	auth.POST("/projects/:projectID/scripts", a.createScript)
 	auth.GET("/projects/:projectID/scripts", a.listScripts)
 	auth.POST("/projects/:projectID/requirements/:requirementID/testcases/:testcaseID", a.linkRequirementAndTestCase)

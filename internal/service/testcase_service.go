@@ -11,12 +11,13 @@ import (
 
 // TestCaseService 用例管理服务
 type TestCaseService struct {
-	testCaseRepo repository.TestCaseRepository
+	testCaseRepo    repository.TestCaseRepository
+	caseHistoryRepo *repository.CaseHistoryRepo
 }
 
 // NewTestCaseService 创建用例服务
-func NewTestCaseService(repo repository.TestCaseRepository) *TestCaseService {
-	return &TestCaseService{testCaseRepo: repo}
+func NewTestCaseService(repo repository.TestCaseRepository, historyRepo *repository.CaseHistoryRepo) *TestCaseService {
+	return &TestCaseService{testCaseRepo: repo, caseHistoryRepo: historyRepo}
 }
 
 // CreateTestCaseInput 创建用例输入
@@ -25,9 +26,12 @@ type CreateTestCaseInput struct {
 	Level        string
 	ReviewResult string
 	ExecResult   string
+	ModuleID     uint
 	ModulePath   string
 	Tags         string
+	Precondition string
 	Steps        string
+	Remark       string
 	Priority     string
 }
 
@@ -60,8 +64,12 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 	entity := model.TestCase{
 		ProjectID: projectID, Title: strings.TrimSpace(input.Title),
 		Level: level, ReviewResult: reviewResult, ExecResult: execResult,
-		ModulePath: modulePath, Tags: strings.TrimSpace(input.Tags),
-		Steps: strings.TrimSpace(input.Steps), Priority: priority,
+		ModuleID: input.ModuleID, ModulePath: modulePath,
+		Tags: strings.TrimSpace(input.Tags),
+		Precondition: input.Precondition,
+		Steps: strings.TrimSpace(input.Steps),
+		Remark: input.Remark,
+		Priority: priority,
 		CreatedBy: userID, UpdatedBy: userID,
 	}
 	if err := s.testCaseRepo.Create(ctx, &entity); err != nil {
@@ -84,9 +92,12 @@ type UpdateTestCaseInput struct {
 	Level        *string
 	ReviewResult *string
 	ExecResult   *string
+	ModuleID     *uint
 	ModulePath   *string
 	Tags         *string
+	Precondition *string
 	Steps        *string
+	Remark       *string
 	Priority     *string
 }
 
@@ -136,8 +147,17 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID uint
 	if input.Tags != nil {
 		updates["tags"] = strings.TrimSpace(*input.Tags)
 	}
+	if input.Precondition != nil {
+		updates["precondition"] = *input.Precondition
+	}
 	if input.Steps != nil {
 		updates["steps"] = strings.TrimSpace(*input.Steps)
+	}
+	if input.Remark != nil {
+		updates["remark"] = *input.Remark
+	}
+	if input.ModuleID != nil {
+		updates["module_id"] = *input.ModuleID
 	}
 	if input.Priority != nil {
 		p := strings.ToLower(strings.TrimSpace(*input.Priority))
@@ -169,4 +189,37 @@ func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint
 		return ErrTestCaseNotFound
 	}
 	return nil
+}
+
+// BatchDelete 批量删除用例
+func (s *TestCaseService) BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error) {
+	if len(ids) == 0 {
+		return 0, ErrBadRequest("EMPTY_IDS", "no IDs provided")
+	}
+	return s.testCaseRepo.BatchDelete(ctx, projectID, ids)
+}
+
+// BatchUpdateLevel 批量修改等级
+func (s *TestCaseService) BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, ErrBadRequest("EMPTY_IDS", "no IDs provided")
+	}
+	l := strings.ToUpper(strings.TrimSpace(level))
+	if l == "" {
+		return 0, ErrBadRequest("MISSING_LEVEL", "level is required")
+	}
+	return s.testCaseRepo.BatchUpdateLevel(ctx, projectID, ids, l)
+}
+
+// BatchMove 批量移动用例到另一目录
+func (s *TestCaseService) BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, ErrBadRequest("EMPTY_IDS", "no IDs provided")
+	}
+	return s.testCaseRepo.BatchMove(ctx, projectID, ids, moduleID, modulePath)
+}
+
+// CloneCase 复制用例
+func (s *TestCaseService) CloneCase(ctx context.Context, projectID, sourceID, userID uint) (*model.TestCase, error) {
+	return s.testCaseRepo.CloneCase(ctx, projectID, sourceID, userID)
 }

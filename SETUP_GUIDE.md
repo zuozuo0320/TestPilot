@@ -1,4 +1,4 @@
-# 测试管理平台 — 新机器部署指南
+# Aisight 测试管理平台 — 新机器部署指南
 
 > 本文档面向需要在新机器上搭建开发环境的团队成员。
 
@@ -98,16 +98,16 @@ npm run dev
 ## 6. 项目结构
 
 ```
-测试管理平台/
+Aisight/
 ├── TestPilot/           # 后端（Go + Gin）
-│   ├── cmd/server/      #   入口
+│   ├── cmd/server/      #   入口 + 依赖注入 + 优雅关停
 │   ├── internal/        #   四层架构（api → service → repository → model）
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   ├── .env.example     #   环境变量模板
 │   └── go.mod
 │
-└── TestFront/           # 前端（Vue 3 + Vite）
+└── TestFront/           # 前端（Vue 3 + Vite + TypeScript）
     ├── src/
     └── package.json
 ```

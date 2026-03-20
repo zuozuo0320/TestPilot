@@ -100,6 +100,10 @@ func main() {
 	defectRepo := repository.NewDefectRepo(db)
 	requirementRepo := repository.NewRequirementRepo(db)
 	scriptRepo := repository.NewScriptRepo(db)
+	moduleRepo := repository.NewModuleRepo(db)
+	attachmentRepo := repository.NewAttachmentRepo(db)
+	caseHistoryRepo := repository.NewCaseHistoryRepo(db)
+	caseRelationRepo := repository.NewCaseRelationRepo(db)
 
 	// 2. Service 层
 	mockExecutor := execution.NewMockExecutor(logger, cfg.RunFailRate)
@@ -108,7 +112,7 @@ func main() {
 	userSvc := service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr)
 	roleSvc := service.NewRoleService(roleRepo, auditRepo, txMgr)
 	projectSvc := service.NewProjectService(projectRepo, userRepo)
-	testCaseSvc := service.NewTestCaseService(testCaseRepo)
+	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo)
 	profileSvc := service.NewProfileService(userRepo, auditRepo, txMgr)
 	executionSvc := service.NewExecutionService(executionRepo, txMgr, mockExecutor, redisClient, logger)
 	defectSvc := service.NewDefectService(defectRepo, executionRepo)
@@ -116,6 +120,9 @@ func main() {
 	scriptSvc := service.NewScriptService(scriptRepo, testCaseRepo)
 	overviewSvc := service.NewOverviewService(projectRepo, requirementRepo, testCaseRepo, scriptRepo, executionRepo, defectRepo)
 	auditSvc := service.NewAuditService(auditRepo)
+	moduleSvc := service.NewModuleService(moduleRepo)
+	attachmentSvc := service.NewAttachmentService(attachmentRepo, "./uploads")
+	xlsxSvc := service.NewXlsxService(testCaseRepo)
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{
@@ -132,6 +139,11 @@ func main() {
 		ScriptService:      scriptSvc,
 		OverviewService:    overviewSvc,
 		AuditService:       auditSvc,
+		ModuleService:      moduleSvc,
+		AttachmentService:  attachmentSvc,
+		CaseHistoryRepo:    caseHistoryRepo,
+		CaseRelationRepo:   caseRelationRepo,
+		XlsxService:        xlsxSvc,
 	}, cfg.CORSAllowOrigins)
 
 	server := &http.Server{

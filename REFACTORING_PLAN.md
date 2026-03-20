@@ -1,4 +1,4 @@
-# TestPilot 后端重构方案
+# Aisight 后端重构方案
 
 > 日期：2026-03-16 ~ 2026-03-18 | 版本：v2.2 → v3.0
 > 状态：**P1-P7 全部完成** ✅ | 测试：44/44 PASS
@@ -18,9 +18,9 @@
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| **P1** | 拆分 `router.go` 为 15 个文件 | ✅ 完成 |
-| **P2** | 提取 Repository 层（10 个 Repo 文件） | ✅ 完成 |
-| **P3** | 提取 Service 层（13 个 Service 文件） | ✅ 完成 |
+| **P1** | 拆分 `router.go` 为 20 个文件 | ✅ 完成 |
+| **P2** | 提取 Repository 层（14 个 Repo 文件） | ✅ 完成 |
+| **P3** | 提取 Service 层（17 个 Service 文件） | ✅ 完成 |
 | **P4** | 统一错误体系 + 响应格式 + Request ID + 优雅关停 | ✅ 完成 |
 | **P5** | JWT 认证 + bcrypt 密码 | ✅ 完成 |
 | **P6** | Service 层单元测试（38 个用例） | ✅ 完成 |
@@ -32,7 +32,7 @@
 
 ### P1：拆分 router.go ✅
 
-**成果**：2309 行的 `router.go` 被拆分为 15 个职责清晰的文件。
+**成果**：原始 `router.go` 被拆分为 20 个职责清晰的文件。
 
 ```
 internal/api/
@@ -43,11 +43,15 @@ internal/api/
 ├── handler_profile.go     # updateProfile / uploadMyAvatar / getProfile
 ├── handler_role.go        # listRoles / createRole / updateRole / deleteRole
 ├── handler_project.go     # createProject / listProjects / addProjectMember / listProjectMembers
-├── handler_testcase.go    # createTestCase / listTestCases / updateTestCase / deleteTestCase
+├── handler_testcase.go    # createTestCase / listTestCases / updateTestCase / deleteTestCase / clone / batch / history / relations
+├── handler_module.go      # listModules / createModule / renameModule / moveModule / deleteModule
+├── handler_attachment.go  # uploadAttachment / listAttachments / deleteAttachment / downloadAttachment
+├── handler_xlsx.go        # exportTestCasesXlsx / importTestCasesXlsx
 ├── handler_requirement.go # createRequirement / listRequirements
 ├── handler_script.go      # createScript / listScripts / linkRequirementAndTestCase / linkTestCaseAndScript
 ├── handler_run.go         # createRun / listRunResults
 ├── handler_defect.go      # createDefect / listDefects
+├── handler_audit.go       # listAuditLogs
 ├── handler_overview.go    # projectDemoOverview / mockGitLabWebhook
 ├── request.go             # 所有 request 结构体 + binding 校验标签
 └── helpers.go             # bindJSON / parseUintParam / currentUser / requireRole / CORS 工具
@@ -65,12 +69,16 @@ internal/repository/
 ├── role_repo.go           # RoleRepository 接口 + 实现
 ├── project_repo.go        # ProjectRepository 接口 + 实现
 ├── testcase_repo.go       # TestCaseRepository 接口 + TestCaseFilter / TestCaseListItem
+├── module_repo.go         # ModuleRepository 接口 + 实现
+├── attachment_repo.go     # AttachmentRepository 接口 + 实现
+├── case_history_repo.go   # CaseHistoryRepository 接口 + 实现
+├── case_relation_repo.go  # CaseRelationRepository 接口 + 实现
 ├── requirement_repo.go    # RequirementRepository 接口 + 实现
 ├── script_repo.go         # ScriptRepository 接口 + 实现
 ├── execution_repo.go      # RunRepository 接口 + 实现
 ├── defect_repo.go         # DefectRepository 接口 + 实现
 ├── audit_repo.go          # AuditRepository 接口 + 实现
-└── tx_manager.go          # TxManager 事务管理器
+└── transaction.go         # 事务管理器
 ```
 
 **关键设计**：
@@ -88,16 +96,20 @@ internal/repository/
 internal/service/
 ├── errors.go              # BizError 类型 + 预定义错误（ErrBadRequest / ErrConflict / ErrForbidden 等）
 ├── validators.go          # isValidEmail / isValidPhone / isValidPersonName 等校验工具
+├── helpers.go             # 公共辅助函数
 ├── auth_service.go        # Login / RefreshToken / FindUserForAuth
 ├── user_service.go        # List / Create / Update / Delete / AssignRoles / AssignProjects
 ├── role_service.go        # List / Create / Update / Delete（含预置角色保护）
 ├── project_service.go     # List / Create / AddMember / ListMembers / RequireAccess
 ├── testcase_service.go    # Create / ListPaged / Update / Delete（含默认值填充）
+├── module_service.go      # List / Create / Rename / Move / Delete
+├── attachment_service.go  # Upload / List / Delete
+├── xlsx_service.go        # Export / Import
 ├── requirement_service.go # Create / List / LinkTestCase
 ├── script_service.go      # Create / List / LinkTestCase
 ├── execution_service.go   # CreateRun / ListResults
 ├── defect_service.go      # Create / List
-├── profile_service.go     # Update / UpdateAvatar（含邮箱禁改）
+├── profile_service.go     # Get / Update / UpdateAvatar（含邮箱禁改）
 ├── audit_service.go       # ListByUser / ListRecent
 └── overview_service.go    # GetOverview（聚合统计）
 ```
@@ -259,7 +271,7 @@ TestPilot/
 ├── internal/
 │   ├── config/config.go              # 环境变量 + JWTSecret
 │   ├── model/models.go               # 数据模型（含 PasswordHash）
-│   ├── api/                          # API 层（15 个文件）
+│   ├── api/                          # API 层（20 个文件）
 │   │   ├── router.go                 #   路由注册 + Dependencies
 │   │   ├── middleware.go             #   CORS / JWT Auth / RequestID / Recovery / Logging
 │   │   ├── helpers.go                #   bindJSON / parseUintParam / currentUser / requireRole
@@ -275,8 +287,8 @@ TestPilot/
 │   │   ├── handler_run.go            #   执行管理
 │   │   ├── handler_defect.go         #   缺陷管理
 │   │   ├── handler_overview.go       #   概览 + WebHook
-│   │   └── router_test.go            #   集成测试（6 个）
-│   ├── service/                      # Service 层（14 个文件 + 7 个测试文件）
+│   │   └── router_test.go            #   集成测试
+│   ├── service/                      # Service 层（17 个文件 + 7 个测试文件）
 │   │   ├── errors.go                 #   BizError + 预定义错误
 │   │   ├── validators.go             #   输入校验工具
 │   │   ├── auth_service.go           #   登录 + JWT + bcrypt
@@ -292,7 +304,7 @@ TestPilot/
 │   │   ├── audit_service.go          #   审计日志
 │   │   ├── overview_service.go       #   概览统计
 │   │   └── *_test.go                 #   单元测试（38 个）
-│   ├── repository/                   # Repository 层（10 个文件）
+│   ├── repository/                   # Repository 层（14 个文件）
 │   │   ├── user_repo.go
 │   │   ├── role_repo.go
 │   │   ├── project_repo.go

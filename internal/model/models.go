@@ -100,14 +100,62 @@ type TestCase struct {
 	Level        string    `json:"level" gorm:"size:10;default:P1"`
 	ReviewResult string    `json:"review_result" gorm:"size:30;default:未评审"`
 	ExecResult   string    `json:"exec_result" gorm:"size:30;default:未执行"`
-	ModulePath   string    `json:"module_path" gorm:"size:255;default:/未分类"`
-	Tags         string    `json:"tags" gorm:"size:255"`
+	ModuleID     uint      `json:"module_id" gorm:"default:0;index"`
+	ModulePath   string    `json:"module_path" gorm:"size:255;default:/"`
+	Tags         string    `json:"tags" gorm:"size:500"`
+	Precondition string    `json:"precondition" gorm:"type:text"`
 	Steps        string    `json:"steps" gorm:"type:text"`
+	Remark       string    `json:"remark" gorm:"type:text"`
 	Priority     string    `json:"priority" gorm:"size:20;default:medium"`
 	CreatedBy    uint      `json:"created_by" gorm:"not null;default:0;index"`
 	UpdatedBy    uint      `json:"updated_by" gorm:"not null;default:0;index"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// Module 用例目录树节点
+type Module struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	ProjectID uint      `json:"project_id" gorm:"not null;index"`
+	ParentID  uint      `json:"parent_id" gorm:"default:0;index"`
+	Name      string    `json:"name" gorm:"size:100;not null"`
+	SortOrder int       `json:"sort_order" gorm:"default:0"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CaseAttachment 用例附件
+type CaseAttachment struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	TestCaseID uint      `json:"testcase_id" gorm:"not null;index"`
+	FileName   string    `json:"file_name" gorm:"size:255;not null"`
+	FilePath   string    `json:"file_path" gorm:"size:500;not null"`
+	FileSize   int64     `json:"file_size"`
+	MimeType   string    `json:"mime_type" gorm:"size:100"`
+	CreatedBy  uint      `json:"created_by" gorm:"default:0"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// CaseHistory 用例编辑历史
+type CaseHistory struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	TestCaseID uint      `json:"testcase_id" gorm:"not null;index"`
+	Action     string    `json:"action" gorm:"size:20;not null"`
+	FieldName  string    `json:"field_name" gorm:"size:50"`
+	OldValue   string    `json:"old_value" gorm:"type:text"`
+	NewValue   string    `json:"new_value" gorm:"type:text"`
+	ChangedBy  uint      `json:"changed_by" gorm:"not null;index"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// CaseRelation 用例关联关系
+type CaseRelation struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	SourceCaseID uint      `json:"source_case_id" gorm:"not null;index"`
+	TargetCaseID uint      `json:"target_case_id" gorm:"not null;index"`
+	RelationType string    `json:"relation_type" gorm:"size:20;not null"`
+	CreatedBy    uint      `json:"created_by" gorm:"default:0"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type Script struct {
@@ -176,6 +224,10 @@ func AutoMigrate(db *gorm.DB) error {
 		&ProjectMember{},
 		&Requirement{},
 		&TestCase{},
+		&Module{},
+		&CaseAttachment{},
+		&CaseHistory{},
+		&CaseRelation{},
 		&Script{},
 		&RequirementTestCase{},
 		&TestCaseScript{},
