@@ -8,6 +8,7 @@
 - 需求、脚本实体管理 + 需求-用例、用例-脚本关联
 - 执行触发（全量、单脚本、批量）+ 运行结果创建缺陷
 - 用户/角色管理 + 审计日志
+- 增量 SQL 迁移引擎（幂等、自动执行）
 
 ---
 
@@ -49,6 +50,7 @@
 | 管理员 | admin@testpilot.local | TestPilot@2026 |
 | 经理 | manager@testpilot.local | TestPilot@2026 |
 | 测试员 | tester@testpilot.local | TestPilot@2026 |
+| 测试员 | 18518325564@163.com | TestPilot@2026 |
 
 ---
 
@@ -88,13 +90,13 @@ GORM AutoMigrate 只能创建新列，无法修改已有列类型。项目内置
 │   │   │   ├── migrate.go
 │   │   │   └── sql/
 │   │   ├── model/                    #   数据模型
-│   │   ├── api/                      #   API 层
-│   │   ├── service/                  #   Service 层
-│   │   ├── repository/               #   Repository 层
+│   │   ├── api/                      #   API 层（20 个文件）
+│   │   ├── service/                  #   Service 层（17 个 + 测试）
+│   │   ├── repository/               #   Repository 层（14 个文件）
 │   │   ├── store/                    #   数据库连接
 │   │   └── seed/                     #   种子数据
 │   ├── Dockerfile
 │   ├── docker-compose.yml
 │   └── go.mod
-└── TestFront/                        # 前端
+└── TestFront/                        # 前端（Vue 3 + Vite + TypeScript + 暗色主题）
 ```

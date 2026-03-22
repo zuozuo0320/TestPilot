@@ -91,7 +91,9 @@ npm run dev
 | 角色 | 邮箱 | 密码 |
 |------|------|------|
 | 管理员 | admin@testpilot.local | TestPilot@2026 |
+| 经理 | manager@testpilot.local | TestPilot@2026 |
 | 测试员 | tester@testpilot.local | TestPilot@2026 |
+| 测试员 | 18518325564@163.com | TestPilot@2026 |
 
 ---
 
