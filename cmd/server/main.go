@@ -12,6 +12,7 @@ import (
 	"testpilot/internal/api"
 	"testpilot/internal/config"
 	"testpilot/internal/execution"
+	"testpilot/internal/migration"
 	"testpilot/internal/model"
 	pkgauth "testpilot/internal/pkg/auth"
 	"testpilot/internal/repository"
@@ -50,6 +51,18 @@ func main() {
 			}
 			logger.Info("migration done")
 			return
+		case "migrate-sql":
+			db, err := store.NewMySQL(cfg, logger)
+			if err != nil {
+				logger.Error("db connect failed", "error", err)
+				os.Exit(1)
+			}
+			if err := migration.Run(db, logger); err != nil {
+				logger.Error("sql migration failed", "error", err)
+				os.Exit(1)
+			}
+			logger.Info("sql migration done")
+			return
 		case "seed":
 			db, err := store.NewMySQL(cfg, logger)
 			if err != nil {
@@ -73,6 +86,11 @@ func main() {
 	}
 	if err := model.AutoMigrate(db); err != nil {
 		logger.Error("auto migrate failed", "error", err)
+		os.Exit(1)
+	}
+	// 执行增量 SQL 迁移（处理 AutoMigrate 无法完成的变更）
+	if err := migration.Run(db, logger); err != nil {
+		logger.Error("sql migration failed", "error", err)
 		os.Exit(1)
 	}
 	if cfg.AutoSeed {
@@ -111,7 +129,7 @@ func main() {
 	authSvc := service.NewAuthService(userRepo, jwtCfg)
 	userSvc := service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr)
 	roleSvc := service.NewRoleService(roleRepo, auditRepo, txMgr)
-	projectSvc := service.NewProjectService(projectRepo, userRepo)
+	projectSvc := service.NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
 	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo)
 	profileSvc := service.NewProfileService(userRepo, auditRepo, txMgr)
 	executionSvc := service.NewExecutionService(executionRepo, txMgr, mockExecutor, redisClient, logger)

@@ -33,6 +33,10 @@ type UserRepository interface {
 	Updates(ctx context.Context, id uint, fields map[string]any) error
 	// SoftDelete 逻辑删除用户
 	SoftDelete(ctx context.Context, id uint) error
+	// GetRoleIDs 获取用户绑定的角色 ID 列表
+	GetRoleIDs(ctx context.Context, userID uint) ([]uint, error)
+	// GetProjectIDs 获取用户绑定的项目 ID 列表
+	GetProjectIDs(ctx context.Context, userID uint) ([]uint, error)
 
 	// ---- 事务版本 ----
 
@@ -153,6 +157,20 @@ func (r *userRepo) Updates(ctx context.Context, id uint, fields map[string]any) 
 
 func (r *userRepo) SoftDelete(ctx context.Context, id uint) error {
 	return r.db.WithContext(ctx).Delete(&model.User{}, id).Error
+}
+
+// GetRoleIDs 获取用户绑定的角色 ID 列表
+func (r *userRepo) GetRoleIDs(ctx context.Context, userID uint) ([]uint, error) {
+	var ids []uint
+	err := r.db.WithContext(ctx).Model(&model.UserRole{}).Where("user_id = ?", userID).Pluck("role_id", &ids).Error
+	return ids, err
+}
+
+// GetProjectIDs 获取用户绑定的项目 ID 列表
+func (r *userRepo) GetProjectIDs(ctx context.Context, userID uint) ([]uint, error) {
+	var ids []uint
+	err := r.db.WithContext(ctx).Model(&model.UserProject{}).Where("user_id = ?", userID).Pluck("project_id", &ids).Error
+	return ids, err
 }
 
 // ---- 事务版本 ----

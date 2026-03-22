@@ -106,23 +106,36 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth := v1.Group("")
 	auth.Use(a.authMiddleware())
 
+	// ---- 用户管理 ----
 	auth.GET("/users", a.listUsers)
 	auth.POST("/users", a.createUser)
 	auth.PUT("/users/:userID", a.updateUser)
 	auth.DELETE("/users/:userID", a.deleteUser)
+	auth.PUT("/users/:userID/reset-password", a.resetPassword)
+	auth.PUT("/users/:userID/toggle-active", a.toggleActive)
 	auth.POST("/users/:userID/roles", a.assignUserRoles)
 	auth.POST("/users/:userID/projects", a.assignUserProjects)
 	auth.GET("/users/me/profile", a.getProfile)
 	auth.PUT("/users/me/profile", a.updateProfile)
+	auth.PUT("/users/me/password", a.changePassword)
 	auth.POST("/users/me/avatar", a.uploadMyAvatar)
+
+	// ---- 角色管理 ----
 	auth.GET("/roles", a.listRoles)
 	auth.POST("/roles", a.createRole)
 	auth.PUT("/roles/:roleID", a.updateRole)
 	auth.DELETE("/roles/:roleID", a.deleteRole)
+
+	// ---- 项目管理 ----
 	auth.GET("/projects", a.listProjects)
 	auth.POST("/projects", a.createProject)
+	auth.PUT("/projects/:projectID", a.updateProject)
+	auth.POST("/projects/:projectID/archive", a.archiveProject)
+	auth.POST("/projects/:projectID/restore", a.restoreProject)
+	auth.DELETE("/projects/:projectID", a.deleteProject)
 	auth.POST("/projects/:projectID/members", a.addProjectMember)
 	auth.GET("/projects/:projectID/members", a.listProjectMembers)
+	auth.DELETE("/projects/:projectID/members/:userID", a.removeProjectMember)
 	auth.POST("/projects/:projectID/requirements", a.createRequirement)
 	auth.GET("/projects/:projectID/requirements", a.listRequirements)
 	auth.POST("/projects/:projectID/testcases", a.createTestCase)

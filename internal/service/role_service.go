@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -24,18 +25,23 @@ func NewRoleService(roleRepo repository.RoleRepository, auditRepo repository.Aud
 	return &RoleService{roleRepo: roleRepo, auditRepo: auditRepo, txMgr: txMgr}
 }
 
-// List 获取角色列表
+// List 获取角色列表（含关联用户数和 display_name）
 func (s *RoleService) List(ctx context.Context) ([]model.Role, error) {
 	return s.roleRepo.List(ctx)
 }
 
 // Create 创建角色
-func (s *RoleService) Create(ctx context.Context, actorID uint, name, description string) (*model.Role, error) {
+// name 为英文标识（唯一），displayName 为中文显示名，description 为描述
+func (s *RoleService) Create(ctx context.Context, actorID uint, name, displayName, description string) (*model.Role, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, ErrBadRequest("MISSING_NAME", "name is required")
 	}
-	entity := model.Role{Name: name, Description: strings.TrimSpace(description)}
+	entity := model.Role{
+		Name:        name,
+		DisplayName: strings.TrimSpace(displayName),
+		Description: strings.TrimSpace(description),
+	}
 	err := s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.roleRepo.CreateTx(tx, &entity); err != nil {
 			return err
@@ -52,25 +58,38 @@ func (s *RoleService) Create(ctx context.Context, actorID uint, name, descriptio
 }
 
 // Update 更新角色
-func (s *RoleService) Update(ctx context.Context, actorID, roleID uint, name, description *string) (*model.Role, error) {
+// 预置角色禁止修改 name（标识名），仅允许修改 display_name 和 description
+func (s *RoleService) Update(ctx context.Context, actorID, roleID uint, name, displayName, description *string) (*model.Role, error) {
 	before, err := s.roleRepo.FindByID(ctx, roleID)
 	if err != nil {
 		return nil, ErrRoleNotFound
 	}
 	updates := map[string]any{}
+
+	// 预置角色禁止修改 name
 	if name != nil {
+		if model.IsPresetSystemRole(before.Name) {
+			return nil, ErrBadRequest("PRESET_NAME_IMMUTABLE", "预置角色的标识名不可修改")
+		}
 		n := strings.TrimSpace(*name)
 		if n == "" {
 			return nil, ErrBadRequest("INVALID_NAME", "name is invalid")
 		}
 		updates["name"] = n
 	}
+
+	if displayName != nil {
+		updates["display_name"] = strings.TrimSpace(*displayName)
+	}
+
 	if description != nil {
 		updates["description"] = strings.TrimSpace(*description)
 	}
+
 	if len(updates) == 0 {
 		return nil, ErrBadRequest("NO_FIELDS", "no valid fields to update")
 	}
+
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.roleRepo.UpdatesTx(tx, roleID, updates); err != nil {
 			return err
@@ -92,20 +111,23 @@ func (s *RoleService) Update(ctx context.Context, actorID, roleID uint, name, de
 }
 
 // Delete 删除角色
+// 预置角色禁止删除；自定义角色需先解除所有用户关联后才可删除
 func (s *RoleService) Delete(ctx context.Context, actorID, roleID uint) error {
 	role, err := s.roleRepo.FindByID(ctx, roleID)
 	if err != nil {
 		return ErrRoleNotFound
 	}
+	// 预置角色不可删除
 	if model.IsPresetSystemRole(role.Name) {
 		return ErrPresetRoleProtected
 	}
+	// 检查关联用户数
 	used, err := s.roleRepo.CountUsers(ctx, roleID)
 	if err != nil {
 		return ErrInternal("DB_ERROR", err)
 	}
 	if used > 0 {
-		return ErrRoleInUse
+		return ErrConflict("ROLE_IN_USE", fmt.Sprintf("该角色已关联 %d 个用户，请先解除关联后再删除", used))
 	}
 	return s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.roleRepo.DeleteTx(tx, role); err != nil {

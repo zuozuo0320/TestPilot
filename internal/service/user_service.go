@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,20 +20,41 @@ type CreateUserInput struct {
 	Name       string
 	Email      string
 	Phone      string
+	Password   string // 初始密码（FR-02-12）
 	Role       string
 	RoleIDs    []uint
 	ProjectIDs []uint
 }
 
 // UpdateUserInput 更新用户输入
+// 注意：不包含 Email 字段，邮箱在任何场景下均不可修改（业务规则 #7）
 type UpdateUserInput struct {
 	Name       *string
-	Email      *string
 	Phone      *string
 	Avatar     *string
 	Active     *bool
 	RoleIDs    []uint
 	ProjectIDs []uint
+}
+
+// passwordRegex 密码复杂度规则：≥8位，须包含大写字母、小写字母和数字
+var (
+	passwordMinLen   = 8
+	passwordHasUpper = regexp.MustCompile(`[A-Z]`)
+	passwordHasLower = regexp.MustCompile(`[a-z]`)
+	passwordHasDigit = regexp.MustCompile(`[0-9]`)
+)
+
+// validatePassword 校验密码复杂度
+// 规则：≥8位，须包含大写字母、小写字母和数字
+func validatePassword(password string) error {
+	if len(password) < passwordMinLen {
+		return ErrPasswordTooWeak
+	}
+	if !passwordHasUpper.MatchString(password) || !passwordHasLower.MatchString(password) || !passwordHasDigit.MatchString(password) {
+		return ErrPasswordTooWeak
+	}
+	return nil
 }
 
 // UserService 用户管理服务
@@ -66,9 +88,20 @@ func (s *UserService) List(ctx context.Context) ([]model.User, error) {
 	return s.userRepo.List(ctx)
 }
 
+// GetRoleIDs 获取用户绑定的角色 ID 列表（用于编辑页面预填充）
+func (s *UserService) GetRoleIDs(ctx context.Context, userID uint) ([]uint, error) {
+	return s.userRepo.GetRoleIDs(ctx, userID)
+}
+
+// GetProjectIDs 获取用户绑定的项目 ID 列表（用于编辑页面预填充）
+func (s *UserService) GetProjectIDs(ctx context.Context, userID uint) ([]uint, error) {
+	return s.userRepo.GetProjectIDs(ctx, userID)
+}
+
 // Create 创建用户
+// 管理员创建用户时需指定初始密码，默认绑定「快速开始」项目
 func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUserInput) (*model.User, error) {
-	// 校验
+	// 基础校验
 	if input.Name == "" || input.Email == "" {
 		return nil, ErrBadRequest("MISSING_FIELDS", "name/email is required")
 	}
@@ -88,7 +121,15 @@ func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUser
 		return nil, ErrBadRequest("MISSING_PROJECT_IDS", "project_ids is required")
 	}
 
-	// 唯一性
+	// 密码校验（FR-02-12）
+	if input.Password == "" {
+		return nil, ErrBadRequest("MISSING_PASSWORD", "password is required")
+	}
+	if err := validatePassword(input.Password); err != nil {
+		return nil, err
+	}
+
+	// 唯一性校验
 	if exists, err := s.userRepo.ExistsByEmail(ctx, input.Email, 0); err != nil {
 		return nil, ErrInternal("DB_ERROR", err)
 	} else if exists {
@@ -102,13 +143,13 @@ func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUser
 		}
 	}
 
-	// 角色验证
+	// 角色验证：不可分配 admin
 	roles, err := s.roleRepo.FindByIDs(ctx, input.RoleIDs)
 	if err != nil || len(roles) != len(input.RoleIDs) {
 		return nil, ErrBadRequest("INVALID_ROLE_IDS", "role_ids contains invalid id")
 	}
 	if containsRoleName(roles, model.GlobalRoleAdmin) {
-		return nil, ErrBadRequest("ADMIN_ASSIGN_BLOCKED", "admin role cannot be assigned when creating user")
+		return nil, ErrBadRequest("ADMIN_ASSIGN_BLOCKED", "创建用户时不可分配 admin 角色")
 	}
 
 	// 项目验证
@@ -120,27 +161,26 @@ func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUser
 		return nil, ErrBadRequest("INVALID_PROJECT_IDS", "project_ids contains invalid id")
 	}
 
-	// 全局角色
+	// 确定缓存主角色
 	globalRole := input.Role
 	if !model.IsValidGlobalRole(globalRole) {
 		globalRole = strings.ToLower(strings.TrimSpace(roles[0].Name))
 		if !model.IsValidGlobalRole(globalRole) {
-			globalRole = model.GlobalRoleTester
+			globalRole = model.GlobalRoleReadonly
 		}
 	}
 
-	// 为新用户生成默认密码哈希
-	defaultHash, err := pkgauth.HashPassword("TestPilot@2026")
+	// 密码哈希
+	passwordHash, err := pkgauth.HashPassword(input.Password)
 	if err != nil {
-		return nil, fmt.Errorf("hash default password failed: %w", err)
+		return nil, fmt.Errorf("hash password failed: %w", err)
 	}
 
 	entity := model.User{
 		Name:         input.Name,
 		Email:        input.Email,
 		Phone:        input.Phone,
-		Avatar:       "https://api.dicebear.com/7.x/initials/svg?seed=TestPilot",
-		PasswordHash: defaultHash,
+		PasswordHash: passwordHash,
 		Role:         globalRole,
 		Active:       true,
 	}
@@ -170,6 +210,7 @@ func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUser
 }
 
 // Update 更新用户
+// 邮箱不可修改（后端硬拒绝），其他字段可选更新
 func (s *UserService) Update(ctx context.Context, actorID, userID uint, input UpdateUserInput) (*model.User, error) {
 	target, err := s.userRepo.FindByIDUnscoped(ctx, userID)
 	if err != nil {
@@ -186,16 +227,6 @@ func (s *UserService) Update(ctx context.Context, actorID, userID uint, input Up
 			return nil, ErrBadRequest("INVALID_NAME", "name is invalid")
 		}
 		updates["name"] = name
-	}
-	if input.Email != nil {
-		email := strings.ToLower(strings.TrimSpace(*input.Email))
-		if !isValidEmail(email) {
-			return nil, ErrBadRequest("INVALID_EMAIL", "email is invalid")
-		}
-		if exists, _ := s.userRepo.ExistsByEmail(ctx, email, target.ID); exists {
-			return nil, ErrEmailExists
-		}
-		updates["email"] = email
 	}
 	if input.Phone != nil {
 		phone := strings.TrimSpace(*input.Phone)
@@ -221,7 +252,7 @@ func (s *UserService) Update(ctx context.Context, actorID, userID uint, input Up
 
 	if input.RoleIDs != nil {
 		if len(roleIDs) == 0 {
-			return nil, ErrBadRequest("MISSING_ROLE_IDS", "role_ids is required")
+			return nil, ErrBadRequest("MISSING_ROLE_IDS", "至少保留一个角色")
 		}
 		roles, err := s.roleRepo.FindByIDs(ctx, roleIDs)
 		if err != nil || len(roles) != len(roleIDs) {
@@ -230,7 +261,7 @@ func (s *UserService) Update(ctx context.Context, actorID, userID uint, input Up
 	}
 	if input.ProjectIDs != nil {
 		if len(projectIDs) == 0 {
-			return nil, ErrBadRequest("MISSING_PROJECT_IDS", "project_ids is required")
+			return nil, ErrBadRequest("MISSING_PROJECT_IDS", "至少绑定一个项目")
 		}
 		allExist, err := s.projectRepo.ExistAll(ctx, projectIDs)
 		if err != nil || !allExist {
@@ -272,6 +303,7 @@ func (s *UserService) Update(ctx context.Context, actorID, userID uint, input Up
 }
 
 // Delete 逻辑删除用户
+// 删除后自动从所有项目成员中移除（跨模块联动规则 #1）
 func (s *UserService) Delete(ctx context.Context, actorID, userID uint) error {
 	target, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
@@ -298,6 +330,66 @@ func (s *UserService) Delete(ctx context.Context, actorID, userID uint) error {
 		}
 		return s.auditRepo.WriteLogTx(tx, actorID, "user.delete", "user", target.ID, before, map[string]any{"deleted_at": time.Now()})
 	})
+}
+
+// ResetPassword 管理员重置用户密码（不需要旧密码）（FR-02-14）
+func (s *UserService) ResetPassword(ctx context.Context, actorID, userID uint, newPassword string) error {
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
+	target, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+	hash, err := pkgauth.HashPassword(newPassword)
+	if err != nil {
+		return ErrInternal("HASH_ERROR", err)
+	}
+	if err := s.userRepo.Updates(ctx, target.ID, map[string]any{"password_hash": hash}); err != nil {
+		return ErrInternal("DB_ERROR", err)
+	}
+	return nil
+}
+
+// ChangePassword 用户修改自己的密码（需验证旧密码）（FR-02-13）
+func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword string) error {
+	target, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+	// 验证旧密码
+	if !pkgauth.CheckPassword(oldPassword, target.PasswordHash) {
+		return ErrOldPasswordWrong
+	}
+	// 校验新密码复杂度
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
+	hash, err := pkgauth.HashPassword(newPassword)
+	if err != nil {
+		return ErrInternal("HASH_ERROR", err)
+	}
+	return s.userRepo.Updates(ctx, target.ID, map[string]any{"password_hash": hash})
+}
+
+// ToggleActive 启用/禁用用户（FR-02-15）
+// 禁用后用户无法登录，提示「账号已被禁用」
+func (s *UserService) ToggleActive(ctx context.Context, actorID, userID uint, active bool) error {
+	target, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+	// admin 不可被禁用
+	if !active {
+		hasAdmin, err := s.userRepo.HasRoleName(ctx, target.ID, model.GlobalRoleAdmin)
+		if err != nil {
+			return ErrInternal("DB_ERROR", err)
+		}
+		if hasAdmin || strings.EqualFold(target.Role, model.GlobalRoleAdmin) {
+			return ErrBadRequest("ADMIN_PROTECTED", "admin 用户不可被禁用")
+		}
+	}
+	return s.userRepo.Updates(ctx, target.ID, map[string]any{"active": active})
 }
 
 // AssignRoles 分配角色

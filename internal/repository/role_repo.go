@@ -3,6 +3,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -62,10 +63,43 @@ func (r *roleRepo) FindByIDs(ctx context.Context, ids []uint) ([]model.Role, err
 	return roles, nil
 }
 
+// List 获取全部角色列表（含关联用户数）
+// 使用 Raw().Rows() + 手动 Scan 绕过 gorm:"-" 标签限制
 func (r *roleRepo) List(ctx context.Context) ([]model.Role, error) {
-	var roles []model.Role
-	if err := r.db.WithContext(ctx).Order("id asc").Find(&roles).Error; err != nil {
+	// 定义局部扫描结构体（无 gorm 标签限制）
+	type roleRow struct {
+		ID          uint       `gorm:"column:id"`
+		Name        string     `gorm:"column:name"`
+		DisplayName string     `gorm:"column:display_name"`
+		Description string     `gorm:"column:description"`
+		UserCount   int64      `gorm:"column:user_count"`
+		CreatedAt   time.Time  `gorm:"column:created_at"`
+		UpdatedAt   time.Time  `gorm:"column:updated_at"`
+	}
+	var rows []roleRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT roles.id, roles.name, roles.display_name, roles.description,
+			(SELECT COUNT(*) FROM user_roles WHERE user_roles.role_id = roles.id) AS user_count,
+			roles.created_at, roles.updated_at
+		FROM roles
+		WHERE roles.deleted_at IS NULL
+		ORDER BY roles.id ASC
+	`).Scan(&rows).Error
+	if err != nil {
 		return nil, err
+	}
+
+	roles := make([]model.Role, 0, len(rows))
+	for _, row := range rows {
+		roles = append(roles, model.Role{
+			ID:          row.ID,
+			Name:        row.Name,
+			DisplayName: row.DisplayName,
+			Description: row.Description,
+			UserCount:   row.UserCount,
+			CreatedAt:   row.CreatedAt,
+			UpdatedAt:   row.UpdatedAt,
+		})
 	}
 	return roles, nil
 }

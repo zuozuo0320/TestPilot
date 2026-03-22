@@ -6,16 +6,15 @@ type createUserRequest struct {
 	Name       string `json:"name" binding:"required,min=2,max=80"`
 	Email      string `json:"email" binding:"required,email,max=120"`
 	Phone      string `json:"phone" binding:"omitempty,min=5,max=30"`
-	Avatar     string `json:"avatar" binding:"omitempty,url,max=500"`
-	Role       string `json:"role" binding:"omitempty,oneof=admin manager tester"`
+	Password   string `json:"password" binding:"required,min=8,max=128"`
+	Role       string `json:"role" binding:"omitempty"`
 	RoleIDs    []uint `json:"role_ids" binding:"required,min=1"`
 	ProjectIDs []uint `json:"project_ids" binding:"required,min=1"`
 }
 
-// updateUserRequest 更新用户请求（字段可选）
+// updateUserRequest 更新用户请求（字段可选，邮箱不可改）
 type updateUserRequest struct {
 	Name       *string `json:"name" binding:"omitempty,min=2,max=80"`
-	Email      *string `json:"email" binding:"omitempty,email,max=120"`
 	Phone      *string `json:"phone" binding:"omitempty,max=30"`
 	Avatar     *string `json:"avatar" binding:"omitempty,max=500"`
 	Active     *bool   `json:"active"`
@@ -26,12 +25,31 @@ type updateUserRequest struct {
 // createRoleRequest 创建角色请求
 type createRoleRequest struct {
 	Name        string `json:"name" binding:"required,min=2,max=80"`
+	DisplayName string `json:"display_name" binding:"max=80"`
 	Description string `json:"description" binding:"max=500"`
 }
 
 // updateRoleRequest 更新角色请求（字段可选）
 type updateRoleRequest struct {
 	Name        *string `json:"name" binding:"omitempty,min=2,max=80"`
+	DisplayName *string `json:"display_name" binding:"omitempty,max=80"`
+	Description *string `json:"description" binding:"omitempty,max=500"`
+}
+
+// resetPasswordRequest 管理员重置密码请求
+type resetPasswordRequest struct {
+	NewPassword string `json:"new_password" binding:"required,min=8,max=128"`
+}
+
+// changePasswordRequest 用户修改自身密码请求
+type changePasswordRequest struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8,max=128"`
+}
+
+// updateProjectRequest 更新项目请求
+type updateProjectRequest struct {
+	Name        *string `json:"name" binding:"omitempty,min=2,max=120"`
 	Description *string `json:"description" binding:"omitempty,max=500"`
 }
 

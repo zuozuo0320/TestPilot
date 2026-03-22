@@ -30,7 +30,7 @@ func (a *API) createRole(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	role, err := a.roleSvc.Create(c.Request.Context(), user.ID, req.Name, req.Description)
+	role, err := a.roleSvc.Create(c.Request.Context(), user.ID, req.Name, req.DisplayName, req.Description)
 	if err != nil {
 		response.HandleError(c, err)
 		return
@@ -51,7 +51,7 @@ func (a *API) updateRole(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	updated, err := a.roleSvc.Update(c.Request.Context(), user.ID, roleID, req.Name, req.Description)
+	updated, err := a.roleSvc.Update(c.Request.Context(), user.ID, roleID, req.Name, req.DisplayName, req.Description)
 	if err != nil {
 		response.HandleError(c, err)
 		return

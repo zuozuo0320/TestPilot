@@ -7,34 +7,59 @@ import (
 )
 
 const (
-	GlobalRoleAdmin   = "admin"
-	GlobalRoleManager = "manager"
-	GlobalRoleTester  = "tester"
-	GlobalRoleReviewer = "reviewer"
-	GlobalRoleReadonly = "readonly"
+	// ---- 全局角色标识 ----
+	GlobalRoleAdmin     = "admin"
+	GlobalRoleManager   = "manager"
+	GlobalRoleTester    = "tester"
+	GlobalRoleReviewer  = "reviewer"
+	GlobalRoleDeveloper = "developer"
+	GlobalRoleReadonly  = "readonly"
 
+	// ---- 项目成员角色 ----
 	MemberRoleOwner  = "owner"
 	MemberRoleMember = "member"
+
+	// ---- 项目状态 ----
+	ProjectStatusActive   = "active"
+	ProjectStatusArchived = "archived"
+
+	// ---- 种子数据标识 ----
+	SeedProjectName = "快速开始"
 )
 
+// PresetRoleDisplayNames 预置角色的中文显示名映射
+var PresetRoleDisplayNames = map[string]string{
+	GlobalRoleAdmin:     "系统管理员",
+	GlobalRoleManager:   "项目管理员",
+	GlobalRoleTester:    "测试工程师",
+	GlobalRoleReviewer:  "评审员",
+	GlobalRoleDeveloper: "开发工程师",
+	GlobalRoleReadonly:  "只读访客",
+}
+
+// User 用户实体
 type User struct {
 	ID           uint           `json:"id" gorm:"primaryKey"`
 	Name         string         `json:"name" gorm:"size:80;not null"`
-	Email        string         `json:"email" gorm:"size:120;index;not null"`
+	Email        string         `json:"email" gorm:"size:120;uniqueIndex;not null"`
 	Phone        string         `json:"phone" gorm:"size:30;index"`
 	Avatar       string         `json:"avatar" gorm:"size:500"`
 	PasswordHash string         `json:"-" gorm:"column:password_hash;size:255;not null;default:''"`
-	Role         string         `json:"role" gorm:"size:20;not null;index"`
+	Role         string         `json:"role" gorm:"size:20;not null;default:readonly;index"` // 缓存主角色，兼容 JWT/旧逻辑
 	Active       bool           `json:"active" gorm:"not null;default:true"`
+	LastLoginAt  *time.Time     `json:"last_login_at" gorm:"index"`
 	DeletedAt    gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
+// Role 角色实体
 type Role struct {
 	ID          uint           `json:"id" gorm:"primaryKey"`
 	Name        string         `json:"name" gorm:"size:80;uniqueIndex;not null"`
+	DisplayName string         `json:"display_name" gorm:"size:80"`
 	Description string         `json:"description" gorm:"size:500"`
+	UserCount   int64          `json:"user_count" gorm:"-"` // 虚拟字段：SQL 子查询填充
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `json:"deleted_at" gorm:"index"`
@@ -65,12 +90,19 @@ type AuditLog struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// Project 项目实体
 type Project struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	Name        string    `json:"name" gorm:"size:120;uniqueIndex;not null"`
-	Description string    `json:"description" gorm:"size:500"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          uint       `json:"id" gorm:"primaryKey"`
+	Name        string     `json:"name" gorm:"size:120;uniqueIndex;not null"`
+	Description string     `json:"description" gorm:"size:500"`
+	Status      string     `json:"status" gorm:"size:20;not null;default:active;index"`
+	ArchivedAt  *time.Time `json:"archived_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+
+	// 虚拟字段（不入库，API 返回时填充）
+	MemberCount   int64 `json:"member_count" gorm:"-"` // 虚拟字段：SQL 子查询填充
+	TestCaseCount int64 `json:"testcase_count" gorm:"-"` // 虚拟字段：SQL 子查询填充
 }
 
 type ProjectMember struct {
@@ -103,9 +135,9 @@ type TestCase struct {
 	ModuleID     uint      `json:"module_id" gorm:"default:0;index"`
 	ModulePath   string    `json:"module_path" gorm:"size:255;default:/"`
 	Tags         string    `json:"tags" gorm:"size:500"`
-	Precondition string    `json:"precondition" gorm:"type:text"`
-	Steps        string    `json:"steps" gorm:"type:text"`
-	Remark       string    `json:"remark" gorm:"type:text"`
+	Precondition string    `json:"precondition" gorm:"type:longtext"`
+	Steps        string    `json:"steps" gorm:"type:longtext"`
+	Remark       string    `json:"remark" gorm:"type:longtext"`
 	Priority     string    `json:"priority" gorm:"size:20;default:medium"`
 	CreatedBy    uint      `json:"created_by" gorm:"not null;default:0;index"`
 	UpdatedBy    uint      `json:"updated_by" gorm:"not null;default:0;index"`
@@ -142,8 +174,8 @@ type CaseHistory struct {
 	TestCaseID uint      `json:"testcase_id" gorm:"not null;index"`
 	Action     string    `json:"action" gorm:"size:20;not null"`
 	FieldName  string    `json:"field_name" gorm:"size:50"`
-	OldValue   string    `json:"old_value" gorm:"type:text"`
-	NewValue   string    `json:"new_value" gorm:"type:text"`
+	OldValue   string    `json:"old_value" gorm:"type:longtext"`
+	NewValue   string    `json:"new_value" gorm:"type:longtext"`
 	ChangedBy  uint      `json:"changed_by" gorm:"not null;index"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -237,22 +269,29 @@ func AutoMigrate(db *gorm.DB) error {
 	)
 }
 
+// IsPresetSystemRole 判断是否为系统预置角色（不可删除）
 func IsPresetSystemRole(role string) bool {
 	switch role {
-	case GlobalRoleAdmin, GlobalRoleManager, GlobalRoleTester, GlobalRoleReviewer, GlobalRoleReadonly:
+	case GlobalRoleAdmin, GlobalRoleManager, GlobalRoleTester, GlobalRoleReviewer, GlobalRoleDeveloper, GlobalRoleReadonly:
 		return true
 	default:
 		return false
 	}
 }
 
+// IsValidGlobalRole 判断是否为合法的全局角色名
 func IsValidGlobalRole(role string) bool {
-	switch role {
-	case GlobalRoleAdmin, GlobalRoleManager, GlobalRoleTester:
-		return true
-	default:
-		return false
-	}
+	return IsPresetSystemRole(role)
+}
+
+// IsSeedProject 判断是否为种子项目（不可删除/归档）
+func IsSeedProject(name string) bool {
+	return name == SeedProjectName
+}
+
+// IsArchivedProject 判断项目是否已归档
+func IsArchivedProject(status string) bool {
+	return status == ProjectStatusArchived
 }
 
 func IsValidMemberRole(role string) bool {

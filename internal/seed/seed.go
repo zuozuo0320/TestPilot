@@ -37,12 +37,14 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 		}
 	}
 
+	// ---- 预置角色（含 display_name）----
 	roles := []model.Role{
-		{Name: model.GlobalRoleAdmin, Description: "系统管理员"},
-		{Name: model.GlobalRoleManager, Description: "项目管理员"},
-		{Name: model.GlobalRoleTester, Description: "测试工程师"},
-		{Name: model.GlobalRoleReviewer, Description: "评审角色"},
-		{Name: model.GlobalRoleReadonly, Description: "只读角色"},
+		{Name: model.GlobalRoleAdmin, DisplayName: "系统管理员", Description: "全权限，系统配置、用户/角色/项目管理"},
+		{Name: model.GlobalRoleManager, DisplayName: "项目管理员", Description: "项目级管理权限，可管理项目成员、配置模块"},
+		{Name: model.GlobalRoleTester, DisplayName: "测试工程师", Description: "用例增删改、执行、提交缺陷、导入导出"},
+		{Name: model.GlobalRoleReviewer, DisplayName: "评审员", Description: "评审用例、修改评审状态，不可增删用例"},
+		{Name: model.GlobalRoleDeveloper, DisplayName: "开发工程师", Description: "查看用例+缺陷，认领/修复缺陷，不可改用例"},
+		{Name: model.GlobalRoleReadonly, DisplayName: "只读访客", Description: "纯查看，不可修改任何数据"},
 	}
 	roleIDByName := map[string]uint{}
 	for i := range roles {
@@ -59,42 +61,57 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 		}
 
 		if err := db.Unscoped().Model(&model.Role{}).Where("id = ?", existing.ID).Updates(map[string]any{
-			"name":        roles[i].Name,
-			"description": roles[i].Description,
-			"deleted_at":  nil,
+			"name":         roles[i].Name,
+			"display_name": roles[i].DisplayName,
+			"description":  roles[i].Description,
+			"deleted_at":   nil,
 		}).Error; err != nil {
 			return fmt.Errorf("seed role update failed: %w", err)
 		}
 		roleIDByName[roles[i].Name] = existing.ID
 	}
 
+	// ---- 预置用户-角色绑定（幂等：先查后插）----
 	userRoles := []model.UserRole{
 		{UserID: users[0].ID, RoleID: roleIDByName[model.GlobalRoleAdmin]},
 		{UserID: users[1].ID, RoleID: roleIDByName[model.GlobalRoleManager]},
 		{UserID: users[2].ID, RoleID: roleIDByName[model.GlobalRoleTester]},
 	}
 	for _, ur := range userRoles {
-		item := ur
-		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error; err != nil {
-			return fmt.Errorf("seed user-role failed: %w", err)
+		if ur.UserID == 0 || ur.RoleID == 0 {
+			continue // 安全跳过无效 ID
+		}
+		var count int64
+		db.Model(&model.UserRole{}).Where("user_id = ? AND role_id = ?", ur.UserID, ur.RoleID).Count(&count)
+		if count == 0 {
+			item := ur
+			if err := db.Create(&item).Error; err != nil {
+				return fmt.Errorf("seed user-role failed: %w", err)
+			}
 		}
 	}
 
-	var sampleProjectCount int64
-	if err := db.Model(&model.Project{}).Where("name = ?", "示例项目").Count(&sampleProjectCount).Error; err != nil {
-		return fmt.Errorf("count sample project failed: %w", err)
-	}
-	if sampleProjectCount == 0 {
-		if err := db.Model(&model.Project{}).Where("name = ?", "Demo Project").Updates(map[string]any{
-			"name":        "示例项目",
-			"description": "测试管理平台默认示例项目",
-		}).Error; err != nil {
-			return fmt.Errorf("migrate demo project name failed: %w", err)
+	// 清理历史遗留的旧名称项目（一次性操作，幂等安全）
+	for _, oldName := range []string{"Demo Project", "示例项目"} {
+		var oldProject model.Project
+		if err := db.Where("name = ?", oldName).First(&oldProject).Error; err == nil {
+			// 删除关联数据
+			db.Where("project_id = ?", oldProject.ID).Delete(&model.ProjectMember{})
+			db.Where("project_id = ?", oldProject.ID).Delete(&model.UserProject{})
+			db.Where("project_id = ?", oldProject.ID).Delete(&model.Requirement{})
+			db.Where("project_id = ?", oldProject.ID).Delete(&model.TestCase{})
+			db.Where("project_id = ?", oldProject.ID).Delete(&model.Script{})
+			db.Where("project_id = ?", oldProject.ID).Delete(&model.Module{})
+			db.Delete(&oldProject)
+			logger.Info("cleaned up legacy project", "name", oldName, "id", oldProject.ID)
 		}
 	}
 
-	project := model.Project{Name: "示例项目", Description: "测试管理平台默认示例项目"}
-	if err := db.Where(model.Project{Name: project.Name}).Assign(model.Project{Description: project.Description}).FirstOrCreate(&project).Error; err != nil {
+	project := model.Project{Name: model.SeedProjectName, Description: "包含示例用例与基础模块，帮助你快速熟悉平台", Status: model.ProjectStatusActive}
+	if err := db.Where(model.Project{Name: project.Name}).Assign(model.Project{
+		Description: project.Description,
+		Status:      model.ProjectStatusActive,
+	}).FirstOrCreate(&project).Error; err != nil {
 		return fmt.Errorf("seed project failed: %w", err)
 	}
 

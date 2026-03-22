@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"testpilot/internal/model"
 	pkgauth "testpilot/internal/pkg/auth"
@@ -30,6 +31,7 @@ type AuthResult struct {
 }
 
 // Login 用户登录：bcrypt 校验 + JWT 签发
+// 禁用用户返回「账号已被禁用」，成功后更新 last_login_at
 func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthResult, error) {
 	if email == "" || password == "" {
 		return nil, ErrBadRequest("INVALID_PARAMS", "email and password are required")
@@ -42,7 +44,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 		return nil, ErrUnauthorized("USER_DELETED", "user has been deleted")
 	}
 	if !user.Active {
-		return nil, ErrForbidden("USER_FROZEN", "user is frozen")
+		return nil, ErrUserDisabled
 	}
 
 	// 校验密码（兼容旧数据：无密码哈希时使用硬编码默认密码）
@@ -56,6 +58,9 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 			return nil, ErrUnauthorized("INVALID_CREDENTIALS", "invalid email or password")
 		}
 	}
+
+	// 更新最后登录时间
+	_ = s.userRepo.Updates(ctx, user.ID, map[string]any{"last_login_at": time.Now()})
 
 	// 签发 JWT
 	tokenPair, err := pkgauth.GenerateTokenPair(s.jwtCfg, user.ID, user.Role)
