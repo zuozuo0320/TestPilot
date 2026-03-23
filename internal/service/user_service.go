@@ -88,6 +88,12 @@ func (s *UserService) List(ctx context.Context) ([]model.User, error) {
 	return s.userRepo.List(ctx)
 }
 
+// ListFiltered 按筛选条件获取用户列表
+// 支持关键词（姓名/邮箱模糊）、角色 ID、启用状态筛选
+func (s *UserService) ListFiltered(ctx context.Context, filter repository.UserListFilter) ([]model.User, error) {
+	return s.userRepo.ListFiltered(ctx, filter)
+}
+
 // GetRoleIDs 获取用户绑定的角色 ID 列表（用于编辑页面预填充）
 func (s *UserService) GetRoleIDs(ctx context.Context, userID uint) ([]uint, error) {
 	return s.userRepo.GetRoleIDs(ctx, userID)

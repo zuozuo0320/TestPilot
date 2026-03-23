@@ -211,6 +211,7 @@ func (s *ProjectService) AddMember(ctx context.Context, projectID, userID uint, 
 }
 
 // RemoveMember 移除项目成员
+// 受保护成员（全局角色为 admin/manager）不可被移除，防止 API 层绕过前端限制
 func (s *ProjectService) RemoveMember(ctx context.Context, projectID, userID uint) error {
 	project, err := s.projectRepo.FindByID(ctx, projectID)
 	if err != nil {
@@ -218,6 +219,19 @@ func (s *ProjectService) RemoveMember(ctx context.Context, projectID, userID uin
 	}
 	if model.IsArchivedProject(project.Status) {
 		return ErrProjectArchived
+	}
+	// 校验目标用户的全局角色，admin/manager 为受保护成员不可移除
+	targetUser, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrNotFound("USER_NOT_FOUND", "target user not found")
+	}
+	// 这里同时检查主角色缓存和角色绑定表，避免多角色成员绕过前端禁删限制。
+	isProtected, err := s.hasProtectedGlobalRole(ctx, targetUser)
+	if err != nil {
+		return err
+	}
+	if isProtected {
+		return ErrForbidden("PROTECTED_MEMBER", "admin/manager 角色的成员不可移除")
 	}
 	return s.projectRepo.RemoveMember(ctx, projectID, userID)
 }
@@ -245,4 +259,30 @@ func (s *ProjectService) RequireAccess(ctx context.Context, user model.User, pro
 		return ErrNoProjectAccess
 	}
 	return nil
+}
+
+// hasProtectedGlobalRole 判断目标用户是否拥有受保护的全局角色。
+// 这里同时检查缓存主角色和角色关联表，避免多角色场景下被绕过。
+func (s *ProjectService) hasProtectedGlobalRole(ctx context.Context, user *model.User) (bool, error) {
+	if user == nil {
+		return false, ErrNotFound("USER_NOT_FOUND", "target user not found")
+	}
+	if model.IsProtectedGlobalRole(strings.TrimSpace(user.Role)) {
+		return true, nil
+	}
+
+	hasAdmin, err := s.userRepo.HasRoleName(ctx, user.ID, model.GlobalRoleAdmin)
+	if err != nil {
+		return false, ErrInternal("DB_ERROR", err)
+	}
+	if hasAdmin {
+		return true, nil
+	}
+
+	hasManager, err := s.userRepo.HasRoleName(ctx, user.ID, model.GlobalRoleManager)
+	if err != nil {
+		return false, ErrInternal("DB_ERROR", err)
+	}
+	// manager 既可能落在主角色缓存，也可能只存在于角色绑定表，所以这里需要补一次关联查询。
+	return hasManager, nil
 }

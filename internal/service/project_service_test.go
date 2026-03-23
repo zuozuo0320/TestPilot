@@ -8,15 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"testpilot/internal/model"
-	"testpilot/internal/repository"
 )
 
 func TestProjectService_CreateSuccess(t *testing.T) {
 	db := testDB(t)
-	_, _, projectRepo, _, _ := testRepos(db)
-	userRepo := repository.NewUserRepo(db)
+	userRepo, _, projectRepo, auditRepo, txMgr := testRepos(db)
 	seedAdmin(t, db)
-	svc := NewProjectService(projectRepo, userRepo)
+	svc := NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
 
 	project, err := svc.Create(context.Background(), 1, "Test Project", "desc")
 	require.NoError(t, err)
@@ -26,11 +24,10 @@ func TestProjectService_CreateSuccess(t *testing.T) {
 
 func TestProjectService_ListAdmin(t *testing.T) {
 	db := testDB(t)
-	_, _, projectRepo, _, _ := testRepos(db)
-	userRepo := repository.NewUserRepo(db)
+	userRepo, _, projectRepo, auditRepo, txMgr := testRepos(db)
 	admin := seedAdmin(t, db)
 	seedProject(t, db)
-	svc := NewProjectService(projectRepo, userRepo)
+	svc := NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
 
 	projects, err := svc.List(context.Background(), admin)
 	require.NoError(t, err)
@@ -39,11 +36,10 @@ func TestProjectService_ListAdmin(t *testing.T) {
 
 func TestProjectService_RequireAccess_AdminBypass(t *testing.T) {
 	db := testDB(t)
-	_, _, projectRepo, _, _ := testRepos(db)
-	userRepo := repository.NewUserRepo(db)
+	userRepo, _, projectRepo, auditRepo, txMgr := testRepos(db)
 	admin := seedAdmin(t, db)
 	seedProject(t, db)
-	svc := NewProjectService(projectRepo, userRepo)
+	svc := NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
 
 	err := svc.RequireAccess(context.Background(), admin, 1)
 	require.NoError(t, err)
@@ -51,15 +47,14 @@ func TestProjectService_RequireAccess_AdminBypass(t *testing.T) {
 
 func TestProjectService_RequireAccess_NonMemberDenied(t *testing.T) {
 	db := testDB(t)
-	_, _, projectRepo, _, _ := testRepos(db)
-	userRepo := repository.NewUserRepo(db)
+	userRepo, _, projectRepo, auditRepo, txMgr := testRepos(db)
 	seedProject(t, db)
 	outsider := model.User{
 		ID: 99, Name: "Outsider", Email: "out@test.local",
 		Role: model.GlobalRoleTester, Active: true,
 	}
 	db.Create(&outsider)
-	svc := NewProjectService(projectRepo, userRepo)
+	svc := NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
 
 	err := svc.RequireAccess(context.Background(), outsider, 1)
 	require.Error(t, err)
@@ -70,12 +65,11 @@ func TestProjectService_RequireAccess_NonMemberDenied(t *testing.T) {
 
 func TestProjectService_AddMember(t *testing.T) {
 	db := testDB(t)
-	_, _, projectRepo, _, _ := testRepos(db)
-	userRepo := repository.NewUserRepo(db)
+	userRepo, _, projectRepo, auditRepo, txMgr := testRepos(db)
 	seedAdmin(t, db)
 	seedTester(t, db)
 	seedProject(t, db)
-	svc := NewProjectService(projectRepo, userRepo)
+	svc := NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
 
 	member, err := svc.AddMember(context.Background(), 1, 2, model.MemberRoleMember)
 	require.NoError(t, err)

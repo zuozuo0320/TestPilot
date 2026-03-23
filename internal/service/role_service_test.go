@@ -16,7 +16,7 @@ func TestRoleService_CreateSuccess(t *testing.T) {
 	seedAdmin(t, db)
 	svc := NewRoleService(roleRepo, auditRepo, txMgr)
 
-	role, err := svc.Create(context.Background(), 1, "devops", "devops role")
+	role, err := svc.Create(context.Background(), 1, "devops", "DevOps", "devops role")
 	require.NoError(t, err)
 	assert.NotZero(t, role.ID)
 	assert.Equal(t, "devops", role.Name)
@@ -28,7 +28,7 @@ func TestRoleService_CreateDuplicate(t *testing.T) {
 	seedRoles(t, db)
 	svc := NewRoleService(roleRepo, auditRepo, txMgr)
 
-	_, err := svc.Create(context.Background(), 1, "admin", "dup admin")
+	_, err := svc.Create(context.Background(), 1, "admin", "Admin", "dup admin")
 	require.Error(t, err)
 }
 
@@ -61,7 +61,7 @@ func TestRoleService_DeleteInUse(t *testing.T) {
 	bizErr, ok := err.(*BizError)
 	require.True(t, ok)
 	assert.Equal(t, 409, bizErr.Status)
-	assert.Contains(t, bizErr.Message, "in use")
+	assert.Contains(t, bizErr.Message, "关联")
 }
 
 func TestRoleService_DeleteSuccess(t *testing.T) {
@@ -92,12 +92,18 @@ func TestRoleService_UpdateSuccess(t *testing.T) {
 	db := testDB(t)
 	_, roleRepo, _, auditRepo, txMgr := testRepos(db)
 	seedAdmin(t, db)
-	seedRoles(t, db)
 	svc := NewRoleService(roleRepo, auditRepo, txMgr)
 
-	name := "tester-updated"
-	desc := "updated desc"
-	updated, err := svc.Update(context.Background(), 1, 2, &name, &desc)
+	// 这里先创建一个自定义角色，再覆盖“允许修改标识名”的更新路径，避免误撞预置角色保护规则。
+	created, err := svc.Create(context.Background(), 1, "custom-editor", "自定义角色", "original desc")
 	require.NoError(t, err)
-	assert.Equal(t, "tester-updated", updated.Name)
+
+	name := "custom-editor-updated"
+	displayName := "自定义角色-已更新"
+	desc := "updated desc"
+	updated, err := svc.Update(context.Background(), 1, created.ID, &name, &displayName, &desc)
+	require.NoError(t, err)
+	assert.Equal(t, "custom-editor-updated", updated.Name)
+	assert.Equal(t, "自定义角色-已更新", updated.DisplayName)
+	assert.Equal(t, "updated desc", updated.Description)
 }

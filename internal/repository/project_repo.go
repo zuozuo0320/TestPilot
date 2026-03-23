@@ -3,6 +3,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -272,7 +273,14 @@ func (r *projectRepo) ListMembers(ctx context.Context, projectID uint) ([]model.
 		Where("project_id = ?", projectID).
 		Order("created_at asc").
 		Find(&members).Error
-	return members, err
+	if err != nil {
+		return nil, err
+	}
+	// 补齐成员用户的多角色显示名，供前端直接展示标签。
+	if err := r.fillMemberRoleNames(ctx, members); err != nil {
+		return nil, err
+	}
+	return members, nil
 }
 
 // DeleteAllMembers 删除项目所有成员记录（用于删除空项目时级联清理）
@@ -297,4 +305,61 @@ func RestoreFields() map[string]any {
 		"status":      model.ProjectStatusActive,
 		"archived_at": nil,
 	}
+}
+
+// memberRoleNameRow 承接成员角色查询结果。
+type memberRoleNameRow struct {
+	UserID   uint   `gorm:"column:user_id"`
+	RoleName string `gorm:"column:role_name"`
+}
+
+// fillMemberRoleNames 批量补齐成员用户的角色显示名，避免前端只能看到缓存主角色。
+func (r *projectRepo) fillMemberRoleNames(ctx context.Context, members []model.ProjectMember) error {
+	if len(members) == 0 {
+		return nil
+	}
+	userIDs := make([]uint, 0, len(members))
+	seen := make(map[uint]struct{}, len(members))
+	for _, member := range members {
+		if _, ok := seen[member.UserID]; ok {
+			continue
+		}
+		seen[member.UserID] = struct{}{}
+		userIDs = append(userIDs, member.UserID)
+	}
+
+	var rows []memberRoleNameRow
+	err := r.db.WithContext(ctx).
+		Table("user_roles").
+		Select("user_roles.user_id, COALESCE(NULLIF(roles.display_name, ''), roles.name) AS role_name").
+		Joins("JOIN roles ON roles.id = user_roles.role_id").
+		Where("user_roles.user_id IN ?", userIDs).
+		Order("user_roles.user_id ASC, user_roles.role_id ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return err
+	}
+
+	roleNameMap := make(map[uint][]string, len(userIDs))
+	for _, row := range rows {
+		roleName := strings.TrimSpace(row.RoleName)
+		if roleName == "" {
+			continue
+		}
+		roleNameMap[row.UserID] = append(roleNameMap[row.UserID], roleName)
+	}
+
+	for i := range members {
+		roleNames := roleNameMap[members[i].UserID]
+		if len(roleNames) == 0 {
+			fallbackRole := strings.TrimSpace(members[i].User.Role)
+			if fallbackRole != "" {
+				roleNames = []string{fallbackRole}
+			} else {
+				roleNames = []string{}
+			}
+		}
+		members[i].User.RoleNames = roleNames
+	}
+	return nil
 }

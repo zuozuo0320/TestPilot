@@ -43,6 +43,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 	roleRepo := repository.NewRoleRepo(db)
 	projectRepo := repository.NewProjectRepo(db)
 	testCaseRepo := repository.NewTestCaseRepo(db)
+	caseHistoryRepo := repository.NewCaseHistoryRepo(db)
 	auditRepo := repository.NewAuditRepo(db)
 	executionRepo := repository.NewExecutionRepo(db)
 	defectRepo := repository.NewDefectRepo(db)
@@ -58,8 +59,8 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		AuthService:        service.NewAuthService(userRepo, jwtCfg),
 		UserService:        service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr),
 		RoleService:        service.NewRoleService(roleRepo, auditRepo, txMgr),
-		ProjectService:     service.NewProjectService(projectRepo, userRepo),
-		TestCaseService:    service.NewTestCaseService(testCaseRepo),
+		ProjectService:     service.NewProjectService(projectRepo, userRepo, auditRepo, txMgr),
+		TestCaseService:    service.NewTestCaseService(testCaseRepo, caseHistoryRepo),
 		ProfileService:     service.NewProfileService(userRepo, auditRepo, txMgr),
 		ExecutionService:   service.NewExecutionService(executionRepo, txMgr, mockExecutor, nil, logger),
 		DefectService:      service.NewDefectService(defectRepo, executionRepo),
@@ -105,10 +106,14 @@ func getPageResultData(t *testing.T, body []byte) (json.RawMessage, int64, int, 
 
 func seedTestData(t *testing.T, db *gorm.DB) {
 	t.Helper()
+	passwordHash, err := pkgauth.HashPassword("TestPilot@2026")
+	if err != nil {
+		t.Fatalf("hash test password failed: %v", err)
+	}
 	users := []model.User{
-		{ID: 1, Name: "Admin", Email: "admin@test.local", Role: model.GlobalRoleAdmin, Active: true},
-		{ID: 2, Name: "Tester", Email: "tester@test.local", Role: model.GlobalRoleTester, Active: true},
-		{ID: 3, Name: "Outsider", Email: "outsider@test.local", Role: model.GlobalRoleTester, Active: true},
+		{ID: 1, Name: "Admin", Email: "admin@test.local", Role: model.GlobalRoleAdmin, Active: true, PasswordHash: passwordHash},
+		{ID: 2, Name: "Tester", Email: "tester@test.local", Role: model.GlobalRoleTester, Active: true, PasswordHash: passwordHash},
+		{ID: 3, Name: "Outsider", Email: "outsider@test.local", Role: model.GlobalRoleTester, Active: true, PasswordHash: passwordHash},
 	}
 	if err := db.Create(&users).Error; err != nil {
 		t.Fatalf("seed users failed: %v", err)
@@ -433,6 +438,7 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 	invalidCreate := map[string]any{
 		"name":        "NoBind",
 		"email":       "nobind@test.local",
+		"password":    "TestPilot@2026",
 		"role_ids":    []uint{2},
 		"project_ids": []uint{},
 	}
@@ -460,6 +466,7 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 		"email":       "iam.user@test.local",
 		"phone":       "13800001234",
 		"avatar":      "https://example.com/a.png",
+		"password":    "TestPilot@2026",
 		"role":        "tester",
 		"role_ids":    []uint{2, 3},
 		"project_ids": []uint{1, 2},
@@ -526,6 +533,7 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 		"name":        "IAM User 2",
 		"email":       "iam.user@test.local",
 		"phone":       "13800001234",
+		"password":    "TestPilot@2026",
 		"role":        "tester",
 		"role_ids":    []uint{2},
 		"project_ids": []uint{1},
@@ -536,8 +544,12 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 	reuseReq.Header.Set("X-User-ID", "1")
 	reuseResp := httptest.NewRecorder()
 	router.ServeHTTP(reuseResp, reuseReq)
-	if reuseResp.Code != http.StatusCreated {
-		t.Fatalf("expected reuse email/phone create 201, got %d, body=%s", reuseResp.Code, reuseResp.Body.String())
+	// 当前实现是软删除和数据库唯一索引并存，所以被删除用户的邮箱/手机号仍然不能直接复用。
+	if reuseResp.Code != http.StatusConflict {
+		t.Fatalf("expected reuse email/phone create 409, got %d, body=%s", reuseResp.Code, reuseResp.Body.String())
+	}
+	if !strings.Contains(reuseResp.Body.String(), "user already exists") {
+		t.Fatalf("expected reuse create conflict body, got body=%s", reuseResp.Body.String())
 	}
 
 	roleCreateBody, _ := json.Marshal(map[string]any{"name": "ops", "description": "ops role"})

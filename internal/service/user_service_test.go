@@ -20,7 +20,9 @@ func TestUserService_CreateSuccess(t *testing.T) {
 
 	user, err := svc.Create(context.Background(), 1, CreateUserInput{
 		Name: "New User", Email: "new@test.local", Phone: "13800001111",
-		Role: "tester", RoleIDs: []uint{2}, ProjectIDs: []uint{1},
+		// 创建用户前需要满足当前密码复杂度规则，否则会被更早的参数校验拦截。
+		Password: "TestPilot@2026",
+		Role:     "tester", RoleIDs: []uint{2}, ProjectIDs: []uint{1},
 	})
 	require.NoError(t, err)
 	assert.NotZero(t, user.ID)
@@ -38,7 +40,8 @@ func TestUserService_CreateDuplicateEmail(t *testing.T) {
 
 	_, err := svc.Create(context.Background(), 1, CreateUserInput{
 		Name: "Dup", Email: "admin@test.local", Phone: "13800002222",
-		Role: "tester", RoleIDs: []uint{2}, ProjectIDs: []uint{1},
+		Password: "TestPilot@2026",
+		Role:     "tester", RoleIDs: []uint{2}, ProjectIDs: []uint{1},
 	})
 	require.Error(t, err)
 	bizErr, ok := err.(*BizError)
@@ -55,7 +58,8 @@ func TestUserService_CreateAdminAssignBlocked(t *testing.T) {
 
 	_, err := svc.Create(context.Background(), 1, CreateUserInput{
 		Name: "BadAdmin", Email: "badmin@test.local",
-		Role: "admin", RoleIDs: []uint{1}, ProjectIDs: []uint{1},
+		Password: "TestPilot@2026",
+		Role:     "admin", RoleIDs: []uint{1}, ProjectIDs: []uint{1},
 	})
 	require.Error(t, err)
 	bizErr, ok := err.(*BizError)

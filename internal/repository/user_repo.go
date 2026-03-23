@@ -11,6 +11,13 @@ import (
 	"testpilot/internal/model"
 )
 
+// UserListFilter 用户列表筛选条件
+type UserListFilter struct {
+	Keyword string // 关键词：模糊匹配姓名/邮箱
+	RoleID  uint   // 角色 ID：筛选拥有该角色的用户
+	Status  string // 状态：active / disabled
+}
+
 // UserRepository 用户数据访问接口
 type UserRepository interface {
 	// FindByID 根据 ID 查找用户
@@ -21,6 +28,8 @@ type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*model.User, error)
 	// List 获取全部用户列表
 	List(ctx context.Context) ([]model.User, error)
+	// ListFiltered 按筛选条件获取用户列表
+	ListFiltered(ctx context.Context, filter UserListFilter) ([]model.User, error)
 	// ExistsByEmail 检查邮箱是否已存在（排除指定用户）
 	ExistsByEmail(ctx context.Context, email string, excludeID uint) (bool, error)
 	// ExistsByPhone 检查手机号是否已存在（排除指定用户）
@@ -93,6 +102,37 @@ func (r *userRepo) FindByEmail(ctx context.Context, email string) (*model.User, 
 func (r *userRepo) List(ctx context.Context) ([]model.User, error) {
 	var users []model.User
 	if err := r.db.WithContext(ctx).Order("id asc").Find(&users).Error; err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+// ListFiltered 按筛选条件查询用户列表
+// keyword 模糊匹配姓名或邮箱，role_id 通过 user_roles 关联表筛选，status 筛选启用/禁用
+func (r *userRepo) ListFiltered(ctx context.Context, filter UserListFilter) ([]model.User, error) {
+	q := r.db.WithContext(ctx).Model(&model.User{})
+
+	// 关键词模糊搜索
+	if kw := strings.TrimSpace(filter.Keyword); kw != "" {
+		like := "%" + kw + "%"
+		q = q.Where("name LIKE ? OR email LIKE ?", like, like)
+	}
+
+	// 角色筛选：通过 user_roles 关联表子查询
+	if filter.RoleID > 0 {
+		q = q.Where("id IN (SELECT user_id FROM user_roles WHERE role_id = ?)", filter.RoleID)
+	}
+
+	// 状态筛选
+	switch filter.Status {
+	case "active":
+		q = q.Where("active = ?", true)
+	case "disabled":
+		q = q.Where("active = ?", false)
+	}
+
+	var users []model.User
+	if err := q.Order("id asc").Find(&users).Error; err != nil {
 		return nil, err
 	}
 	return users, nil

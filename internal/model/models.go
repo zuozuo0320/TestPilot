@@ -46,6 +46,7 @@ type User struct {
 	Avatar       string         `json:"avatar" gorm:"size:500"`
 	PasswordHash string         `json:"-" gorm:"column:password_hash;size:255;not null;default:''"`
 	Role         string         `json:"role" gorm:"size:20;not null;default:readonly;index"` // 缓存主角色，兼容 JWT/旧逻辑
+	RoleNames    []string       `json:"role_names" gorm:"-"`                                  // 虚拟字段：成员管理等场景回填多角色显示名
 	Active       bool           `json:"active" gorm:"not null;default:true"`
 	LastLoginAt  *time.Time     `json:"last_login_at" gorm:"index"`
 	DeletedAt    gorm.DeletedAt `json:"deleted_at" gorm:"index"`
@@ -282,6 +283,17 @@ func IsPresetSystemRole(role string) bool {
 // IsValidGlobalRole 判断是否为合法的全局角色名
 func IsValidGlobalRole(role string) bool {
 	return IsPresetSystemRole(role)
+}
+
+// IsProtectedGlobalRole 判断是否为受保护的全局角色（admin/manager）
+// 受保护角色的成员不可从项目中移除
+func IsProtectedGlobalRole(role string) bool {
+	switch role {
+	case GlobalRoleAdmin, GlobalRoleManager:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsSeedProject 判断是否为种子项目（不可删除/归档）

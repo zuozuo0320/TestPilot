@@ -16,7 +16,7 @@ func TestTestCaseService_CreateSuccess(t *testing.T) {
 	seedAdmin(t, db)
 	seedProject(t, db)
 	tcRepo := repository.NewTestCaseRepo(db)
-	svc := NewTestCaseService(tcRepo)
+	svc := NewTestCaseService(tcRepo, repository.NewCaseHistoryRepo(db))
 
 	tc, err := svc.Create(context.Background(), 1, 1, CreateTestCaseInput{
 		Title: "TC-1", Level: "P0", Priority: "high",
@@ -33,7 +33,7 @@ func TestTestCaseService_CreateDefaults(t *testing.T) {
 	seedAdmin(t, db)
 	seedProject(t, db)
 	tcRepo := repository.NewTestCaseRepo(db)
-	svc := NewTestCaseService(tcRepo)
+	svc := NewTestCaseService(tcRepo, repository.NewCaseHistoryRepo(db))
 
 	// 不传 level/review_result/exec_result → 使用默认值
 	tc, err := svc.Create(context.Background(), 1, 1, CreateTestCaseInput{
@@ -52,7 +52,7 @@ func TestTestCaseService_ListPaged(t *testing.T) {
 	seedAdmin(t, db)
 	seedProject(t, db)
 	tcRepo := repository.NewTestCaseRepo(db)
-	svc := NewTestCaseService(tcRepo)
+	svc := NewTestCaseService(tcRepo, repository.NewCaseHistoryRepo(db))
 
 	// 创建 3 个用例
 	for i := 0; i < 3; i++ {
@@ -76,7 +76,7 @@ func TestTestCaseService_UpdateSuccess(t *testing.T) {
 	seedAdmin(t, db)
 	seedProject(t, db)
 	tcRepo := repository.NewTestCaseRepo(db)
-	svc := NewTestCaseService(tcRepo)
+	svc := NewTestCaseService(tcRepo, repository.NewCaseHistoryRepo(db))
 
 	tc := model.TestCase{
 		ProjectID: 1, Title: "Original", Level: "P0",
@@ -98,7 +98,7 @@ func TestTestCaseService_DeleteSuccess(t *testing.T) {
 	db := testDB(t)
 	seedProject(t, db)
 	tcRepo := repository.NewTestCaseRepo(db)
-	svc := NewTestCaseService(tcRepo)
+	svc := NewTestCaseService(tcRepo, repository.NewCaseHistoryRepo(db))
 
 	tc := model.TestCase{
 		ProjectID: 1, Title: "ToDelete", Level: "P0",
@@ -114,7 +114,7 @@ func TestTestCaseService_DeleteNotFound(t *testing.T) {
 	db := testDB(t)
 	seedProject(t, db)
 	tcRepo := repository.NewTestCaseRepo(db)
-	svc := NewTestCaseService(tcRepo)
+	svc := NewTestCaseService(tcRepo, repository.NewCaseHistoryRepo(db))
 
 	err := svc.Delete(context.Background(), 1, 9999)
 	require.Error(t, err)

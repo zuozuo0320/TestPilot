@@ -69,7 +69,8 @@ func TestAuthService_LoginFrozenUser(t *testing.T) {
 	bizErr, ok := err.(*BizError)
 	require.True(t, ok)
 	assert.Equal(t, 403, bizErr.Status)
-	assert.Equal(t, "USER_FROZEN", bizErr.Code)
+	// 登录接口已经统一收敛到 USER_DISABLED，测试预期也要跟随当前业务语义更新。
+	assert.Equal(t, "USER_DISABLED", bizErr.Code)
 }
 
 func TestAuthService_LoginEmptyFields(t *testing.T) {
