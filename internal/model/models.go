@@ -24,7 +24,7 @@ const (
 	ProjectStatusArchived = "archived"
 
 	// ---- 种子数据标识 ----
-	SeedProjectName = "快速开始"
+	SeedProjectName = "AiSight Demo"
 )
 
 // PresetRoleDisplayNames 预置角色的中文显示名映射

@@ -218,7 +218,7 @@ func (r *projectRepo) Delete(ctx context.Context, id uint) error {
 func (r *projectRepo) CountTestCases(ctx context.Context, projectID uint) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.TestCase{}).
-		Where("project_id = ? AND deleted_at IS NULL", projectID).Count(&count).Error
+		Where("project_id = ?", projectID).Count(&count).Error
 	return count, err
 }
 

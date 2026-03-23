@@ -92,7 +92,7 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 	}
 
 	// 清理历史遗留的旧名称项目（一次性操作，幂等安全）
-	for _, oldName := range []string{"Demo Project", "示例项目"} {
+	for _, oldName := range []string{"Demo Project", "示例项目", "快速开始"} {
 		var oldProject model.Project
 		if err := db.Where("name = ?", oldName).First(&oldProject).Error; err == nil {
 			// 删除关联数据
