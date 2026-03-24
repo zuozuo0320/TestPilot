@@ -34,7 +34,7 @@ func NewProjectService(
 
 // Create 创建项目
 // 自动设置 status=active，创建后将创建者设为 owner
-func (s *ProjectService) Create(ctx context.Context, userID uint, name, description string) (*model.Project, error) {
+func (s *ProjectService) Create(ctx context.Context, userID uint, name, description, avatar string) (*model.Project, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, ErrBadRequest("MISSING_NAME", "project name is required")
@@ -50,6 +50,7 @@ func (s *ProjectService) Create(ctx context.Context, userID uint, name, descript
 	project := model.Project{
 		Name:        name,
 		Description: strings.TrimSpace(description),
+		Avatar:      strings.TrimSpace(avatar),
 		Status:      model.ProjectStatusActive,
 	}
 	if err := s.projectRepo.Create(ctx, &project); err != nil {
@@ -63,9 +64,9 @@ func (s *ProjectService) Create(ctx context.Context, userID uint, name, descript
 	return &project, nil
 }
 
-// Update 更新项目（名称、描述）
+// Update 更新项目（名称、描述、头像）
 // 名称唯一性校验，归档项目不可编辑
-func (s *ProjectService) Update(ctx context.Context, actorID, projectID uint, name, description *string) (*model.Project, error) {
+func (s *ProjectService) Update(ctx context.Context, actorID, projectID uint, name, description, avatar *string) (*model.Project, error) {
 	project, err := s.projectRepo.FindByID(ctx, projectID)
 	if err != nil {
 		return nil, ErrProjectNotFound
@@ -91,6 +92,9 @@ func (s *ProjectService) Update(ctx context.Context, actorID, projectID uint, na
 	}
 	if description != nil {
 		updates["description"] = strings.TrimSpace(*description)
+	}
+	if avatar != nil {
+		updates["avatar"] = strings.TrimSpace(*avatar)
 	}
 	if len(updates) == 0 {
 		return nil, ErrBadRequest("NO_FIELDS", "no valid fields to update")

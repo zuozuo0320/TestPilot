@@ -96,6 +96,7 @@ type Project struct {
 	ID          uint       `json:"id" gorm:"primaryKey"`
 	Name        string     `json:"name" gorm:"size:120;uniqueIndex;not null"`
 	Description string     `json:"description" gorm:"size:500"`
+	Avatar      string     `json:"avatar" gorm:"size:500"`
 	Status      string     `json:"status" gorm:"size:20;not null;default:active;index"`
 	ArchivedAt  *time.Time `json:"archived_at"`
 	CreatedAt   time.Time  `json:"created_at"`

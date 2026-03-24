@@ -11,10 +11,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/testpilot ./cmd/serve
 
 FROM alpine:3.21
 RUN adduser -D -g '' appuser
-USER appuser
 WORKDIR /app
 
 COPY --from=builder /out/testpilot /app/testpilot
+RUN mkdir -p /app/uploads/avatars /app/uploads/projects && chown -R appuser:appuser /app/uploads
+USER appuser
 EXPOSE 8080
 
 ENTRYPOINT ["/app/testpilot"]

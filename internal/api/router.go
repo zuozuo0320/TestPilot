@@ -136,6 +136,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.POST("/projects/:projectID/members", a.addProjectMember)
 	auth.GET("/projects/:projectID/members", a.listProjectMembers)
 	auth.DELETE("/projects/:projectID/members/:userID", a.removeProjectMember)
+	auth.POST("/projects/:projectID/avatar", a.uploadProjectAvatar)
 	auth.POST("/projects/:projectID/requirements", a.createRequirement)
 	auth.GET("/projects/:projectID/requirements", a.listRequirements)
 	auth.POST("/projects/:projectID/testcases", a.createTestCase)

@@ -88,6 +88,7 @@ type projectRow struct {
 	ID            uint       `gorm:"column:id"`
 	Name          string     `gorm:"column:name"`
 	Description   string     `gorm:"column:description"`
+	Avatar        string     `gorm:"column:avatar"`
 	Status        string     `gorm:"column:status"`
 	ArchivedAt    *time.Time `gorm:"column:archived_at"`
 	CreatedAt     time.Time  `gorm:"column:created_at"`
@@ -102,6 +103,7 @@ func (pr projectRow) toModel() model.Project {
 		ID:            pr.ID,
 		Name:          pr.Name,
 		Description:   pr.Description,
+		Avatar:        pr.Avatar,
 		Status:        pr.Status,
 		ArchivedAt:    pr.ArchivedAt,
 		CreatedAt:     pr.CreatedAt,
@@ -115,7 +117,7 @@ func (pr projectRow) toModel() model.Project {
 func (r *projectRepo) List(ctx context.Context) ([]model.Project, error) {
 	var rows []projectRow
 	err := r.db.WithContext(ctx).Raw(`
-		SELECT projects.id, projects.name, projects.description, projects.status,
+		SELECT projects.id, projects.name, projects.description, projects.avatar, projects.status,
 			projects.archived_at, projects.created_at, projects.updated_at,
 			(SELECT COUNT(*) FROM project_members WHERE project_members.project_id = projects.id) AS member_count,
 			(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id) AS testcase_count
@@ -136,7 +138,7 @@ func (r *projectRepo) List(ctx context.Context) ([]model.Project, error) {
 func (r *projectRepo) ListByUserID(ctx context.Context, userID uint) ([]model.Project, error) {
 	var rows []projectRow
 	err := r.db.WithContext(ctx).Raw(`
-		SELECT projects.id, projects.name, projects.description, projects.status,
+		SELECT projects.id, projects.name, projects.description, projects.avatar, projects.status,
 			projects.archived_at, projects.created_at, projects.updated_at,
 			(SELECT COUNT(*) FROM project_members WHERE project_members.project_id = projects.id) AS member_count,
 			(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id) AS testcase_count
@@ -159,7 +161,7 @@ func (r *projectRepo) ListByUserID(ctx context.Context, userID uint) ([]model.Pr
 func (r *projectRepo) ListByUserIDIncludeArchived(ctx context.Context, userID uint) ([]model.Project, error) {
 	var rows []projectRow
 	err := r.db.WithContext(ctx).Raw(`
-		SELECT projects.id, projects.name, projects.description, projects.status,
+		SELECT projects.id, projects.name, projects.description, projects.avatar, projects.status,
 			projects.archived_at, projects.created_at, projects.updated_at,
 			(SELECT COUNT(*) FROM project_members WHERE project_members.project_id = projects.id) AS member_count,
 			(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id) AS testcase_count

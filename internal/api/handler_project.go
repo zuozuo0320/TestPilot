@@ -2,6 +2,14 @@
 package api
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"testpilot/internal/dto/response"
@@ -18,7 +26,7 @@ func (a *API) createProject(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	project, err := a.projectSvc.Create(c.Request.Context(), user.ID, req.Name, req.Description)
+	project, err := a.projectSvc.Create(c.Request.Context(), user.ID, req.Name, req.Description, req.Avatar)
 	if err != nil {
 		response.HandleError(c, err)
 		return
@@ -40,7 +48,7 @@ func (a *API) updateProject(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	updated, err := a.projectSvc.Update(c.Request.Context(), user.ID, projectID, req.Name, req.Description)
+	updated, err := a.projectSvc.Update(c.Request.Context(), user.ID, projectID, req.Name, req.Description, req.Avatar)
 	if err != nil {
 		response.HandleError(c, err)
 		return
@@ -169,4 +177,54 @@ func (a *API) removeProjectMember(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"removed": true})
+}
+
+// uploadProjectAvatar 上传项目头像（admin/manager 可操作）
+func (a *API) uploadProjectAvatar(c *gin.Context) {
+	user := currentUser(c)
+	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+		return
+	}
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	file, header, err := c.Request.FormFile("avatar")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "avatar file is required")
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".gif" && ext != ".webp" {
+		response.Error(c, http.StatusBadRequest, "unsupported image format")
+		return
+	}
+	if header.Size > 2*1024*1024 {
+		response.Error(c, http.StatusBadRequest, "file too large (max 2MB)")
+		return
+	}
+
+	dir := "uploads/projects"
+	os.MkdirAll(dir, 0o755)
+	filename := fmt.Sprintf("project_%d_%d%s", projectID, time.Now().UnixMilli(), ext)
+	dst, err := os.Create(filepath.Join(dir, filename))
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "failed to save file")
+		return
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, file); err != nil {
+		response.Error(c, http.StatusInternalServerError, "failed to save file")
+		return
+	}
+
+	avatarURL := "/" + dir + "/" + filename
+	avatarPtr := &avatarURL
+	if _, err := a.projectSvc.Update(c.Request.Context(), user.ID, projectID, nil, nil, avatarPtr); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"avatar": avatarURL})
 }

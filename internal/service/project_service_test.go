@@ -16,7 +16,7 @@ func TestProjectService_CreateSuccess(t *testing.T) {
 	seedAdmin(t, db)
 	svc := NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
 
-	project, err := svc.Create(context.Background(), 1, "Test Project", "desc")
+	project, err := svc.Create(context.Background(), 1, "Test Project", "desc", "")
 	require.NoError(t, err)
 	assert.NotZero(t, project.ID)
 	assert.Equal(t, "Test Project", project.Name)

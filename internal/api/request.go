@@ -51,6 +51,7 @@ type changePasswordRequest struct {
 type updateProjectRequest struct {
 	Name        *string `json:"name" binding:"omitempty,min=2,max=120"`
 	Description *string `json:"description" binding:"omitempty,max=500"`
+	Avatar      *string `json:"avatar" binding:"omitempty,max=500"`
 }
 
 // updateProfileRequest 个人资料更新请求
@@ -75,6 +76,7 @@ type assignUserProjectsRequest struct {
 type createProjectRequest struct {
 	Name        string `json:"name" binding:"required,min=2,max=120"`
 	Description string `json:"description" binding:"max=500"`
+	Avatar      string `json:"avatar" binding:"max=500"`
 }
 
 // addMemberRequest 添加项目成员请求
