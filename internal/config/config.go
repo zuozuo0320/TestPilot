@@ -49,7 +49,7 @@ func Load() Config {
 		RedisDB:            getEnvInt("REDIS_DB", 0),
 		AutoSeed:           getEnvBool("AUTO_SEED", false),
 		RunFailRate:        getEnvFloat("RUN_FAIL_RATE", 0.25),
-		CORSAllowOrigins:   getEnv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000"),
+		CORSAllowOrigins:   getEnv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5175,http://127.0.0.1:5175,http://localhost:3000,http://127.0.0.1:3000"),
 		JWTSecret:          getEnv("JWT_SECRET", "testpilot-dev-secret-change-in-production"),
 	}
 }
