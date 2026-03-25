@@ -19,6 +19,7 @@ type TestCaseFilter struct {
 	ExecResult   string // 执行结果筛选
 	Tags         string // 标签筛选
 	ModuleID     *uint  // 目录模块筛选
+	ModulePath   string // 目录路径筛选（支持子目录前缀匹配）
 	CreatedByID  *uint  // 创建人筛选
 	UpdatedByID  *uint  // 更新人筛选
 	CreatedAfter  string // 创建时间起始
@@ -113,6 +114,14 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 	}
 	if f.ModuleID != nil {
 		baseQuery = baseQuery.Where("module_id = ?", *f.ModuleID)
+	}
+	if f.ModulePath != "" {
+		// 未规划用例精确匹配；其他目录支持子目录前缀匹配
+		if f.ModulePath == "/未规划用例" {
+			baseQuery = baseQuery.Where("(module_path = ? OR module_path = '' OR module_path = '/' OR module_path IS NULL)", f.ModulePath)
+		} else {
+			baseQuery = baseQuery.Where("(module_path = ? OR module_path LIKE ?)", f.ModulePath, f.ModulePath+"/%")
+		}
 	}
 	if f.CreatedByID != nil {
 		baseQuery = baseQuery.Where("created_by = ?", *f.CreatedByID)

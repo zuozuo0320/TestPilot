@@ -63,6 +63,7 @@ func (a *API) listTestCases(c *gin.Context) {
 		ReviewResult:  c.Query("review_result"),
 		ExecResult:    c.Query("exec_result"),
 		Tags:          c.Query("tags"),
+		ModulePath:    strings.TrimSpace(c.Query("module_path")),
 		CreatedAfter:  c.Query("created_after"),
 		CreatedBefore: c.Query("created_before"),
 		UpdatedAfter:  c.Query("updated_after"),
