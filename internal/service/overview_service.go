@@ -63,11 +63,32 @@ func (s *OverviewService) GetOverview(ctx context.Context, projectID uint) (map[
 	runCount, _ := s.executionRepo.CountRuns(ctx, projectID)
 	defCount, _ := s.defectRepo.Count(ctx, projectID)
 
+	// 基于用例 exec_result 字段统计通过率
+	execStats, _ := s.testCaseRepo.CountByExecResult(ctx, projectID)
+	passedCases := execStats["成功"]
+	failedCases := execStats["失败"]
+	blockedCases := execStats["阻塞"]
+	executedCases := passedCases + failedCases + blockedCases
+	casePassRate := 0.0
+	if executedCases > 0 {
+		casePassRate = (float64(passedCases) / float64(executedCases)) * 100
+	}
+
 	summary := map[string]any{
 		"project": project,
 		"counts": map[string]any{
 			"requirements": reqCount, "testcases": tcCount,
 			"scripts": scCount, "runs": runCount, "defects": defCount,
+		},
+		"case_stats": map[string]any{
+			"total":      tcCount,
+			"passed":     passedCases,
+			"failed":     failedCases,
+			"blocked":    blockedCases,
+			"unexecuted": execStats["未执行"],
+			"executed":   executedCases,
+			"pass_rate":  casePassRate,
+			"breakdown":  execStats,
 		},
 		"latest_run":   map[string]any{},
 		"quality_gate": map[string]any{"status": "no_runs", "reason": "no execution data"},
@@ -107,3 +128,4 @@ func (s *OverviewService) GetOverview(ctx context.Context, projectID uint) (map[
 	}
 	return summary, nil
 }
+

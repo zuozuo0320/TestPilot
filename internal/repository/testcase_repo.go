@@ -64,6 +64,7 @@ type TestCaseRepository interface {
 	Delete(ctx context.Context, id, projectID uint) (int64, error)
 	BelongsToProject(ctx context.Context, id, projectID uint) (bool, error)
 	CountByProject(ctx context.Context, projectID uint) (int64, error)
+	CountByExecResult(ctx context.Context, projectID uint) (map[string]int64, error)
 	BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error)
 	BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error)
 	BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error)
@@ -212,6 +213,29 @@ func (r *testCaseRepo) CountByProject(ctx context.Context, projectID uint) (int6
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.TestCase{}).Where("project_id = ?", projectID).Count(&count).Error
 	return count, err
+}
+
+// CountByExecResult 按执行结果分组统计用例数
+func (r *testCaseRepo) CountByExecResult(ctx context.Context, projectID uint) (map[string]int64, error) {
+	type row struct {
+		ExecResult string
+		Cnt        int64
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).
+		Model(&model.TestCase{}).
+		Select("exec_result, COUNT(*) as cnt").
+		Where("project_id = ?", projectID).
+		Group("exec_result").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int64)
+	for _, r := range rows {
+		result[r.ExecResult] = r.Cnt
+	}
+	return result, nil
 }
 
 func (r *testCaseRepo) BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error) {
