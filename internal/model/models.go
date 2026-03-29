@@ -268,6 +268,16 @@ func AutoMigrate(db *gorm.DB) error {
 		&Run{},
 		&RunResult{},
 		&Defect{},
+
+		// 测试智编模块
+		&AIScriptTask{},
+		&AIScriptTaskCaseRel{},
+		&AIScriptRecordingSession{},
+		&AIScriptVersion{},
+		&AIScriptValidation{},
+		&AIScriptTrace{},
+		&AIScriptEvidence{},
+		&AIScriptOperationLog{},
 	)
 }
 

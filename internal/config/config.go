@@ -28,6 +28,8 @@ type Config struct {
 	RunFailRate        float64
 	CORSAllowOrigins   string
 	JWTSecret          string
+	ExecutorURL        string // Python 执行服务地址
+	ExecutorAPIKey     string // Python 执行服务 API Key
 }
 
 func Load() Config {
@@ -51,6 +53,8 @@ func Load() Config {
 		RunFailRate:        getEnvFloat("RUN_FAIL_RATE", 0.25),
 		CORSAllowOrigins:   getEnv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5175,http://127.0.0.1:5175,http://localhost:3000,http://127.0.0.1:3000"),
 		JWTSecret:          getEnv("JWT_SECRET", "testpilot-dev-secret-change-in-production"),
+		ExecutorURL:        getEnv("EXECUTOR_URL", "http://127.0.0.1:8100"),
+		ExecutorAPIKey:     getEnv("EXECUTOR_API_KEY", "tp-executor-secret-key-change-in-prod"),
 	}
 }
 

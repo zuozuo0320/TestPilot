@@ -32,6 +32,7 @@ type Dependencies struct {
 	CaseHistoryRepo    *repository.CaseHistoryRepo
 	CaseRelationRepo   *repository.CaseRelationRepo
 	XlsxService        *service.XlsxService
+	AIScriptService    *service.AIScriptService
 }
 
 // API 核心结构体
@@ -55,6 +56,7 @@ type API struct {
 	caseHistoryRepo *repository.CaseHistoryRepo
 	caseRelationRepo *repository.CaseRelationRepo
 	xlsxSvc          *service.XlsxService
+	aiScriptSvc      *service.AIScriptService
 }
 
 // NewRouter 创建路由引擎并注册所有路由
@@ -79,6 +81,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		caseHistoryRepo: deps.CaseHistoryRepo,
 		caseRelationRepo: deps.CaseRelationRepo,
 		xlsxSvc:          deps.XlsxService,
+		aiScriptSvc:      deps.AIScriptService,
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -175,6 +178,36 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.GET("/projects/:projectID/overview", a.projectDemoOverview)
 	auth.POST("/webhooks/gitlab", a.mockGitLabWebhook)
 	auth.GET("/audit-logs", a.listAuditLogs)
+
+	// ---- 测试智编 ----
+	aiScript := auth.Group("/ai-script")
+	// 任务
+	aiScript.GET("/tasks", a.listAIScriptTasks)
+	aiScript.POST("/tasks", a.createAIScriptTask)
+	aiScript.GET("/tasks/:taskID", a.getAIScriptTask)
+	aiScript.POST("/tasks/:taskID/execute", a.executeAIScriptTask)
+	aiScript.POST("/tasks/:taskID/discard", a.discardTask)
+	aiScript.POST("/tasks/:taskID/clone", a.cloneTask)
+	aiScript.POST("/tasks/:taskID/cases/update", a.updateTaskCases)
+	// 录制
+	aiScript.POST("/tasks/:taskID/recording/start", a.startRecording)
+	aiScript.POST("/tasks/:taskID/recording/finish", a.finishRecording)
+	aiScript.GET("/tasks/:taskID/recordings/latest", a.getLatestRecording)
+	// 脚本版本
+	aiScript.GET("/tasks/:taskID/versions", a.getAIScriptVersions)
+	aiScript.GET("/tasks/:taskID/current-script", a.getCurrentAIScript)
+	aiScript.POST("/tasks/:taskID/edit-script", a.editAIScript)
+	// 脚本操作
+	aiScript.POST("/scripts/:scriptID/confirm", a.confirmScript)
+	aiScript.POST("/scripts/:scriptID/discard", a.discardScript)
+	aiScript.GET("/scripts/:scriptID/export", a.exportScript)
+	// 验证
+	aiScript.POST("/tasks/:taskID/validate", a.triggerAIScriptValidation)
+	aiScript.GET("/scripts/:scriptID/validations", a.getValidationHistory)
+	aiScript.GET("/validations/latest", a.getAIScriptLatestValidation)
+	// 轨迹与证据
+	aiScript.GET("/tasks/:taskID/traces", a.getAIScriptTraces)
+	aiScript.GET("/tasks/:taskID/evidences", a.getAIScriptEvidences)
 
 	return r
 }

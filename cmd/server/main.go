@@ -122,6 +122,7 @@ func main() {
 	attachmentRepo := repository.NewAttachmentRepo(db)
 	caseHistoryRepo := repository.NewCaseHistoryRepo(db)
 	caseRelationRepo := repository.NewCaseRelationRepo(db)
+	aiScriptRepo := repository.NewAIScriptRepo(db)
 
 	// 2. Service 层
 	mockExecutor := execution.NewMockExecutor(logger, cfg.RunFailRate)
@@ -141,6 +142,7 @@ func main() {
 	moduleSvc := service.NewModuleService(moduleRepo)
 	attachmentSvc := service.NewAttachmentService(attachmentRepo, "./uploads")
 	xlsxSvc := service.NewXlsxService(testCaseRepo)
+	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, logger)
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{
@@ -162,6 +164,7 @@ func main() {
 		CaseHistoryRepo:    caseHistoryRepo,
 		CaseRelationRepo:   caseRelationRepo,
 		XlsxService:        xlsxSvc,
+		AIScriptService:    aiScriptSvc,
 	}, cfg.CORSAllowOrigins)
 
 	server := &http.Server{

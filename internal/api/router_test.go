@@ -49,6 +49,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 	defectRepo := repository.NewDefectRepo(db)
 	requirementRepo := repository.NewRequirementRepo(db)
 	scriptRepo := repository.NewScriptRepo(db)
+	aiScriptRepo := repository.NewAIScriptRepo(db)
 
 	// Service 层
 	mockExecutor := execution.NewMockExecutor(logger, 0)
@@ -68,6 +69,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		ScriptService:      service.NewScriptService(scriptRepo, testCaseRepo),
 		OverviewService:    service.NewOverviewService(projectRepo, requirementRepo, testCaseRepo, scriptRepo, executionRepo, defectRepo),
 		AuditService:       service.NewAuditService(auditRepo),
+		AIScriptService:    service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, "http://127.0.0.1:8100", "", logger),
 	}, "")
 
 	seedTestData(t, db)
