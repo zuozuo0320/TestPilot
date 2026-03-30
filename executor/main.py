@@ -15,11 +15,12 @@ from typing import Optional, Dict, Any
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config import SERVICE_PORT, EXECUTOR_API_KEY, CODEGEN_SESSION_TIMEOUT_SEC
+from config import SERVICE_PORT, EXECUTOR_API_KEY, CODEGEN_SESSION_TIMEOUT_SEC, SCREENSHOT_DIR
 from browser_runner import run_browser_exploration
 from script_generator import generate_playwright_script, refactor_recorded_script, parse_step_model
 from validation_runner import run_validation
@@ -32,6 +33,9 @@ logging.basicConfig(
 logger = logging.getLogger("executor")
 
 app = FastAPI(title="TestPilot Executor Service", version="2.0.0")
+
+# 挂载截图静态文件服务
+app.mount("/screenshots", StaticFiles(directory=SCREENSHOT_DIR), name="screenshots")
 
 # ── 统一 CORS + API Key 鉴权中间件 ──
 CORS_HEADERS = {
@@ -54,6 +58,8 @@ async def cors_and_auth(request: Request, call_next):
     if any(request.url.path.startswith(p) for p in skip_paths):
         need_auth = False
     elif request.url.path.startswith("/recording/"):
+        need_auth = False
+    elif request.url.path.startswith("/screenshots/"):
         need_auth = False
     elif request.url.path.startswith("/codegen/") and request.method == "GET":
         need_auth = False

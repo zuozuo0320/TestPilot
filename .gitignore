@@ -8,3 +8,8 @@ uploads/
 __pycache__/
 *.pyc
 .venv/
+
+# Executor 运行时产物
+executor/pw_workspace/node_modules/
+executor/pw_workspace/test-results/
+executor/screenshots/

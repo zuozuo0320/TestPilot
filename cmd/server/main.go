@@ -142,7 +142,7 @@ func main() {
 	moduleSvc := service.NewModuleService(moduleRepo)
 	attachmentSvc := service.NewAttachmentService(attachmentRepo, "./uploads")
 	xlsxSvc := service.NewXlsxService(testCaseRepo)
-	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, logger)
+	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{

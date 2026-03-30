@@ -45,6 +45,8 @@ def _ensure_playwright_project():
             cwd=str(project_dir),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             shell=True,
         )
@@ -63,12 +65,18 @@ export default defineConfig({
   use: {
     headless: true,
     screenshot: 'on',
+    locale: 'zh-CN',
     trace: 'retain-on-failure',
   },
   projects: [
     {
       name: 'chromium',
-      use: { browserName: 'chromium' },
+      use: {
+        browserName: 'chromium',
+        launchOptions: {
+          args: ['--disable-blink-features=AutomationControlled'],
+        },
+      },
     },
   ],
 });
@@ -110,6 +118,10 @@ def run_validation(
         # 清理旧结果
         if results_file.exists():
             results_file.unlink()
+        results_dir = project_dir / "test-results"
+        if results_dir.exists():
+            import shutil
+            shutil.rmtree(results_dir, ignore_errors=True)
 
         # 2. 写入脚本文件
         script_file = tests_dir / f"task_{task_id}_v{script_version_id}.spec.ts"
@@ -123,6 +135,8 @@ def run_validation(
             cwd=str(project_dir),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=180,
             shell=True,
         )
@@ -235,20 +249,57 @@ def _parse_json_results(results_file: Path) -> dict:
         fail_reason = ""
         first_failed = None
 
-        for suite in suites:
-            for spec in suite.get("specs", []):
-                for test in spec.get("tests", []):
-                    for result in test.get("results", []):
+        def _collect_specs(suite_list):
+            """递归收集所有层级的 specs（Playwright 的 test.describe 会创建嵌套 suites）"""
+            specs = []
+            for suite in suite_list:
+                specs.extend(suite.get("specs", []))
+                # 递归处理嵌套的子 suites
+                nested = suite.get("suites", [])
+                if nested:
+                    specs.extend(_collect_specs(nested))
+            return specs
+
+        all_specs = _collect_specs(suites)
+
+        for spec in all_specs:
+            for test in spec.get("tests", []):
+                for result in test.get("results", []):
+                    status = result.get("status", "")
+
+                    # 优先从 result.steps 中提取 test.step 级别的详情
+                    steps = result.get("steps", [])
+                    if steps:
+                        for step in steps:
+                            total += 1
+                            step_status = step.get("error") is None
+                            assertion = {
+                                "name": step.get("title", f"Step {total}"),
+                                "passed": step_status,
+                                "skipped": False,
+                            }
+                            if step_status:
+                                passed += 1
+                            else:
+                                if first_failed is None:
+                                    first_failed = total
+                                err = step.get("error", {})
+                                if err:
+                                    fail_reason = (err.get("message", "") or "")[:500]
+                            assertions.append(assertion)
+                    else:
+                        # 回退：无 steps 时按整个 test case 统计
                         total += 1
-                        status = result.get("status", "")
+                        is_passed = status == "passed"
+                        is_skipped = status == "skipped"
 
                         assertion = {
                             "name": spec.get("title", f"Test {total}"),
-                            "result": status,
-                            "message": None,
+                            "passed": is_passed,
+                            "skipped": is_skipped,
                         }
 
-                        if status == "passed":
+                        if is_passed:
                             passed += 1
                         elif status in ("failed", "timedOut"):
                             if first_failed is None:
@@ -256,7 +307,6 @@ def _parse_json_results(results_file: Path) -> dict:
                             errors = result.get("errors", [])
                             if errors:
                                 fail_reason = errors[0].get("message", "")[:500]
-                                assertion["message"] = fail_reason
 
                         assertions.append(assertion)
 
@@ -301,8 +351,8 @@ def _collect_screenshots(project_dir: Path, task_id: int, script_version_id: int
     return screenshots
 
 
-def _build_logs(stdout: str, stderr: str, status: str) -> str:
-    """构建日志 JSON"""
+def _build_logs(stdout: str, stderr: str, status: str) -> list:
+    """构建日志列表"""
     logs = []
     if stdout:
         for line in stdout.strip().split("\n")[:50]:
@@ -310,4 +360,4 @@ def _build_logs(stdout: str, stderr: str, status: str) -> str:
     if stderr:
         for line in stderr.strip().split("\n")[:20]:
             logs.append({"level": "ERROR" if status == "FAIL" else "WARN", "message": line.strip()})
-    return json.dumps(logs, ensure_ascii=False)
+    return logs

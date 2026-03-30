@@ -69,7 +69,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		ScriptService:      service.NewScriptService(scriptRepo, testCaseRepo),
 		OverviewService:    service.NewOverviewService(projectRepo, requirementRepo, testCaseRepo, scriptRepo, executionRepo, defectRepo),
 		AuditService:       service.NewAuditService(auditRepo),
-		AIScriptService:    service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, "http://127.0.0.1:8100", "", logger),
+		AIScriptService:    service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, "http://127.0.0.1:8100", "http://localhost:8100", "", logger),
 	}, "")
 
 	seedTestData(t, db)

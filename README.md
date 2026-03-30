@@ -18,34 +18,95 @@
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
-| Go | 1.25+ | 后端 |
+| Go | 1.25+ | 后端 API |
 | Python | 3.11+ | Executor 执行服务 |
 | Node.js | 20+ | 前端 + Playwright |
-| Docker | - | MySQL / Redis |
+| Docker | 24+ | MySQL 8.4 / Redis 7.4 |
 
-### 启动三个服务
+### Step 0 — 启动基础设施（MySQL + Redis）
 
 ```powershell
-# 1. Go 后端 (端口 8080)
-$env:EXECUTOR_URL="http://127.0.0.1:8100"
-go run ./cmd/server
+# 在项目根目录执行，使用 .env 中的配置启动容器
+docker compose --env-file .env up -d mysql redis
 
-# 2. Python Executor (端口 8100)
-cd executor
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-npx playwright install chromium
-python main.py
-
-# 3. Vue 前端 (端口 5173) — 见 TestFront 仓库
+# 等待健康检查通过（约 10-15 秒）
+docker compose ps   # STATUS 列应显示 healthy
 ```
 
-| 服务 | 地址 |
-|------|------|
-| 前端 | http://localhost:5173 |
-| 后端 API | http://localhost:8080 |
-| Executor | http://localhost:8100 |
+> MySQL 默认账号 `testpilot / testpilot`，数据库 `testpilot`，端口 `3306`
+> Redis 无密码，端口 `6379`
+
+### Step 1 — 启动 Go 后端（端口 8080）
+
+```powershell
+# 在项目根目录执行
+$env:EXECUTOR_URL = "http://127.0.0.1:8100"
+go run ./cmd/server
+
+# 或直接运行预编译二进制
+.\testpilot.exe
+```
+
+首次启动会自动执行 SQL 迁移和种子数据初始化（`AUTO_SEED=true`）。
+
+### Step 2 — 启动 Python Executor（端口 8100）
+
+```powershell
+cd executor
+
+# 首次：创建虚拟环境并安装依赖
+py -m venv .venv
+.venv\Scripts\pip.exe install -r requirements.txt
+npx playwright install chromium
+
+# 启动服务
+.venv\Scripts\python.exe main.py
+```
+
+> **注意**：Windows 上系统未注册 `python` 命令时，请使用 `py` launcher 代替。
+> Executor 需要 `executor/.env` 中配置 `OPENAI_API_KEY` 才能使用 AI 功能。
+
+### Step 3 — 启动 Vue 前端（端口 5173）
+
+```powershell
+# 在 TestFront 目录执行
+cd ..\TestFront
+npm install          # 首次需要安装依赖
+npm run dev          # 启动 Vite 开发服务器
+```
+
+### 服务总览
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 前端 | http://localhost:5173 | Vue 3 + Vite HMR |
+| 后端 API | http://localhost:8080 | Go Gin RESTful API |
+| Executor | http://localhost:8100 | Python FastAPI + AI 引擎 |
+| MySQL | localhost:3306 | Docker 容器 |
+| Redis | localhost:6379 | Docker 容器 |
+
+### 验证服务是否正常
+
+```powershell
+# 检查所有端口是否已监听
+netstat -ano | findstr "LISTENING" | findstr "5173 8080 8100 3306 6379"
+
+# 测试后端健康
+curl http://localhost:8080/api/v1/health
+
+# 测试 Executor 健康
+curl http://localhost:8100/health
+```
+
+### 常见问题
+
+| 问题 | 解决方案 |
+|------|----------|
+| `python` 命令未找到 | Windows 使用 `py` launcher 或完整路径 `.venv\Scripts\python.exe` |
+| `.venv` 目录不存在 | 执行 `py -m venv .venv` 创建虚拟环境 |
+| Executor 启动报 `OPENAI_API_KEY` 缺失 | 在 `executor/.env` 中配置有效的 API Key |
+| MySQL 连接失败 | 确认 Docker 容器已启动：`docker compose ps` |
+| 后端找不到 Executor | 确保设置了 `$env:EXECUTOR_URL = "http://127.0.0.1:8100"` |
 
 ### 默认账号
 

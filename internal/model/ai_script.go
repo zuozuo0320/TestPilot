@@ -110,6 +110,50 @@ func (j *JSONMap) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, j)
 }
 
+// RawJSON 用于存储原始 JSON 内容的类型。
+// GORM 中以 string 形式读写 MySQL JSON 列；
+// json.Marshal 时直接输出原始 JSON（不转义为字符串）。
+type RawJSON []byte
+
+func (r RawJSON) Value() (driver.Value, error) {
+	if r == nil {
+		return nil, nil
+	}
+	return string(r), nil
+}
+
+func (r *RawJSON) Scan(value interface{}) error {
+	if value == nil {
+		*r = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case string:
+		*r = []byte(v)
+	case []byte:
+		*r = append([]byte(nil), v...) // 复制一份，避免引用底层 buffer
+	default:
+		return errors.New("unsupported type for RawJSON")
+	}
+	return nil
+}
+
+func (r RawJSON) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return []byte("null"), nil
+	}
+	return r, nil
+}
+
+func (r *RawJSON) UnmarshalJSON(data []byte) error {
+	if data == nil {
+		*r = nil
+		return nil
+	}
+	*r = append([]byte(nil), data...)
+	return nil
+}
+
 // ── 模型定义 ──
 
 // AIScriptTask 测试智编-生成任务主表
@@ -194,15 +238,18 @@ type AIScriptValidation struct {
 	PassedStepCount      int        `json:"passed_step_count"`
 	FailedStepNo         *int       `json:"failed_step_no"`
 	FailReason           string     `json:"fail_reason" gorm:"type:text"`
-	AssertionSummaryJSON string     `json:"assertion_summary" gorm:"type:json"`
+	AssertionSummaryJSON RawJSON    `json:"assertion_summary" gorm:"type:json;column:assertion_summary_json"`
+	ExecutionLogsJSON    RawJSON    `json:"-" gorm:"type:json;column:execution_logs_json"`
 	StartedAt            time.Time  `json:"started_at"`
 	FinishedAt           *time.Time `json:"finished_at"`
 	DurationMs           *int64     `json:"duration_ms"`
 	TriggeredBy          uint       `json:"triggered_by" gorm:"not null"`
 	CreatedAt            time.Time  `json:"created_at"`
 
-	// 虚拟字段
-	TriggeredName string `json:"triggered_name" gorm:"-"`
+	// 虚拟字段（API 序列化用，不存 DB）
+	TriggeredName string                `json:"triggered_name" gorm:"-"`
+	Logs          json.RawMessage       `json:"logs" gorm:"-"`
+	Screenshots   []AIScriptEvidence    `json:"screenshots" gorm:"-"`
 }
 
 // AIScriptTrace 测试智编-结构化轨迹表

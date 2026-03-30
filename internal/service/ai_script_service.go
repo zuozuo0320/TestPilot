@@ -24,14 +24,15 @@ const executorBodyLimit = 10 << 20
 
 // AIScriptService 测试智编业务服务
 type AIScriptService struct {
-	repo           *repository.AIScriptRepo
-	projectRepo    repository.ProjectRepository
-	userRepo       repository.UserRepository
-	txMgr          *repository.TxManager
-	executorURL    string // Python 执行服务地址
-	executorAPIKey string // Python 执行服务 API Key
-	httpClient     *http.Client
-	logger         *slog.Logger
+	repo              *repository.AIScriptRepo
+	projectRepo       repository.ProjectRepository
+	userRepo          repository.UserRepository
+	txMgr             *repository.TxManager
+	executorURL       string // Python 执行服务地址（后端内部调用）
+	executorPublicURL string // Python 执行服务地址（前端浏览器可访问）
+	executorAPIKey    string // Python 执行服务 API Key
+	httpClient        *http.Client
+	logger            *slog.Logger
 }
 
 // NewAIScriptService 创建测试智编服务
@@ -41,18 +42,20 @@ func NewAIScriptService(
 	userRepo repository.UserRepository,
 	txMgr *repository.TxManager,
 	executorURL string,
+	executorPublicURL string,
 	executorAPIKey string,
 	logger *slog.Logger,
 ) *AIScriptService {
 	return &AIScriptService{
-		repo:           repo,
-		projectRepo:    projectRepo,
-		userRepo:       userRepo,
-		txMgr:          txMgr,
-		executorURL:    strings.TrimRight(executorURL, "/"),
-		executorAPIKey: executorAPIKey,
-		httpClient:     &http.Client{Timeout: 300 * time.Second},
-		logger:         logger,
+		repo:              repo,
+		projectRepo:       projectRepo,
+		userRepo:          userRepo,
+		txMgr:             txMgr,
+		executorURL:       strings.TrimRight(executorURL, "/"),
+		executorPublicURL: strings.TrimRight(executorPublicURL, "/"),
+		executorAPIKey:    executorAPIKey,
+		httpClient:        &http.Client{Timeout: 300 * time.Second},
+		logger:            logger,
 	}
 }
 
@@ -676,7 +679,10 @@ func (s *AIScriptService) handleValidateResult(ctx context.Context, validationID
 		"finished_at":       &now,
 	}
 	if result.AssertionSummary != nil {
-		updateFields["assertion_summary"] = string(result.AssertionSummary)
+		updateFields["assertion_summary_json"] = model.RawJSON(result.AssertionSummary)
+	}
+	if result.Logs != nil {
+		updateFields["execution_logs_json"] = model.RawJSON(result.Logs)
 	}
 
 	if err := s.repo.UpdateValidationFields(ctx, validationID, updateFields); err != nil {
@@ -707,13 +713,18 @@ func (s *AIScriptService) handleValidateResult(ctx context.Context, validationID
 		evidences := make([]model.AIScriptEvidence, len(result.Screenshots))
 		for i, sc := range result.Screenshots {
 			validationIDCopy := validationID
+			// 将相对路径拼接为完整 URL（如: /screenshots/xxx.png → http://127.0.0.1:8100/screenshots/xxx.png）
+			fileURL := sc.URL
+			if len(fileURL) > 0 && fileURL[0] == '/' {
+				fileURL = s.executorPublicURL + fileURL
+			}
 			evidences[i] = model.AIScriptEvidence{
 				TaskID:          taskID,
 				ScriptVersionID: &scriptVersionID,
 				ValidationID:    &validationIDCopy,
 				EvidenceType:    "SCREENSHOT",
 				FileName:        sc.FileName,
-				FileURL:         sc.URL,
+				FileURL:         fileURL,
 				TraceNo:         sc.TraceNo,
 				Caption:         sc.Caption,
 			}
@@ -768,6 +779,17 @@ func (s *AIScriptService) GetLatestValidation(ctx context.Context, scriptVersion
 	user, _ := s.userRepo.FindByID(ctx, v.TriggeredBy)
 	if user != nil {
 		v.TriggeredName = user.Name
+	}
+	// 填充日志（从 DB JSON 列复制到 API 虚拟字段）
+	if v.ExecutionLogsJSON != nil {
+		v.Logs = json.RawMessage(v.ExecutionLogsJSON)
+	} else {
+		v.Logs = json.RawMessage("[]")
+	}
+	// 填充截图证据
+	evidences, _ := s.repo.ListEvidencesByValidation(ctx, v.ID)
+	if len(evidences) > 0 {
+		v.Screenshots = evidences
 	}
 	return v, nil
 }
