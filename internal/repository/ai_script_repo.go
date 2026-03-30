@@ -300,6 +300,45 @@ func (r *AIScriptRepo) MaxVersionNo(ctx context.Context, taskID uint) (int, erro
 	return r.GetMaxVersionNo(ctx, taskID)
 }
 
+// DeleteTask 物理删除任务及所有关联数据（事务保证原子性）
+func (r *AIScriptRepo) DeleteTask(ctx context.Context, taskID uint) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. 删除操作日志
+		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptOperationLog{}).Error; err != nil {
+			return err
+		}
+		// 2. 删除证据
+		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptEvidence{}).Error; err != nil {
+			return err
+		}
+		// 3. 删除轨迹
+		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptTrace{}).Error; err != nil {
+			return err
+		}
+		// 4. 删除验证记录
+		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptValidation{}).Error; err != nil {
+			return err
+		}
+		// 5. 删除脚本版本
+		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptVersion{}).Error; err != nil {
+			return err
+		}
+		// 6. 删除录制会话
+		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptRecordingSession{}).Error; err != nil {
+			return err
+		}
+		// 7. 删除用例关联
+		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptTaskCaseRel{}).Error; err != nil {
+			return err
+		}
+		// 8. 删除任务本体
+		if err := tx.Delete(&model.AIScriptTask{}, taskID).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // DB 暴露底层 DB 实例（用于跨表查询等特殊场景）
 func (r *AIScriptRepo) DB() *gorm.DB {
 	return r.db

@@ -66,6 +66,7 @@ export default defineConfig({
     headless: true,
     screenshot: 'on',
     locale: 'zh-CN',
+    ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',
   },
   projects: [

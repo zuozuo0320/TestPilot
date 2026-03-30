@@ -335,6 +335,21 @@ func (a *API) discardTask(c *gin.Context) {
 	response.OK(c, gin.H{"message": "任务已废弃"})
 }
 
+// deleteTask 删除已废弃任务
+func (a *API) deleteTask(c *gin.Context) {
+	user := currentUser(c)
+	taskID, ok := parseUintParam(c, "taskID")
+	if !ok {
+		return
+	}
+
+	if err := a.aiScriptSvc.DeleteTask(c.Request.Context(), user.ID, taskID); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"message": "任务已删除"})
+}
+
 // cloneTask 克隆任务配置
 func (a *API) cloneTask(c *gin.Context) {
 	user := currentUser(c)

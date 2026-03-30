@@ -320,4 +320,5 @@ type ActionPermissions struct {
 	CanConfirm  bool `json:"can_confirm"`
 	CanExport   bool `json:"can_export"`
 	CanDiscard  bool `json:"can_discard"`
+	CanDelete   bool `json:"can_delete"`
 }

@@ -56,20 +56,20 @@
   },
   "suites": [
     {
-      "title": "task_10_v5.spec.ts",
-      "file": "task_10_v5.spec.ts",
+      "title": "task_13_v6.spec.ts",
+      "file": "task_13_v6.spec.ts",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "百度搜索跳转场景",
-          "file": "task_10_v5.spec.ts",
-          "line": 3,
+          "title": "foradar登录",
+          "file": "task_13_v6.spec.ts",
+          "line": 7,
           "column": 6,
           "specs": [
             {
-              "title": "搜索坎普并打开官网结果页",
+              "title": "登录并执行页面导航与删除操作",
               "ok": false,
               "tags": [],
               "tests": [
@@ -83,23 +83,26 @@
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "timedOut",
-                      "duration": 60274,
+                      "status": "failed",
+                      "duration": 6935,
                       "error": {
-                        "message": "\u001b[31mTest timeout of 60000ms exceeded.\u001b[39m",
-                        "stack": "\u001b[31mTest timeout of 60000ms exceeded.\u001b[39m"
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('资产总览').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByText('资产总览').first()\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('资产总览').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByText('资产总览').first()\u001b[22m\n\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts:59:39\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts:58:16",
+                        "location": {
+                          "file": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts",
+                          "column": 39,
+                          "line": 59
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 57 |\u001b[39m\n \u001b[90m 58 |\u001b[39m     \u001b[36mawait\u001b[39m test\u001b[33m.\u001b[39mstep(\u001b[32m'进入资产总览页面'\u001b[39m\u001b[33m,\u001b[39m \u001b[36masync\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 59 |\u001b[39m       \u001b[36mawait\u001b[39m expect(assetOverviewMenu)\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                                       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 60 |\u001b[39m       \u001b[36mawait\u001b[39m assetOverviewMenu\u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 61 |\u001b[39m     })\u001b[33m;\u001b[39m\n \u001b[90m 62 |\u001b[39m\u001b[0m"
                       },
                       "errors": [
                         {
-                          "message": "\u001b[31mTest timeout of 60000ms exceeded.\u001b[39m"
-                        },
-                        {
                           "location": {
-                            "file": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_10_v5.spec.ts",
-                            "column": 28,
-                            "line": 47
+                            "file": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts",
+                            "column": 39,
+                            "line": 59
                           },
-                          "message": "Error: locator.waitFor: Test timeout of 60000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('坎普自行车官网') to be visible\u001b[22m\n\n\n  45 |\n  46 |     await test.step('点击联想词坎普自行车官网', async () => {\n> 47 |       await suggestionItem.waitFor({ state: 'visible' });\n     |                            ^\n  48 |       await suggestionItem.click();\n  49 |       await expect(searchInput).toHaveValue(/坎普/);\n  50 |     });\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_10_v5.spec.ts:47:28\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_10_v5.spec.ts:46:16"
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('资产总览').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByText('资产总览').first()\u001b[22m\n\n\n  57 |\n  58 |     await test.step('进入资产总览页面', async () => {\n> 59 |       await expect(assetOverviewMenu).toBeVisible();\n     |                                       ^\n  60 |       await assetOverviewMenu.click();\n  61 |     });\n  62 |\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts:59:39\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts:58:16"
                         }
                       ],
                       "stdout": [],
@@ -107,75 +110,68 @@
                       "retry": 0,
                       "steps": [
                         {
-                          "title": "进入百度首页",
-                          "duration": 5660
+                          "title": "打开登录页面",
+                          "duration": 781
                         },
                         {
-                          "title": "首次点击搜索输入框",
-                          "duration": 470
+                          "title": "输入账号信息",
+                          "duration": 175
                         },
                         {
-                          "title": "再次点击搜索输入框",
-                          "duration": 51
+                          "title": "输入密码信息",
+                          "duration": 100
                         },
                         {
-                          "title": "输入百度网址文本",
-                          "duration": 66
+                          "title": "输入验证码并提交登录",
+                          "duration": 453
                         },
                         {
-                          "title": "全选已输入内容",
-                          "duration": 21
-                        },
-                        {
-                          "title": "按住组合键点击输入框",
-                          "duration": 73
-                        },
-                        {
-                          "title": "输入搜索关键词坎普",
-                          "duration": 34
-                        },
-                        {
-                          "title": "点击联想词坎普自行车官网",
-                          "duration": 53829,
+                          "title": "进入资产总览页面",
+                          "duration": 5016,
                           "error": {
-                            "message": "Error: locator.waitFor: Test timeout of 60000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('坎普自行车官网') to be visible\u001b[22m\n",
-                            "stack": "Error: locator.waitFor: Test timeout of 60000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('坎普自行车官网') to be visible\u001b[22m\n\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_10_v5.spec.ts:47:28\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_10_v5.spec.ts:46:16",
+                            "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('资产总览').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByText('资产总览').first()\u001b[22m\n",
+                            "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('资产总览').first()\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 5000ms\u001b[22m\n\u001b[2m  - waiting for getByText('资产总览').first()\u001b[22m\n\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts:59:39\n    at D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts:58:16",
                             "location": {
-                              "file": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_10_v5.spec.ts",
-                              "column": 28,
-                              "line": 47
+                              "file": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts",
+                              "column": 39,
+                              "line": 59
                             },
-                            "snippet": "\u001b[0m \u001b[90m 45 |\u001b[39m\n \u001b[90m 46 |\u001b[39m     \u001b[36mawait\u001b[39m test\u001b[33m.\u001b[39mstep(\u001b[32m'点击联想词坎普自行车官网'\u001b[39m\u001b[33m,\u001b[39m \u001b[36masync\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 47 |\u001b[39m       \u001b[36mawait\u001b[39m suggestionItem\u001b[33m.\u001b[39mwaitFor({ state\u001b[33m:\u001b[39m \u001b[32m'visible'\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                            \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 48 |\u001b[39m       \u001b[36mawait\u001b[39m suggestionItem\u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 49 |\u001b[39m       \u001b[36mawait\u001b[39m expect(searchInput)\u001b[33m.\u001b[39mtoHaveValue(\u001b[35m/坎普/\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 50 |\u001b[39m     })\u001b[33m;\u001b[39m\u001b[0m"
+                            "snippet": "\u001b[0m \u001b[90m 57 |\u001b[39m\n \u001b[90m 58 |\u001b[39m     \u001b[36mawait\u001b[39m test\u001b[33m.\u001b[39mstep(\u001b[32m'进入资产总览页面'\u001b[39m\u001b[33m,\u001b[39m \u001b[36masync\u001b[39m () \u001b[33m=>\u001b[39m {\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 59 |\u001b[39m       \u001b[36mawait\u001b[39m expect(assetOverviewMenu)\u001b[33m.\u001b[39mtoBeVisible()\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                                       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 60 |\u001b[39m       \u001b[36mawait\u001b[39m assetOverviewMenu\u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m 61 |\u001b[39m     })\u001b[33m;\u001b[39m\n \u001b[90m 62 |\u001b[39m\u001b[0m"
                           }
                         }
                       ],
-                      "startTime": "2026-03-30T11:00:40.888Z",
+                      "startTime": "2026-03-30T11:46:21.933Z",
                       "annotations": [],
                       "attachments": [
                         {
                           "name": "screenshot",
                           "contentType": "image/png",
-                          "path": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\test-results\\task_10_v5-百度搜索跳转场景-搜索坎普并打开官网结果页-chromium\\test-failed-1.png"
+                          "path": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\test-results\\task_13_v6-foradar登录-登录并执行页面导航与删除操作-chromium\\test-failed-1.png"
                         },
                         {
                           "name": "error-context",
                           "contentType": "text/markdown",
-                          "path": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\test-results\\task_10_v5-百度搜索跳转场景-搜索坎普并打开官网结果页-chromium\\error-context.md"
+                          "path": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\test-results\\task_13_v6-foradar登录-登录并执行页面导航与删除操作-chromium\\error-context.md"
                         },
                         {
                           "name": "trace",
                           "contentType": "application/zip",
-                          "path": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\test-results\\task_10_v5-百度搜索跳转场景-搜索坎普并打开官网结果页-chromium\\trace.zip"
+                          "path": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\test-results\\task_13_v6-foradar登录-登录并执行页面导航与删除操作-chromium\\trace.zip"
                         }
-                      ]
+                      ],
+                      "errorLocation": {
+                        "file": "D:\\ai_project\\TestPilot\\executor\\pw_workspace\\tests\\task_13_v6.spec.ts",
+                        "column": 39,
+                        "line": 59
+                      }
                     }
                   ],
                   "status": "unexpected"
                 }
               ],
-              "id": "f15d093e96814e272c11-8023ca6d8926073b48f6",
-              "file": "task_10_v5.spec.ts",
-              "line": 4,
+              "id": "0e672fa46f0873a13096-3cef01b7e673a8a8f5a1",
+              "file": "task_13_v6.spec.ts",
+              "line": 8,
               "column": 7
             }
           ]
@@ -185,8 +181,8 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-03-30T11:00:40.018Z",
-    "duration": 61752.594000000005,
+    "startTime": "2026-03-30T11:46:21.148Z",
+    "duration": 8291.684,
     "expected": 0,
     "skipped": 0,
     "unexpected": 1,

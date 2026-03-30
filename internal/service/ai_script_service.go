@@ -1015,6 +1015,25 @@ func (s *AIScriptService) DiscardTask(ctx context.Context, userID, taskID uint, 
 	return nil
 }
 
+// DeleteTask 删除已废弃任务（物理删除 + 级联清理）
+func (s *AIScriptService) DeleteTask(ctx context.Context, userID, taskID uint) error {
+	task, err := s.repo.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound("AI_SCRIPT_4003", "任务不存在")
+		}
+		return ErrInternal("AI_TASK_QUERY_FAILED", err)
+	}
+	if task.TaskStatus != model.AITaskStatusDiscarded {
+		return ErrConflict("AI_SCRIPT_4011", "仅允许删除已废弃任务")
+	}
+
+	if err := s.repo.DeleteTask(ctx, taskID); err != nil {
+		return ErrInternal("AI_TASK_DELETE_FAILED", err)
+	}
+	return nil
+}
+
 // CloneTask 复制任务配置生成新任务
 func (s *AIScriptService) CloneTask(ctx context.Context, userID, taskID uint, newTaskName string) (*model.AIScriptTask, error) {
 	task, err := s.repo.GetTask(ctx, taskID)
@@ -1300,6 +1319,9 @@ func (s *AIScriptService) ComputePermissions(ctx context.Context, userID uint, t
 
 	// can_discard: admin/manager
 	perms.CanDiscard = (isAdmin || isManager) && task.TaskStatus != model.AITaskStatusDiscarded
+
+	// can_delete: admin/manager 且已废弃
+	perms.CanDelete = (isAdmin || isManager) && task.TaskStatus == model.AITaskStatusDiscarded
 
 	return perms
 }

@@ -275,7 +275,7 @@ async def _run_codegen(session_id: str, start_url: str, output_file: str):
         logger.info(f"[codegen:{session_id}] Launching playwright codegen -> {start_url}")
 
         # Windows 下 npx 是 .cmd 脚本，必须通过 shell 执行
-        cmd = f'npx -y playwright codegen --target playwright-test --output "{output_file}" "{start_url}"'
+        cmd = f'npx -y playwright codegen --ignore-https-errors --target playwright-test --output "{output_file}" "{start_url}"'
         logger.info(f"[codegen:{session_id}] Command: {cmd}")
 
         proc = await asyncio.create_subprocess_shell(
