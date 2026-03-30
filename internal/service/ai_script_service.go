@@ -795,6 +795,9 @@ func (s *AIScriptService) callExecutorHTTP(ctx context.Context, path string, req
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if s.executorAPIKey != "" {
+		req.Header.Set("X-API-Key", s.executorAPIKey)
+	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {

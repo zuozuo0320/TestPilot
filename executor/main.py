@@ -15,7 +15,7 @@ from typing import Optional, Dict, Any
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -33,32 +33,43 @@ logger = logging.getLogger("executor")
 
 app = FastAPI(title="TestPilot Executor Service", version="2.0.0")
 
-# 允许前端跨域调用 (用于录制 codegen 轮询)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ── 统一 CORS + API Key 鉴权中间件 ──
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "*",
+    "Access-Control-Allow-Headers": "*",
+    "Access-Control-Max-Age": "3600",
+}
 
 
-# ── API Key 鉴权中间件 ──
 @app.middleware("http")
-async def api_key_auth(request: Request, call_next):
-    # 健康检查和 codegen 轮询不需要鉴权
-    skip_paths = ["/health", "/docs", "/openapi.json"]
-    if any(request.url.path.startswith(p) for p in skip_paths):
-        return await call_next(request)
-    # codegen 端点的 GET 请求（前端轮询）免鉴权
-    if request.url.path.startswith("/codegen/") and request.method == "GET":
-        return await call_next(request)
+async def cors_and_auth(request: Request, call_next):
+    # CORS 预检请求 (OPTIONS) 直接返回，不走任何后续逻辑
+    if request.method == "OPTIONS":
+        return JSONResponse(content={}, status_code=200, headers=CORS_HEADERS)
 
-    if EXECUTOR_API_KEY:
+    # 免鉴权路径
+    skip_paths = ["/health", "/docs", "/openapi.json"]
+    need_auth = True
+    if any(request.url.path.startswith(p) for p in skip_paths):
+        need_auth = False
+    elif request.url.path.startswith("/recording/"):
+        need_auth = False
+    elif request.url.path.startswith("/codegen/") and request.method == "GET":
+        need_auth = False
+
+    # API Key 鉴权
+    if need_auth and EXECUTOR_API_KEY:
         api_key = request.headers.get("X-API-Key", "")
         if api_key != EXECUTOR_API_KEY:
             logger.warning(f"Unauthorized request from {request.client.host}: {request.url.path}")
             return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid API Key"})
-    return await call_next(request)
+
+    response = await call_next(request)
+    # 为所有响应添加 CORS 头
+    for key, value in CORS_HEADERS.items():
+        response.headers[key] = value
+    return response
 
 
 # ── Codegen 会话管理 ──
@@ -258,7 +269,7 @@ async def _run_codegen(session_id: str, start_url: str, output_file: str):
         logger.info(f"[codegen:{session_id}] Launching playwright codegen -> {start_url}")
 
         # Windows 下 npx 是 .cmd 脚本，必须通过 shell 执行
-        cmd = f'npx playwright codegen --target playwright-test --output "{output_file}" "{start_url}"'
+        cmd = f'npx -y playwright codegen --target playwright-test --output "{output_file}" "{start_url}"'
         logger.info(f"[codegen:{session_id}] Command: {cmd}")
 
         proc = await asyncio.create_subprocess_shell(
