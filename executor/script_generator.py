@@ -13,6 +13,7 @@ from typing import Optional
 from openai import OpenAI
 
 from config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+from raw_locator_guard import build_step_model_from_recording
 
 logger = logging.getLogger(__name__)
 
@@ -51,16 +52,17 @@ SYSTEM_PROMPT_AI_DIRECT = """你是一位资深的 Playwright 自动化测试工
 只输出 JSON，不要输出任何其他内容。"""
 
 SYSTEM_PROMPT_REFACTOR = """你是一位受控的 Playwright 脚本重构器。
-你的输入是 Playwright Codegen 录制的原始脚本，你的任务是将其重构为团队标准格式。
+你的输入是 Playwright Codegen 录制的原始脚本，你的任务是只做结构化重构，不得改写录制脚本中的原始定位器。
 
 ## 重构规则
 1. 保持原始录制的操作序列不变，不增加也不删除步骤
 2. 将扁平操作列表重构为 test.describe > test > test.step 三层结构
 3. 为每个 test.step 赋予语义化名称（中文）
-4. 替换不稳定的定位器：优先用 data-testid > getByRole > getByText > getByLabel > CSS
-5. 添加适当的等待策略
-6. 在关键步骤后添加 expect 断言
-7. 敏感信息替换为 process.env.XXX
+4. 只允许做结构组织：拆分 Page Object、创建 spec、组织 import，不允许修改任何原始定位器表达式
+5. 如果原始定位器是链式定位器，抽取时必须保留完整 locator chain，不得简化、替换、拼接新定位器
+6. 可以补充适当的等待与断言，但不能改变原始业务动作顺序
+7. 所有新增函数、方法和关键逻辑都必须补充中文注释或中文 JSDoc
+8. 敏感信息替换为 process.env.XXX
 
 ## 输出格式
 你必须输出一个 JSON 对象，包含以下字段：
@@ -126,13 +128,35 @@ def refactor_recorded_script(
     raw_script: str,
     step_model_json: Optional[dict] = None,
     account_ref: Optional[str] = None,
+    project_scope: Optional[dict] = None,  # V1 多项目工程化：ProjectScope 信息
 ) -> dict:
     """
     录制增强模式：将原始录制稿重构为标准化 TypeScript 脚本
 
+    当 project_scope 存在时，走 V1 多文件生成管线；
+    否则走原始的单文件 LLM 重构流程（向后兼容）。
+
     Returns:
-        {script_content, risk_hints, assertion_suggestions, generation_summary}
+        {script_content, risk_hints, assertion_suggestions, generation_summary, ...}
     """
+    # V1 多文件生成管线
+    if project_scope:
+        try:
+            from v1_generation_pipeline import run_v1_pipeline
+            logger.info(f"[refactor] 走 V1 管线, project_key={project_scope.get('project_key')}")
+            return run_v1_pipeline(
+                scenario_desc=scenario_desc,
+                start_url=start_url,
+                raw_script=raw_script,
+                step_model_json=step_model_json,
+                account_ref=account_ref,
+                project_scope_dict=project_scope,
+            )
+        except Exception as e:
+            logger.error(f"[refactor] V1 管线异常，回退到 V0 流程: {e}", exc_info=True)
+            # 回退到 V0 单文件流程
+
+    # V0 原始单文件 LLM 重构流程
     user_prompt = f"""## 测试场景
 {scenario_desc}
 
@@ -143,6 +167,17 @@ def refactor_recorded_script(
 ```typescript
 {raw_script}
 ```
+"""
+
+
+    user_prompt += """
+## 强约束
+- 只允许做 POM/测试结构重组：拆分 Page Object class、创建 spec、组织 import。
+- 严格保留 raw_script 中的所有原始定位器，不得改写、简化、替换、合并或补发明新定位器。
+- 如需抽取 locator，必须直接复用 raw_script 中出现过的完整 locator chain。
+- 可以补充等待、断言和结构化封装，但不能改变原始业务动作顺序。
+- 除非 raw_script 中明确出现过 URL 等待或 URL 断言，否则禁止凭空新增固定 URL 的 `waitForURL` / `toHaveURL` 判断。
+- 所有新增函数、方法和关键逻辑必须增加中文注释或中文 JSDoc。
 """
 
     if step_model_json:
@@ -313,118 +348,9 @@ def _generate_fallback_script(scenario_desc: str, start_url: str, traces: list[d
 
 def parse_step_model(raw_script: str) -> dict:
     """
-    从 Playwright Codegen 录制稿中提取结构化步骤模型（纯正则，不依赖 LLM）
+    从 Playwright Codegen 录制稿中提取结构化步骤模型。
 
-    返回格式：
-    {
-        "steps": [
-            {"step_no": 1, "action_type": "NAVIGATE", "locator": "", "input_value": "", "page_url": "https://..."},
-            {"step_no": 2, "action_type": "CLICK", "locator": "getByRole('link', { name: '...' })", ...},
-            {"step_no": 3, "action_type": "INPUT", "locator": "getByPlaceholder('...')", "input_value": "fofa", ...},
-        ],
-        "total_steps": 3
-    }
+    这里复用原始定位器解析器，确保链式定位器在解析阶段被完整保留，
+    避免 `page.getByRole(...).getByText(...).click()` 这类表达式被截断。
     """
-    steps = []
-    step_no = 0
-
-    for line in raw_script.split("\n"):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("//") or stripped.startswith("import "):
-            continue
-
-        # page.goto('url')
-        m = re.search(r"page\.goto\(['\"](.+?)['\"]\)", stripped)
-        if m:
-            step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "NAVIGATE",
-                "locator": "",
-                "input_value": "",
-                "page_url": m.group(1),
-            })
-            continue
-
-        # page.getByXxx(...).click()
-        m = re.search(r"page\.(getBy\w+\([^)]*\)|locator\([^)]*\))\.click\(\)", stripped)
-        if m:
-            step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "CLICK",
-                "locator": m.group(1),
-                "input_value": "",
-                "page_url": "",
-            })
-            continue
-
-        # page.getByXxx(...).fill('value')
-        m = re.search(r"page\.(getBy\w+\([^)]*\)|locator\([^)]*\))\.fill\(['\"](.+?)['\"]\)", stripped)
-        if m:
-            step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "INPUT",
-                "locator": m.group(1),
-                "input_value": m.group(2),
-                "page_url": "",
-            })
-            continue
-
-        # page.getByXxx(...).press('key')
-        m = re.search(r"page\.(getBy\w+\([^)]*\)|locator\([^)]*\))\.press\(['\"](.+?)['\"]\)", stripped)
-        if m:
-            step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "KEY_PRESS",
-                "locator": m.group(1),
-                "input_value": m.group(2),
-                "page_url": "",
-            })
-            continue
-
-        # page.getByXxx(...).selectOption('value')
-        m = re.search(r"page\.(getBy\w+\([^)]*\)|locator\([^)]*\))\.selectOption\(['\"](.+?)['\"]\)", stripped)
-        if m:
-            step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "SELECT",
-                "locator": m.group(1),
-                "input_value": m.group(2),
-                "page_url": "",
-            })
-            continue
-
-        # page.waitForURL / page.waitForLoadState
-        m = re.search(r"page\.waitFor(URL|LoadState)\(['\"]?(.+?)['\"]?\)", stripped)
-        if m:
-            step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "WAIT",
-                "locator": "",
-                "input_value": m.group(2),
-                "page_url": "",
-            })
-            continue
-
-        # expect(...) assertions
-        m = re.search(r"expect\((.+?)\)", stripped)
-        if m:
-            step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "ASSERT_CANDIDATE",
-                "locator": m.group(1).strip(),
-                "input_value": "",
-                "page_url": "",
-            })
-            continue
-
-    return {
-        "steps": steps,
-        "total_steps": len(steps),
-    }
+    return build_step_model_from_recording(raw_script)

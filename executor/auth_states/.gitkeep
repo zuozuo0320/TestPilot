@@ -1,0 +1,2 @@
+# 此目录存储 Playwright storageState 认证状态文件（按域名命名）
+# 这些文件包含敏感的 Cookie/Token 信息，禁止提交到版本控制

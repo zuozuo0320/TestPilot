@@ -278,6 +278,10 @@ func AutoMigrate(db *gorm.DB) error {
 		&AIScriptTrace{},
 		&AIScriptEvidence{},
 		&AIScriptOperationLog{},
+
+		// V1 多项目工程化
+		&AIScriptFile{},
+		&AIScriptWorkspaceLock{},
 	)
 }
 

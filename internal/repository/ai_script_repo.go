@@ -319,7 +319,11 @@ func (r *AIScriptRepo) DeleteTask(ctx context.Context, taskID uint) error {
 		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptValidation{}).Error; err != nil {
 			return err
 		}
-		// 5. 删除脚本版本
+		// 5. 删除生成文件明细
+		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptFile{}).Error; err != nil {
+			return err
+		}
+		// 6. 删除脚本版本
 		if err := tx.Where("task_id = ?", taskID).Delete(&model.AIScriptVersion{}).Error; err != nil {
 			return err
 		}
@@ -337,6 +341,121 @@ func (r *AIScriptRepo) DeleteTask(ctx context.Context, taskID uint) error {
 		}
 		return nil
 	})
+}
+
+// ── V1 多项目工程化：文件明细 CRUD ──
+
+// CreateScriptFile 创建生成文件记录
+func (r *AIScriptRepo) CreateScriptFile(ctx context.Context, file *model.AIScriptFile) error {
+	return r.db.WithContext(ctx).Create(file).Error
+}
+
+// BatchCreateScriptFiles 批量创建生成文件记录
+func (r *AIScriptRepo) BatchCreateScriptFiles(ctx context.Context, files []model.AIScriptFile) error {
+	if len(files) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Create(&files).Error
+}
+
+// ListScriptFiles 获取版本的所有文件
+func (r *AIScriptRepo) ListScriptFiles(ctx context.Context, versionID uint) ([]model.AIScriptFile, error) {
+	var files []model.AIScriptFile
+	err := r.db.WithContext(ctx).
+		Where("version_id = ?", versionID).
+		Order("file_type ASC, relative_path ASC").
+		Find(&files).Error
+	return files, err
+}
+
+// GetScriptFileByPath 通过版本ID和相对路径查找文件
+func (r *AIScriptRepo) GetScriptFileByPath(ctx context.Context, versionID uint, relativePath string) (*model.AIScriptFile, error) {
+	var file model.AIScriptFile
+	err := r.db.WithContext(ctx).
+		Where("version_id = ? AND relative_path = ?", versionID, relativePath).
+		First(&file).Error
+	if err != nil {
+		return nil, err
+	}
+	return &file, nil
+}
+
+// ListScriptFilesByProject 获取项目的所有文件（最新版本）
+func (r *AIScriptRepo) ListScriptFilesByProject(ctx context.Context, projectID uint) ([]model.AIScriptFile, error) {
+	var files []model.AIScriptFile
+	err := r.db.WithContext(ctx).
+		Where("project_id = ?", projectID).
+		Order("relative_path ASC").
+		Find(&files).Error
+	return files, err
+}
+
+// DeleteScriptFilesByVersion 删除版本的所有文件
+func (r *AIScriptRepo) DeleteScriptFilesByVersion(ctx context.Context, versionID uint) error {
+	return r.db.WithContext(ctx).Where("version_id = ?", versionID).Delete(&model.AIScriptFile{}).Error
+}
+
+// ── V1 多项目工程化：工作区锁操作 ──
+
+// AcquireWorkspaceLockAtomic 原子获取项目工作区锁（INSERT ... ON DUPLICATE KEY UPDATE）
+// 仅当锁不存在或已过期/已释放时才能获取成功，避免先查后写的竞态条件。
+// 返回 true 表示获取成功，false 表示锁被其他任务持有。
+func (r *AIScriptRepo) AcquireWorkspaceLockAtomic(ctx context.Context, lock *model.AIScriptWorkspaceLock) (bool, error) {
+	// 使用原生 SQL 实现原子 upsert：
+	// - 如果 project_id 不存在 → INSERT 成功
+	// - 如果 project_id 已存在但锁已过期或已释放 → UPDATE 成功（affected=2 for ON DUPLICATE KEY UPDATE）
+	// - 如果 project_id 已存在且锁仍活跃 → UPDATE 不满足条件，affected=0
+	sql := `INSERT INTO ai_script_workspace_locks
+		(project_id, lock_key, lock_type, owner_task_id, owner_version_id, owner_request_id, heartbeat_at, expires_at, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW())
+		ON DUPLICATE KEY UPDATE
+			lock_key = IF(status != 'active' OR heartbeat_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE), VALUES(lock_key), lock_key),
+			lock_type = IF(status != 'active' OR heartbeat_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE), VALUES(lock_type), lock_type),
+			owner_task_id = IF(status != 'active' OR heartbeat_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE), VALUES(owner_task_id), owner_task_id),
+			owner_version_id = IF(status != 'active' OR heartbeat_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE), VALUES(owner_version_id), owner_version_id),
+			owner_request_id = IF(status != 'active' OR heartbeat_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE), VALUES(owner_request_id), owner_request_id),
+			heartbeat_at = IF(status != 'active' OR heartbeat_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE), VALUES(heartbeat_at), heartbeat_at),
+			expires_at = IF(status != 'active' OR heartbeat_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE), VALUES(expires_at), expires_at),
+			status = IF(status != 'active' OR heartbeat_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE), 'active', status)`
+
+	result := r.db.WithContext(ctx).Exec(sql,
+		lock.ProjectID, lock.LockKey, lock.LockType,
+		lock.OwnerTaskID, lock.OwnerVersionID, lock.OwnerRequestID,
+		lock.HeartbeatAt, lock.ExpiresAt,
+	)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	// RowsAffected: 1=新插入, 2=ON DUPLICATE KEY UPDATE 实际更新了字段, 0=条件不满足（锁被持有）
+	return result.RowsAffected > 0, nil
+}
+
+// ReleaseWorkspaceLock 释放项目工作区锁
+func (r *AIScriptRepo) ReleaseWorkspaceLock(ctx context.Context, projectID uint) error {
+	return r.db.WithContext(ctx).
+		Model(&model.AIScriptWorkspaceLock{}).
+		Where("project_id = ? AND status = ?", projectID, "active").
+		Updates(map[string]interface{}{"status": "released"}).Error
+}
+
+// HeartbeatLock 续约工作区锁
+func (r *AIScriptRepo) HeartbeatLock(ctx context.Context, projectID uint) error {
+	return r.db.WithContext(ctx).
+		Model(&model.AIScriptWorkspaceLock{}).
+		Where("project_id = ? AND status = ?", projectID, "active").
+		Update("heartbeat_at", r.db.NowFunc()).Error
+}
+
+// GetActiveWorkspaceLock 获取项目的活跃锁
+func (r *AIScriptRepo) GetActiveWorkspaceLock(ctx context.Context, projectID uint) (*model.AIScriptWorkspaceLock, error) {
+	var lock model.AIScriptWorkspaceLock
+	err := r.db.WithContext(ctx).
+		Where("project_id = ? AND status = ?", projectID, "active").
+		First(&lock).Error
+	if err != nil {
+		return nil, err
+	}
+	return &lock, nil
 }
 
 // DB 暴露底层 DB 实例（用于跨表查询等特殊场景）

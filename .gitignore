@@ -9,7 +9,13 @@ __pycache__/
 *.pyc
 .venv/
 
+# 全局忽略 node_modules
+node_modules/
+
 # Executor 运行时产物
-executor/pw_workspace/node_modules/
 executor/pw_workspace/test-results/
+executor/pw_workspace/test-results.json
 executor/screenshots/
+executor/auth_states/*.json
+executor/generated_scripts/
+runtime-logs/

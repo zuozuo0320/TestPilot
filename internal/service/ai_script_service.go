@@ -59,17 +59,55 @@ func NewAIScriptService(
 	}
 }
 
-// executorPost 带鉴权的 Executor HTTP POST 请求
-func (s *AIScriptService) executorPost(url string, bodyBytes []byte) (*http.Response, error) {
-	req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
+// resolveProjectScope 根据 projectID 解析 ProjectScope（用于传递给 executor）
+func (s *AIScriptService) resolveProjectScope(ctx context.Context, projectID uint) map[string]interface{} {
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil || project == nil {
+		return nil
+	}
+	// 生成 project_key：用数字 ID 保证唯一性，避免中文名称导致路径问题
+	projectKey := fmt.Sprintf("project_%d", projectID)
+	return map[string]interface{}{
+		"project_id":     projectID,
+		"project_key":    projectKey,
+		"project_name":   project.Name,
+		"workspace_root": fmt.Sprintf("pw_projects/projects/%s", projectKey),
+		"registry_file":  "registry/page-registry.json",
+		"env_file":       ".env",
+		"auth_state_dir": "auth_states",
+		"base_url_env":   "BASE_URL",
+		"auth_strategy":  "storage_state",
+	}
+}
+
+// acquireWorkspaceLock 获取项目工作区锁（V1 并发保护，原子操作）
+func (s *AIScriptService) acquireWorkspaceLock(ctx context.Context, projectID, taskID uint, lockType string) bool {
+	lock := &model.AIScriptWorkspaceLock{
+		ProjectID:   projectID,
+		LockKey:     fmt.Sprintf("project_%d", projectID),
+		LockType:    lockType,
+		OwnerTaskID: &taskID,
+		HeartbeatAt: time.Now(),
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		Status:      "active",
+	}
+	acquired, err := s.repo.AcquireWorkspaceLockAtomic(ctx, lock)
 	if err != nil {
-		return nil, err
+		s.logger.Error("acquire workspace lock failed", "error", err, "project_id", projectID)
+		return false
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if s.executorAPIKey != "" {
-		req.Header.Set("X-API-Key", s.executorAPIKey)
+	if !acquired {
+		s.logger.Warn("workspace lock conflict",
+			"project_id", projectID, "task_id", taskID, "lock_type", lockType)
 	}
-	return s.httpClient.Do(req)
+	return acquired
+}
+
+// releaseWorkspaceLock 释放项目工作区锁
+func (s *AIScriptService) releaseWorkspaceLock(ctx context.Context, projectID uint) {
+	if err := s.repo.ReleaseWorkspaceLock(ctx, projectID); err != nil {
+		s.logger.Error("release workspace lock failed", "error", err, "project_id", projectID)
+	}
 }
 
 // ── 请求/响应结构 ──
@@ -128,11 +166,13 @@ type ExecutorScreenshotItem struct {
 
 // ExecutorValidateRequest 发送给 Python 执行服务的验证请求
 type ExecutorValidateRequest struct {
-	TaskID          uint   `json:"task_id"`
-	ScriptVersionID uint   `json:"script_version_id"`
-	ScriptContent   string `json:"script_content"`
-	StartURL        string `json:"start_url"`
-	CallbackURL     string `json:"callback_url"`
+	TaskID           uint                    `json:"task_id"`
+	ScriptVersionID  uint                    `json:"script_version_id"`
+	ScriptContent    string                  `json:"script_content"`
+	StartURL         string                  `json:"start_url"`
+	CallbackURL      string                  `json:"callback_url"`
+	ProjectScope     map[string]interface{}  `json:"project_scope,omitempty"`
+	SpecRelativePath string                  `json:"spec_relative_path,omitempty"`
 }
 
 // ExecutorValidateResponse Python 执行服务验证响应
@@ -190,6 +230,7 @@ func (s *AIScriptService) CreateTask(ctx context.Context, userID uint, input Cre
 
 	task := &model.AIScriptTask{
 		ProjectID:      input.ProjectID,
+		ProjectKey:     fmt.Sprintf("project_%d", input.ProjectID),
 		TaskName:       strings.TrimSpace(input.TaskName),
 		GenerationMode: genMode,
 		ScenarioDesc:   strings.TrimSpace(input.ScenarioDesc),
@@ -638,6 +679,19 @@ func (s *AIScriptService) callExecutorValidate(taskID, scriptVersionID, validati
 		StartURL:        startURL,
 	}
 
+	// V1 多项目工程化：注入 project_scope + 并发锁
+	task, _ := s.repo.GetTask(ctx, taskID)
+	if task != nil && task.ProjectID > 0 {
+		reqBody.ProjectScope = s.resolveProjectScope(ctx, task.ProjectID)
+		// V1 并发保护
+		if !s.acquireWorkspaceLock(ctx, task.ProjectID, taskID, "validate_run") {
+			log.Warn("workspace locked by another task, skipping validation")
+			s.failValidation(ctx, validationID, scriptVersionID, taskID, "工作区被其他任务占用，请稍后重试")
+			return
+		}
+		defer s.releaseWorkspaceLock(ctx, task.ProjectID)
+	}
+
 	rawResult, err := s.callExecutorHTTP(ctx, "/execute/validate", reqBody, log)
 	if err != nil {
 		log.Error("executor HTTP call failed", "error", err)
@@ -886,37 +940,40 @@ func (s *AIScriptService) batchFillTaskVirtualFields(ctx context.Context, tasks 
 	}
 }
 
-// batchGetUserNames 批量查询用户名
+// batchGetUserNames 批量查询用户名（单次 IN 查询）
 func (s *AIScriptService) batchGetUserNames(ctx context.Context, ids []uint) map[uint]string {
 	result := make(map[uint]string, len(ids))
-	for _, id := range ids {
-		if _, exists := result[id]; exists {
-			continue
-		}
-		user, _ := s.userRepo.FindByID(ctx, id)
-		if user != nil {
-			result[id] = user.Name
-		}
+	if len(ids) == 0 {
+		return result
+	}
+	users, err := s.userRepo.FindByIDs(ctx, ids)
+	if err != nil {
+		s.logger.Error("batchGetUserNames failed", "error", err)
+		return result
+	}
+	for _, u := range users {
+		result[u.ID] = u.Name
 	}
 	return result
 }
 
-// batchGetProjectNames 批量查询项目名
+// batchGetProjectNames 批量查询项目名（单次 IN 查询）
 func (s *AIScriptService) batchGetProjectNames(ctx context.Context, ids []uint) map[uint]string {
 	result := make(map[uint]string, len(ids))
-	for _, id := range ids {
-		if _, exists := result[id]; exists {
-			continue
-		}
-		project, _ := s.projectRepo.FindByID(ctx, id)
-		if project != nil {
-			result[id] = project.Name
-		}
+	if len(ids) == 0 {
+		return result
+	}
+	projects, err := s.projectRepo.FindByIDs(ctx, ids)
+	if err != nil {
+		s.logger.Error("batchGetProjectNames failed", "error", err)
+		return result
+	}
+	for _, p := range projects {
+		result[p.ID] = p.Name
 	}
 	return result
 }
 
-// deduplicateUints 去重 uint 切片
 // deduplicateUints 去重 uint 切片
 func deduplicateUints(input []uint) []uint {
 	seen := make(map[uint]struct{}, len(input))
@@ -1158,25 +1215,37 @@ func (s *AIScriptService) callExecutorRefactor(taskID, recordingID uint, rawScri
 		"scenario_desc": scenarioDesc,
 		"start_url":     startURL,
 	}
-	bodyBytes, _ := json.Marshal(reqBody)
 
-	url := fmt.Sprintf("%s/execute/refactor", s.executorURL)
-	resp, err := s.executorPost(url, bodyBytes)
+	// V1 多项目工程化：注入 project_scope + 并发锁
+	if task != nil && task.ProjectID > 0 {
+		projectScope := s.resolveProjectScope(ctx, task.ProjectID)
+		if projectScope != nil {
+			reqBody["project_scope"] = projectScope
+			// V1 并发保护：获取工作区锁
+			if !s.acquireWorkspaceLock(ctx, task.ProjectID, taskID, "workspace_write") {
+				s.logger.Warn("callExecutorRefactor: workspace locked, aborting", "task_id", taskID)
+				_ = s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
+					"task_status": model.AITaskStatusGenerateFailed,
+				})
+				return
+			}
+			defer s.releaseWorkspaceLock(ctx, task.ProjectID)
+		}
+	}
+	log := s.logger.With("task_id", taskID, "recording_id", recordingID, "action", "refactor")
+	respBody, err := s.callExecutorHTTP(ctx, "/execute/refactor", reqBody, log)
 	if err != nil {
-		s.logger.Error("callExecutorRefactor: HTTP call failed", "error", err, "task_id", taskID)
+		log.Error("HTTP call failed", "error", err)
 		_ = s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
 			"task_status": model.AITaskStatusGenerateFailed,
 		})
 		return
 	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, executorBodyLimit))
 
 	// 使用 map 解析以提取 step_model_json
 	var rawResult map[string]interface{}
 	if err := json.Unmarshal(respBody, &rawResult); err != nil {
-		s.logger.Error("callExecutorRefactor: parse response failed", "error", err, "task_id", taskID)
+		log.Error("callExecutorRefactor: parse response failed", "error", err)
 		_ = s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
 			"task_status": model.AITaskStatusGenerateFailed,
 		})
@@ -1210,12 +1279,13 @@ func (s *AIScriptService) callExecutorRefactor(taskID, recordingID uint, rawScri
 		return
 	}
 
-	// 保存脚本版本
-	s.saveGeneratedScript(ctx, taskID, result, userID, model.AISourceTypeAIEnhancedFromRecording, &recordingID)
+	// 保存脚本版本 + V1 多文件持久化（在同一流程中，避免数据不一致）
+	s.saveGeneratedScript(ctx, taskID, result, userID, model.AISourceTypeAIEnhancedFromRecording, &recordingID, rawResult)
 }
 
 // saveGeneratedScript 通用保存生成脚本逻辑
-func (s *AIScriptService) saveGeneratedScript(ctx context.Context, taskID uint, result ExecutorGenerateResponse, userID uint, sourceType string, recordingID *uint) {
+// v1RawResult 为可选参数：非 nil 时同步保存 V1 多文件明细和版本字段，保证数据一致性。
+func (s *AIScriptService) saveGeneratedScript(ctx context.Context, taskID uint, result ExecutorGenerateResponse, userID uint, sourceType string, recordingID *uint, v1RawResult ...map[string]interface{}) {
 	// 获取最大版本号
 	maxVersion, _ := s.repo.MaxVersionNo(ctx, taskID)
 
@@ -1281,10 +1351,103 @@ func (s *AIScriptService) saveGeneratedScript(ctx context.Context, taskID uint, 
 	}
 
 	// 更新任务状态
+	taskStatus := model.AITaskStatusGenerateSuccess
 	_ = s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
-		"task_status":               model.AITaskStatusGenerateSuccess,
+		"task_status":               taskStatus,
 		"current_script_version_id": &version.ID,
 	})
+
+	// V1 多文件持久化（可选）
+	if len(v1RawResult) > 0 && v1RawResult[0] != nil {
+		s.applyV1VersionFields(ctx, taskID, version.ID, v1RawResult[0])
+	}
+}
+
+// applyV1VersionFields 保存 V1 多文件生成结果（版本字段 + 文件明细），
+// 直接使用已创建的 versionID，不再二次查询。
+func (s *AIScriptService) applyV1VersionFields(ctx context.Context, taskID, versionID uint, rawResult map[string]interface{}) {
+	task, _ := s.repo.GetTask(ctx, taskID)
+	projectID := uint(0)
+	if task != nil {
+		projectID = task.ProjectID
+	}
+
+	// 更新版本 V1 字段
+	versionUpdates := map[string]interface{}{}
+
+	if v, ok := rawResult["project_key_snapshot"]; ok {
+		versionUpdates["project_key_snapshot"] = v
+	}
+	if v, ok := rawResult["version_status"]; ok {
+		versionUpdates["version_status"] = v
+	}
+	if v, ok := rawResult["generation_summary"]; ok {
+		versionUpdates["generation_summary"] = v
+	}
+	if v, ok := rawResult["workspace_root_snapshot"]; ok {
+		versionUpdates["workspace_root_snapshot"] = v
+	}
+	if v, ok := rawResult["base_fixture_hash"]; ok {
+		versionUpdates["base_fixture_hash"] = v
+	}
+	if registrySnapshot, ok := rawResult["registry_snapshot"]; ok && registrySnapshot != nil {
+		registryBytes, _ := json.Marshal(registrySnapshot)
+		versionUpdates["registry_snapshot_json"] = string(registryBytes)
+	}
+
+	// 检查是否需要 manual_review
+	manualItems, _ := rawResult["manual_review_items"].([]interface{})
+	if len(manualItems) > 0 {
+		versionUpdates["version_status"] = model.AIVersionStatusManualReviewRequired
+		versionUpdates["manual_review_status"] = "pending"
+		_ = s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
+			"task_status": model.AITaskStatusManualReview,
+		})
+	}
+
+	if len(versionUpdates) > 0 {
+		_ = s.repo.UpdateScriptVersionFields(ctx, versionID, versionUpdates)
+	}
+
+	// 保存生成文件明细
+	var scriptFiles []model.AIScriptFile
+
+	if filesCreated, ok := rawResult["files_created"].([]interface{}); ok {
+		for _, fc := range filesCreated {
+			fileMap, ok := fc.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			scriptFiles = append(scriptFiles, model.AIScriptFile{
+				ProjectID:    projectID,
+				TaskID:       taskID,
+				VersionID:    versionID,
+				FileType:     getString(fileMap, "file_type"),
+				RelativePath: getString(fileMap, "relative_path"),
+				Content:      getString(fileMap, "content"),
+				ContentHash:  getString(fileMap, "content_hash"),
+				SourceKind:   "create",
+			})
+		}
+	}
+
+	if len(scriptFiles) > 0 {
+		if err := s.repo.BatchCreateScriptFiles(ctx, scriptFiles); err != nil {
+			s.logger.Error("applyV1VersionFields: batch create files failed", "error", err)
+		} else {
+			s.logger.Info("applyV1VersionFields: saved files", "count", len(scriptFiles), "task_id", taskID)
+		}
+	}
+}
+
+// getString 从 map 中安全提取字符串
+func getString(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // ComputePermissions 根据用户角色和任务状态计算操作权限

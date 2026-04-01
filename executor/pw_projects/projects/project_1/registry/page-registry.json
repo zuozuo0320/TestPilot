@@ -1,0 +1,428 @@
+{
+  "version": 3,
+  "project": {
+    "project_id": 1,
+    "project_key": "project_1",
+    "project_name": "AiSight Demo",
+    "workspace_root": "pw_projects/projects/project_1",
+    "registry_file": "registry/page-registry.json",
+    "env_file": ".env",
+    "auth_state_dir": "auth_states",
+    "base_url_env": "BASE_URL",
+    "auth_strategy": "storage_state"
+  },
+  "pages": {
+    "AssetDiscoveryTaskPage": {
+      "kind": "business",
+      "file": "pages/AssetDiscoveryTaskPage.ts",
+      "fixture_name": "assetDiscoveryTaskPage",
+      "module_key": "asset-discovery-task",
+      "page_identity": {
+        "active_menu": [
+          "资产探知"
+        ],
+        "breadcrumb": [],
+        "page_title": [],
+        "root_container": [],
+        "url_patterns": [
+          "/workbench"
+        ]
+      },
+      "shared_dependencies": [
+        "DialogPage",
+        "NavigationPage"
+      ],
+      "locators": {
+        "viewTaskButtons": {
+          "summary": "查看任务入口列表"
+        },
+        "createTaskButton": {
+          "summary": "新建任务按钮"
+        },
+        "targetTextarea": {
+          "summary": "目标输入框"
+        },
+        "confirmButton": {
+          "summary": "确定按钮"
+        },
+        "enterpriseSearchTextbox": {
+          "summary": "企业搜索输入框"
+        },
+        "enterpriseRelationQueryButton": {
+          "summary": "单位关系查询按钮"
+        },
+        "startMappingButton": {
+          "summary": "开始测绘按钮"
+        },
+        "taskNameTextbox": {
+          "summary": "任务名称输入框"
+        },
+        "cloudRecommendationTaskEntry": {
+          "summary": "云端资产推荐任务入口"
+        },
+        "cloudRecommendationCheckboxFirst": {
+          "summary": "首条记录勾选框"
+        },
+        "cloudAssetRecommendationButton": {
+          "summary": "云端资产推荐按钮"
+        },
+        "assetCredibilityAssessmentButton": {
+          "summary": "资产信任度评估按钮"
+        },
+        "assetAccountingScanButton": {
+          "summary": "资产入账扫描按钮"
+        },
+        "thirdViewTaskButton": {
+          "summary": "第三个查看任务入口"
+        },
+        "portRangeSelectTextbox": {
+          "summary": "端口范围选择输入框"
+        },
+        "minus65535ListItem": {
+          "summary": "全端口范围选项"
+        }
+      },
+      "actions": {
+        "openTaskCreateDialog": {
+          "summary": "打开新建任务弹窗",
+          "params_signature": "() => Promise<void>",
+          "uses_locators": [
+            "createTaskButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "createTask": {
+          "summary": "填写目标与可选任务名称并提交新建任务",
+          "params_signature": "{ target: string; taskName?: string }",
+          "uses_locators": [
+            "targetTextarea",
+            "taskNameTextbox",
+            "confirmButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "openTaskListByIndex": {
+          "summary": "点击指定索引的查看任务入口",
+          "params_signature": "(index: number) => Promise<void>",
+          "uses_locators": [
+            "viewTaskButtons"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "waitForCloudRecommendationTaskEntryReady": {
+          "summary": "等待云端资产推荐卡片入口可见",
+          "params_signature": "() => Promise<void>",
+          "uses_locators": [
+            "cloudRecommendationTaskEntry"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "openCloudRecommendationTaskWorkbench": {
+          "summary": "打开云端资产推荐任务工作台",
+          "params_signature": "() => Promise<void>",
+          "uses_locators": [
+            "cloudRecommendationTaskEntry"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "startEnterpriseMapping": {
+          "summary": "搜索企业并发起单位资产测绘",
+          "params_signature": "{ enterpriseName: string }",
+          "uses_locators": [
+            "enterpriseSearchTextbox",
+            "enterpriseRelationQueryButton",
+            "startMappingButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "runCloudAssetRecommendation": {
+          "summary": "勾选首条记录后执行云端资产推荐",
+          "params_signature": "() => Promise<void>",
+          "uses_locators": [
+            "cloudRecommendationCheckboxFirst",
+            "cloudAssetRecommendationButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "runAssetCredibilityAssessment": {
+          "summary": "执行资产信任度评估",
+          "params_signature": "() => Promise<void>",
+          "uses_locators": [
+            "assetCredibilityAssessmentButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "runAssetAccountingScan": {
+          "summary": "执行资产入账扫描",
+          "params_signature": "() => Promise<void>",
+          "uses_locators": [
+            "assetAccountingScanButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "openThirdViewTaskEntry": {
+          "summary": "打开第三个查看任务入口进入任务工作台",
+          "params_signature": "() => Promise<void>",
+          "uses_locators": [
+            "thirdViewTaskButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectTaskWorkbenchReady": {
+          "summary": "断言任务工作台已就绪",
+          "params_signature": "() => Promise<void>",
+          "uses_locators": [
+            "createTaskButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "createFullPortScanTask": {
+          "summary": "填写任务名称、目标和端口范围后提交新建任务",
+          "params_signature": "{ taskName: string; target: string }",
+          "uses_locators": [
+            "createTaskButton",
+            "taskNameTextbox",
+            "targetTextarea",
+            "portRangeSelectTextbox",
+            "minus65535ListItem",
+            "confirmButton"
+          ],
+          "update_mode": "non_breaking_only"
+        }
+      },
+      "page_update_mode": "append_only"
+    }
+  },
+  "shared": {
+    "NavigationPage": {
+      "kind": "shared",
+      "file": "pages/shared/NavigationPage.ts",
+      "fixture_name": "navigationPage",
+      "shared_dependencies": [],
+      "locators": {},
+      "actions": {
+        "goToMenu": {
+          "summary": "通过菜单名称导航到指定页面",
+          "params_signature": "(menuName: string)",
+          "uses_locators": [],
+          "update_mode": "non_breaking_only"
+        },
+        "goToMenuPath": {
+          "summary": "通过多级菜单路径导航",
+          "params_signature": "(menuPath: string[])",
+          "uses_locators": [],
+          "update_mode": "non_breaking_only"
+        },
+        "expectMenuActive": {
+          "summary": "断言侧边栏菜单处于激活状态",
+          "params_signature": "(menuText: string)",
+          "uses_locators": [],
+          "update_mode": "non_breaking_only"
+        },
+        "expectPageContainsText": {
+          "summary": "断言页面包含指定文本",
+          "params_signature": "(text: string)",
+          "uses_locators": [],
+          "update_mode": "non_breaking_only"
+        }
+      },
+      "page_update_mode": "append_only"
+    },
+    "DialogPage": {
+      "kind": "shared",
+      "file": "pages/shared/DialogPage.ts",
+      "fixture_name": "dialogPage",
+      "shared_dependencies": [],
+      "locators": {
+        "overlay": {
+          "summary": "弹窗遮罩层"
+        },
+        "dialog": {
+          "summary": "弹窗容器"
+        },
+        "dialogTitle": {
+          "summary": "弹窗标题"
+        },
+        "confirmButton": {
+          "summary": "确认按钮"
+        },
+        "cancelButton": {
+          "summary": "取消按钮"
+        },
+        "closeButton": {
+          "summary": "关闭按钮"
+        }
+      },
+      "actions": {
+        "confirm": {
+          "summary": "点击确认按钮关闭弹窗",
+          "params_signature": "()",
+          "uses_locators": [
+            "confirmButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "cancel": {
+          "summary": "点击取消按钮关闭弹窗",
+          "params_signature": "()",
+          "uses_locators": [
+            "cancelButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "close": {
+          "summary": "点击右上角关闭按钮",
+          "params_signature": "()",
+          "uses_locators": [
+            "closeButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectVisible": {
+          "summary": "断言弹窗可见",
+          "params_signature": "()",
+          "uses_locators": [
+            "dialog"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectHidden": {
+          "summary": "断言弹窗已关闭",
+          "params_signature": "()",
+          "uses_locators": [
+            "dialog"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectTitle": {
+          "summary": "断言弹窗标题文本",
+          "params_signature": "(title: string)",
+          "uses_locators": [
+            "dialogTitle"
+          ],
+          "update_mode": "non_breaking_only"
+        }
+      },
+      "page_update_mode": "append_only"
+    },
+    "ToastPage": {
+      "kind": "shared",
+      "file": "pages/shared/ToastPage.ts",
+      "fixture_name": "toastPage",
+      "shared_dependencies": [],
+      "locators": {
+        "successToast": {
+          "summary": "成功提示消息"
+        },
+        "errorToast": {
+          "summary": "错误提示消息"
+        },
+        "warningToast": {
+          "summary": "警告提示消息"
+        },
+        "infoToast": {
+          "summary": "信息提示消息"
+        }
+      },
+      "actions": {
+        "expectSuccess": {
+          "summary": "断言出现成功提示",
+          "params_signature": "(options: { text?: string } = {})",
+          "uses_locators": [
+            "successToast"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectError": {
+          "summary": "断言出现错误提示",
+          "params_signature": "(message: string)",
+          "uses_locators": [
+            "errorToast"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectWarning": {
+          "summary": "断言出现警告提示",
+          "params_signature": "(message: string)",
+          "uses_locators": [
+            "warningToast"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectInfo": {
+          "summary": "断言出现信息提示",
+          "params_signature": "(message: string)",
+          "uses_locators": [
+            "infoToast"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "waitForToastDismiss": {
+          "summary": "等待所有提示消息消失",
+          "params_signature": "()",
+          "uses_locators": [
+            "successToast",
+            "errorToast",
+            "warningToast",
+            "infoToast"
+          ],
+          "update_mode": "non_breaking_only"
+        }
+      },
+      "page_update_mode": "append_only"
+    },
+    "LoginPage": {
+      "kind": "shared",
+      "file": "pages/LoginPage.ts",
+      "fixture_name": "loginPage",
+      "shared_dependencies": [],
+      "locators": {
+        "usernameInput": {
+          "summary": "用户名输入框"
+        },
+        "passwordInput": {
+          "summary": "密码输入框"
+        },
+        "captchaInput": {
+          "summary": "验证码输入框"
+        },
+        "loginButton": {
+          "summary": "登录按钮"
+        },
+        "errorMessage": {
+          "summary": "登录错误提示"
+        }
+      },
+      "actions": {
+        "login": {
+          "summary": "执行登录操作",
+          "params_signature": "{ username: string, password: string, captcha?: string }",
+          "uses_locators": [
+            "usernameInput",
+            "passwordInput",
+            "captchaInput",
+            "loginButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectLoginSuccess": {
+          "summary": "断言登录成功",
+          "params_signature": "(expectedUrlPattern?: string | RegExp)",
+          "uses_locators": [
+            "loginButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "expectLoginFailed": {
+          "summary": "断言登录失败",
+          "params_signature": "(message?: string)",
+          "uses_locators": [
+            "errorMessage"
+          ],
+          "update_mode": "non_breaking_only"
+        }
+      },
+      "page_update_mode": "append_only"
+    }
+  }
+}

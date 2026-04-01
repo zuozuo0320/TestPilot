@@ -1,0 +1,30 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "https://10.10.10.189",
+      "localStorage": [
+        {
+          "name": "token",
+          "value": "Bearer 751|NGQ1YMZLYMETMGNJMC0ZZWM4LWE1NTCTZTZKZDQXNDA5ODCW"
+        },
+        {
+          "name": "isVisited",
+          "value": "1"
+        },
+        {
+          "name": "cert_reminder_dismissed",
+          "value": "2026-04-01"
+        },
+        {
+          "name": "tokenTime",
+          "value": "43199"
+        },
+        {
+          "name": "websocketToken",
+          "value": "751|NGQ1YMZLYMETMGNJMC0ZZWM4LWE1NTCTZTZKZDQXNDA5ODCW"
+        }
+      ]
+    }
+  ]
+}

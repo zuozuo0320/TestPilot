@@ -16,6 +16,8 @@ import (
 type ProjectRepository interface {
 	// FindByID 根据 ID 查找项目
 	FindByID(ctx context.Context, id uint) (*model.Project, error)
+	// FindByIDs 根据 ID 列表批量查找项目
+	FindByIDs(ctx context.Context, ids []uint) ([]model.Project, error)
 	// Exists 检查项目是否存在
 	Exists(ctx context.Context, id uint) (bool, error)
 	// List 获取全部项目列表（含成员数、用例数）
@@ -72,6 +74,17 @@ func (r *projectRepo) FindByID(ctx context.Context, id uint) (*model.Project, er
 		return nil, err
 	}
 	return &project, nil
+}
+
+func (r *projectRepo) FindByIDs(ctx context.Context, ids []uint) ([]model.Project, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var projects []model.Project
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&projects).Error; err != nil {
+		return nil, err
+	}
+	return projects, nil
 }
 
 // Exists 检查项目是否存在

@@ -7,9 +7,11 @@ main.py — Python 执行服务 FastAPI 入口
   POST /execute/validate   — 执行 Playwright TypeScript 回放验证
 """
 import asyncio
+import json
 import logging
 import os
 import tempfile
+import time
 import uuid
 from typing import Optional, Dict, Any
 
@@ -20,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config import SERVICE_PORT, EXECUTOR_API_KEY, CODEGEN_SESSION_TIMEOUT_SEC, SCREENSHOT_DIR
+from config import SERVICE_PORT, EXECUTOR_API_KEY, CODEGEN_SESSION_TIMEOUT_SEC, SCREENSHOT_DIR, SCRIPT_OUTPUT_DIR
 from browser_runner import run_browser_exploration
 from script_generator import generate_playwright_script, refactor_recorded_script, parse_step_model
 from validation_runner import run_validation
@@ -63,6 +65,8 @@ async def cors_and_auth(request: Request, call_next):
         need_auth = False
     elif request.url.path.startswith("/codegen/") and request.method == "GET":
         need_auth = False
+    elif request.url.path.startswith("/auth/"):
+        need_auth = False
 
     # API Key 鉴权
     if need_auth and EXECUTOR_API_KEY:
@@ -81,6 +85,51 @@ async def cors_and_auth(request: Request, call_next):
 # ── Codegen 会话管理 ──
 # 存储活跃的 codegen 进程信息
 _codegen_sessions: Dict[str, Dict[str, Any]] = {}
+
+# ── 录制脚本持久化（解决页面刷新/关闭后脚本丢失问题）──
+_PENDING_SCRIPTS_DIR = os.path.join(SCRIPT_OUTPUT_DIR, "pending")
+os.makedirs(_PENDING_SCRIPTS_DIR, exist_ok=True)
+
+
+def _save_pending_script(task_id: int, script_content: str, session_id: str = ""):
+    """将录制完成但未提交的脚本持久化到磁盘"""
+    if not script_content:
+        return
+    pending_file = os.path.join(_PENDING_SCRIPTS_DIR, f"task_{task_id}.json")
+    data = {
+        "task_id": task_id,
+        "session_id": session_id,
+        "script_content": script_content,
+        "captured_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": time.time(),
+    }
+    with open(pending_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    logger.info(
+        f"[pending] Saved pending script for task {task_id}, "
+        f"length={len(script_content)}"
+    )
+
+
+def _load_pending_script(task_id: int) -> Optional[dict]:
+    """加载指定任务的待提交脚本"""
+    pending_file = os.path.join(_PENDING_SCRIPTS_DIR, f"task_{task_id}.json")
+    if not os.path.exists(pending_file):
+        return None
+    try:
+        with open(pending_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"[pending] Failed to load pending script for task {task_id}: {e}")
+        return None
+
+
+def _clear_pending_script(task_id: int):
+    """清除指定任务的待提交脚本（提交后调用）"""
+    pending_file = os.path.join(_PENDING_SCRIPTS_DIR, f"task_{task_id}.json")
+    if os.path.exists(pending_file):
+        os.remove(pending_file)
+        logger.info(f"[pending] Cleared pending script for task {task_id}")
 
 
 # ── Codegen 超时清理后台任务 ──
@@ -130,6 +179,7 @@ class RefactorRequest(BaseModel):
     scenario_desc: Optional[str] = ""
     start_url: Optional[str] = ""
     account_ref: Optional[str] = None
+    project_scope: Optional[dict] = None  # V1 多项目工程化：ProjectScope 信息
 
 
 class ValidateRequest(BaseModel):
@@ -138,6 +188,8 @@ class ValidateRequest(BaseModel):
     script_content: str
     start_url: str
     callback_url: Optional[str] = None
+    project_scope: Optional[dict] = None      # V1 多项目工程化：ProjectScope 信息
+    spec_relative_path: Optional[str] = None  # V1：项目内 spec 相对路径
 
 
 # ── 接口 ──
@@ -208,6 +260,7 @@ async def execute_refactor(req: RefactorRequest):
         raw_script=req.raw_script,
         step_model_json=req.step_model_json or step_model,
         account_ref=req.account_ref,
+        project_scope=req.project_scope,  # V1 透传
     )
 
     if not gen_result.get("script_content"):
@@ -231,6 +284,20 @@ async def execute_refactor(req: RefactorRequest):
         "traces": [],
         "screenshots": [],
         "error_message": "",
+        # V1 多文件结果（仅当 project_scope 存在时有值）
+        "spec_file": gen_result.get("spec_file"),
+        "page_creates": gen_result.get("page_creates", []),
+        "page_updates": gen_result.get("page_updates", []),
+        "registry_updates": gen_result.get("registry_updates"),
+        "manual_review_items": gen_result.get("manual_review_items", []),
+        # V1 元数据（Go 端 applyV1VersionFields 依赖这些字段）
+        "project_key_snapshot": gen_result.get("project_key_snapshot"),
+        "workspace_root_snapshot": gen_result.get("workspace_root_snapshot"),
+        "registry_snapshot": gen_result.get("registry_snapshot"),
+        "base_fixture_hash": gen_result.get("base_fixture_hash"),
+        "version_status": gen_result.get("version_status"),
+        "files_created": gen_result.get("files_created", []),
+        "files_updated": gen_result.get("files_updated", []),
     }
 
 
@@ -251,6 +318,8 @@ async def execute_validate(req: ValidateRequest):
         req.script_version_id,
         req.script_content,
         req.start_url,
+        req.project_scope,          # V1 透传
+        req.spec_relative_path,     # V1 透传
     )
 
     logger.info(
@@ -267,15 +336,67 @@ async def execute_validate(req: ValidateRequest):
 class CodegenRequest(BaseModel):
     task_id: int
     start_url: str
+    auth_config: Optional[dict] = None  # 登录配置 JSON（可选）
 
 
-async def _run_codegen(session_id: str, start_url: str, output_file: str):
-    """后台运行 playwright codegen，当用户关闭浏览器后收回脚本"""
+async def _run_codegen(
+    session_id: str,
+    start_url: str,
+    output_file: str,
+    auth_config: Optional[dict] = None,
+):
+    """后台运行 playwright codegen，集成认证状态管理"""
     try:
-        logger.info(f"[codegen:{session_id}] Launching playwright codegen -> {start_url}")
+        from auth_manager import has_valid_auth_state, get_auth_state_path
+        from login_handler import auto_login, build_login_config
 
-        # Windows 下 npx 是 .cmd 脚本，必须通过 shell 执行
-        cmd = f'npx -y playwright codegen --ignore-https-errors --target playwright-test --output "{output_file}" "{start_url}"'
+        auth_state_path = get_auth_state_path(start_url)
+
+        # ── 认证状态检查与自动登录 ──
+        if not has_valid_auth_state(start_url):
+            logger.info(f"[codegen:{session_id}] No valid auth state, attempting auto login")
+            _codegen_sessions[session_id]["status"] = "logging_in"
+
+            login_cfg = build_login_config(start_url, auth_config)
+
+            if login_cfg.username and login_cfg.login_url:
+                result = await auto_login(start_url, login_cfg)
+                if not result["success"]:
+                    logger.error(
+                        f"[codegen:{session_id}] Auto login failed: {result['error']}"
+                    )
+                    # 自动登录失败不阻塞录制，继续以无登录态方式启动
+                    logger.info(
+                        f"[codegen:{session_id}] Proceeding without auth state"
+                    )
+                else:
+                    logger.info(
+                        f"[codegen:{session_id}] Auto login succeeded "
+                        f"(attempts={result['attempts']})"
+                    )
+            else:
+                logger.info(
+                    f"[codegen:{session_id}] No login config provided, "
+                    f"proceeding without auto login"
+                )
+        else:
+            logger.info(f"[codegen:{session_id}] Valid auth state found, will load it")
+
+        # ── 构建 codegen 命令 ──
+        cmd = (
+            'npx -y playwright codegen --ignore-https-errors '
+            '--target playwright-test'
+        )
+
+        # 如果存在有效的 auth_state，加载它
+        if os.path.exists(auth_state_path):
+            cmd += f' --load-storage="{auth_state_path}"'
+            logger.info(f"[codegen:{session_id}] Loading auth state: {auth_state_path}")
+
+        # 每次录制后都保存最新的 auth_state
+        cmd += f' --save-storage="{auth_state_path}"'
+        cmd += f' --output "{output_file}" "{start_url}"'
+
         logger.info(f"[codegen:{session_id}] Command: {cmd}")
 
         proc = await asyncio.create_subprocess_shell(
@@ -301,17 +422,24 @@ async def _run_codegen(session_id: str, start_url: str, output_file: str):
 
         _codegen_sessions[session_id]["status"] = "completed"
         _codegen_sessions[session_id]["script_content"] = script_content
-        logger.info(f"[codegen:{session_id}] Script captured, length={len(script_content)}")
+        logger.info(
+            f"[codegen:{session_id}] Script captured, length={len(script_content)}"
+        )
+
+        # 持久化到磁盘，防止页面刷新/关闭后丢失
+        task_id = _codegen_sessions[session_id].get("task_id")
+        if task_id and script_content:
+            _save_pending_script(task_id, script_content, session_id)
 
     except Exception as e:
-        logger.error(f"[codegen:{session_id}] Error: {e}")
+        logger.error(f"[codegen:{session_id}] Error: {e}", exc_info=True)
         _codegen_sessions[session_id]["status"] = "error"
         _codegen_sessions[session_id]["error"] = str(e)
 
 
 @app.post("/recording/codegen")
 async def start_codegen(req: CodegenRequest):
-    """启动 Playwright Codegen 录制：弹出浏览器供用户操作"""
+    """启动 Playwright Codegen 录制：弹出浏览器供用户操作（集成认证状态管理）"""
     session_id = str(uuid.uuid4())[:8]
     output_file = os.path.join(tempfile.gettempdir(), f"codegen_{session_id}.ts")
 
@@ -326,8 +454,10 @@ async def start_codegen(req: CodegenRequest):
         "created_at": __import__("time").time(),
     }
 
-    # 在后台运行，不阻塞请求
-    asyncio.create_task(_run_codegen(session_id, req.start_url, output_file))
+    # 在后台运行，不阻塞请求（传递 auth_config）
+    asyncio.create_task(
+        _run_codegen(session_id, req.start_url, output_file, req.auth_config)
+    )
 
     logger.info(f"[codegen] New session {session_id} for task {req.task_id}")
     return {"session_id": session_id, "status": "starting"}
@@ -341,10 +471,71 @@ async def poll_codegen(session_id: str):
         return {"status": "not_found", "script_content": "", "error": "session not found"}
 
     return {
-        "status": session["status"],
+        "status": session["status"],  # starting / logging_in / recording / completed / error
         "script_content": session.get("script_content", ""),
         "error": session.get("error", ""),
     }
+
+
+@app.get("/recording/codegen/task/{task_id}/pending")
+async def get_pending_script(task_id: int):
+    """获取指定任务的待提交录制脚本（页面刷新后恢复用）"""
+    # 先检查内存中是否有活跃的 completed session
+    for sid, info in _codegen_sessions.items():
+        if info.get("task_id") == task_id and info.get("status") == "completed":
+            script = info.get("script_content", "")
+            if script:
+                return {
+                    "found": True,
+                    "script_content": script,
+                    "session_id": sid,
+                    "source": "memory",
+                }
+
+    # 再检查磁盘持久化文件
+    pending = _load_pending_script(task_id)
+    if pending and pending.get("script_content"):
+        return {
+            "found": True,
+            "script_content": pending["script_content"],
+            "session_id": pending.get("session_id", ""),
+            "source": "disk",
+            "captured_at": pending.get("captured_at", ""),
+        }
+
+    return {"found": False, "script_content": "", "session_id": "", "source": ""}
+
+
+@app.delete("/recording/codegen/task/{task_id}/pending")
+async def clear_pending_script_api(task_id: int):
+    """清除指定任务的待提交脚本（提交成功后由前端调用）"""
+    _clear_pending_script(task_id)
+    # 同时清理内存中该任务的 completed session
+    stale_sids = [
+        sid for sid, info in _codegen_sessions.items()
+        if info.get("task_id") == task_id and info.get("status") == "completed"
+    ]
+    for sid in stale_sids:
+        _codegen_sessions.pop(sid, None)
+    return {"message": f"Pending script cleared for task {task_id}"}
+
+
+# ── 认证状态管理 API ──
+
+@app.get("/auth/status")
+async def auth_status(start_url: str):
+    """查询指定 URL 的认证状态"""
+    from auth_manager import get_auth_state_info
+    info = get_auth_state_info(start_url)
+    return info
+
+
+@app.post("/auth/invalidate")
+async def auth_invalidate(start_url: str):
+    """手动清除指定 URL 的认证状态（强制下次重新登录）"""
+    from auth_manager import invalidate_auth_state
+    invalidate_auth_state(start_url)
+    return {"message": f"Auth state invalidated for {start_url}"}
 
 
 if __name__ == "__main__":

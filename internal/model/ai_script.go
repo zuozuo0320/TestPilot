@@ -21,6 +21,7 @@ const (
 	AITaskStatusPendingRevalidate = "PENDING_REVALIDATE"
 	AITaskStatusConfirmed         = "CONFIRMED"
 	AITaskStatusDiscarded         = "DISCARDED"
+	AITaskStatusManualReview      = "MANUAL_REVIEW"
 )
 
 // 脚本状态
@@ -62,6 +63,18 @@ const (
 	AIRecordingStatusRecording = "RECORDING"
 	AIRecordingStatusFinished  = "FINISHED"
 	AIRecordingStatusFailed    = "FAILED"
+)
+
+// V1 版本状态（独立于任务状态，支持版本级生命周期管理）
+const (
+	AIVersionStatusRecorded             = "RECORDED"
+	AIVersionStatusGenerating           = "GENERATING"
+	AIVersionStatusManualReviewRequired = "MANUAL_REVIEW_REQUIRED"
+	AIVersionStatusGenerated            = "GENERATED"
+	AIVersionStatusValidating           = "VALIDATING"
+	AIVersionStatusValidateSuccess      = "VALIDATE_SUCCESS"
+	AIVersionStatusValidateFailed       = "VALIDATE_FAILED"
+	AIVersionStatusArchived             = "ARCHIVED"
 )
 
 // 轨迹动作类型
@@ -160,6 +173,7 @@ func (r *RawJSON) UnmarshalJSON(data []byte) error {
 type AIScriptTask struct {
 	ID                     uint       `json:"id" gorm:"primaryKey"`
 	ProjectID              uint       `json:"project_id" gorm:"not null;index:idx_ai_task_project_status"`
+	ProjectKey             string     `json:"project_key" gorm:"size:64"`
 	TaskName               string     `json:"task_name" gorm:"size:128;not null"`
 	GenerationMode         string     `json:"generation_mode" gorm:"size:32;not null;default:RECORDING_ENHANCED;index:idx_ai_task_mode_status"`
 	ScenarioDesc           string     `json:"scenario_desc" gorm:"type:text;not null"`
@@ -222,6 +236,15 @@ type AIScriptVersion struct {
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedBy          uint       `json:"updated_by" gorm:"not null"`
 	UpdatedAt          time.Time  `json:"updated_at"`
+
+	// V1 多项目工程化字段
+	ProjectKeySnapshot    string  `json:"project_key_snapshot" gorm:"size:64"`
+	VersionStatus         string  `json:"version_status" gorm:"size:32"`
+	GenerationSummary     string  `json:"generation_summary" gorm:"type:text"`
+	ManualReviewStatus    string  `json:"manual_review_status" gorm:"size:32"`
+	RegistrySnapshotJSON  RawJSON `json:"registry_snapshot" gorm:"type:json;column:registry_snapshot_json"`
+	WorkspaceRootSnapshot string  `json:"workspace_root_snapshot" gorm:"size:256"`
+	BaseFixtureHash       string  `json:"base_fixture_hash" gorm:"size:64"`
 
 	// 虚拟字段
 	CreatedName string `json:"created_name" gorm:"-"`
@@ -321,4 +344,39 @@ type ActionPermissions struct {
 	CanExport   bool `json:"can_export"`
 	CanDiscard  bool `json:"can_discard"`
 	CanDelete   bool `json:"can_delete"`
+}
+
+// ── V1 多项目工程化新增模型 ──
+
+// AIScriptFile 测试智编-生成文件明细表
+// 记录每次生成产出的所有文件（spec / page / shared / fixture / registry）
+type AIScriptFile struct {
+	ID                   uint      `json:"id" gorm:"primaryKey"`
+	ProjectID            uint      `json:"project_id" gorm:"not null;index:idx_script_file_project"`
+	TaskID               uint      `json:"task_id" gorm:"not null;index:idx_script_file_task"`
+	VersionID            uint      `json:"version_id" gorm:"not null;index:idx_script_file_version;uniqueIndex:uk_version_path"`
+	FileType             string    `json:"file_type" gorm:"size:32;not null"`             // spec / page / shared / fixture / registry
+	RelativePath         string    `json:"relative_path" gorm:"size:512;not null;uniqueIndex:uk_version_path"` // 相对项目根的路径
+	Content              string    `json:"content" gorm:"type:longtext"`
+	ContentHash          string    `json:"content_hash" gorm:"size:64"`
+	SourceKind           string    `json:"source_kind" gorm:"size:32"`                    // create / update / generated / rebuilt
+	ManualReviewRequired bool      `json:"manual_review_required" gorm:"default:false"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+// AIScriptWorkspaceLock 项目级工作区锁表
+// 防止同一项目工作区被并发写操作破坏
+type AIScriptWorkspaceLock struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	ProjectID      uint      `json:"project_id" gorm:"not null;uniqueIndex:uk_lock_project"`
+	LockKey        string    `json:"lock_key" gorm:"size:128;not null"`
+	LockType       string    `json:"lock_type" gorm:"size:32;not null"` // workspace_write / validate_run
+	OwnerTaskID    *uint     `json:"owner_task_id"`
+	OwnerVersionID *uint     `json:"owner_version_id"`
+	OwnerRequestID string    `json:"owner_request_id" gorm:"size:64"`
+	HeartbeatAt    time.Time `json:"heartbeat_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	Status         string    `json:"status" gorm:"size:32;not null"` // active / released / expired
+	CreatedAt      time.Time `json:"created_at"`
 }

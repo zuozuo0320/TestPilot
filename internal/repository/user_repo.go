@@ -22,6 +22,8 @@ type UserListFilter struct {
 type UserRepository interface {
 	// FindByID 根据 ID 查找用户
 	FindByID(ctx context.Context, id uint) (*model.User, error)
+	// FindByIDs 根据 ID 列表批量查找用户
+	FindByIDs(ctx context.Context, ids []uint) ([]model.User, error)
 	// FindByIDUnscoped 根据 ID 查找用户（含已删除）
 	FindByIDUnscoped(ctx context.Context, id uint) (*model.User, error)
 	// FindByEmail 根据邮箱查找用户
@@ -81,6 +83,17 @@ func (r *userRepo) FindByID(ctx context.Context, id uint) (*model.User, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *userRepo) FindByIDs(ctx context.Context, ids []uint) ([]model.User, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var users []model.User
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 func (r *userRepo) FindByIDUnscoped(ctx context.Context, id uint) (*model.User, error) {

@@ -1,0 +1,17 @@
+{
+  "name": "testpilot-ast-merger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TestPilot AST-based TypeScript Page Object merger using ts-morph",
+  "main": "src/merger.ts",
+  "scripts": {
+    "merge": "npx tsx src/merger.ts"
+  },
+  "dependencies": {
+    "ts-morph": "^22.0.0",
+    "tsx": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}
