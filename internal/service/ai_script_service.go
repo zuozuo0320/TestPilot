@@ -166,13 +166,13 @@ type ExecutorScreenshotItem struct {
 
 // ExecutorValidateRequest 发送给 Python 执行服务的验证请求
 type ExecutorValidateRequest struct {
-	TaskID           uint                    `json:"task_id"`
-	ScriptVersionID  uint                    `json:"script_version_id"`
-	ScriptContent    string                  `json:"script_content"`
-	StartURL         string                  `json:"start_url"`
-	CallbackURL      string                  `json:"callback_url"`
-	ProjectScope     map[string]interface{}  `json:"project_scope,omitempty"`
-	SpecRelativePath string                  `json:"spec_relative_path,omitempty"`
+	TaskID           uint                   `json:"task_id"`
+	ScriptVersionID  uint                   `json:"script_version_id"`
+	ScriptContent    string                 `json:"script_content"`
+	StartURL         string                 `json:"start_url"`
+	CallbackURL      string                 `json:"callback_url"`
+	ProjectScope     map[string]interface{} `json:"project_scope,omitempty"`
+	SpecRelativePath string                 `json:"spec_relative_path,omitempty"`
 }
 
 // ExecutorValidateResponse Python 执行服务验证响应
@@ -1019,9 +1019,9 @@ func (s *AIScriptService) ConfirmScript(ctx context.Context, userID, scriptID ui
 
 	// 同步任务状态
 	if err := s.repo.UpdateTaskFields(ctx, version.TaskID, map[string]interface{}{
-		"task_status":          model.AITaskStatusConfirmed,
-		"latest_confirmed_at":  &now,
-		"latest_confirmed_by":  &userID,
+		"task_status":         model.AITaskStatusConfirmed,
+		"latest_confirmed_at": &now,
+		"latest_confirmed_by": &userID,
 	}); err != nil {
 		s.logger.Error("ConfirmScript: update task status failed", "error", err)
 	}
@@ -1153,9 +1153,9 @@ func (s *AIScriptService) StartRecording(ctx context.Context, userID, taskID uin
 
 	// 更新任务状态
 	if err := s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
-		"task_status":          model.AITaskStatusRunning,
-		"latest_recording_id":  &session.ID,
-		"latest_execute_at":    time.Now(),
+		"task_status":         model.AITaskStatusRunning,
+		"latest_recording_id": &session.ID,
+		"latest_execute_at":   time.Now(),
 	}); err != nil {
 		s.logger.Error("StartRecording: update task status failed", "error", err)
 	}
@@ -1167,7 +1167,7 @@ func (s *AIScriptService) StartRecording(ctx context.Context, userID, taskID uin
 func (s *AIScriptService) FinishRecording(ctx context.Context, userID, taskID uint, recordingID uint, rawScript string, triggerAIRefactor bool) error {
 	now := time.Now()
 	updates := map[string]interface{}{
-		"recording_status":  model.AIRecordingStatusFinished,
+		"recording_status":   model.AIRecordingStatusFinished,
 		"raw_script_content": rawScript,
 		"finished_at":        &now,
 	}
@@ -1183,6 +1183,33 @@ func (s *AIScriptService) FinishRecording(ctx context.Context, userID, taskID ui
 }
 
 // GetLatestRecording 获取最近一次录制结果
+// FailRecording 标记录制失败，确保异常录制会话能够被正确收口。
+func (s *AIScriptService) FailRecording(ctx context.Context, userID, taskID uint, recordingID uint, reason string) error {
+	now := time.Now()
+	failReason := strings.TrimSpace(reason)
+	if failReason == "" {
+		failReason = "录制失败"
+	}
+
+	updates := map[string]interface{}{
+		"recording_status": model.AIRecordingStatusFailed,
+		"fail_reason":      failReason,
+		"finished_at":      &now,
+	}
+	if err := s.repo.UpdateRecordingSessionFields(ctx, recordingID, updates); err != nil {
+		return ErrInternal("AI_RECORDING_UPDATE_FAILED", err)
+	}
+
+	// 录制失败后把任务切回可重试状态，避免页面长期卡在运行中。
+	if err := s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
+		"task_status": model.AITaskStatusGenerateFailed,
+	}); err != nil {
+		s.logger.Error("FailRecording: update task status failed", "error", err, "task_id", taskID)
+	}
+
+	return nil
+}
+
 func (s *AIScriptService) GetLatestRecording(ctx context.Context, taskID uint) (*model.AIScriptRecordingSession, error) {
 	session, err := s.repo.FindLatestRecordingByTaskID(ctx, taskID)
 	if err != nil {
@@ -1553,4 +1580,3 @@ func (s *AIScriptService) ExportScript(ctx context.Context, scriptID uint) (stri
 	fileName := fmt.Sprintf("task-%d-v%d.spec.ts", version.TaskID, version.VersionNo)
 	return version.ScriptContent, fileName, nil
 }
-

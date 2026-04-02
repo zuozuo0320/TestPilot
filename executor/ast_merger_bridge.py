@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -90,16 +91,36 @@ def apply_page_updates(
         "workspace_root": workspace_root,
         "updates": updates,
     }
+    file_snapshots = _snapshot_workspace_files(workspace_root, updates)
 
     # 调用 AST 合并器
     result = _call_ast_merger(merge_input)
 
     if result is None:
+        _restore_workspace_files(workspace_root, file_snapshots, file_snapshots.keys())
         return {
             "success": False,
             "merged_files": [],
             "errors": ["AST 合并器调用失败"],
             "warnings": [],
+            "manual_review_needed": True,
+        }
+
+    corrupted_files = [
+        merged_file["file_path"]
+        for merged_file in result.get("merged_files", [])
+        if _contains_replacement_characters(merged_file.get("content", ""))
+    ]
+    if corrupted_files:
+        _restore_workspace_files(workspace_root, file_snapshots, corrupted_files)
+        return {
+            "success": False,
+            "merged_files": [],
+            "errors": [
+                f"AST 合并结果出现乱码占位符字符 U+FFFD，已自动回滚文件: {file_path}"
+                for file_path in corrupted_files
+            ],
+            "warnings": result.get("warnings", []),
             "manual_review_needed": True,
         }
 
@@ -130,31 +151,40 @@ def _resolve_file_path(page_name: str, registry_data: dict) -> Optional[str]:
 
 def _call_ast_merger(merge_input: dict) -> Optional[dict]:
     """通过 subprocess 调用 ts-morph AST 合并器"""
+    temp_input_path: str | None = None
     try:
         # 检查 node_modules 是否已安装
         node_modules = os.path.join(_AST_MERGER_DIR, "node_modules")
         if not os.path.exists(node_modules):
             logger.info("[ast-merger] 安装依赖...")
             subprocess.run(
-                ["npm", "install"],
+                [_npm_command(), "install"],
                 cwd=_AST_MERGER_DIR,
                 capture_output=True,
                 timeout=60,
                 check=True,
-                shell=True,
+                text=True,
+                encoding="utf-8",
             )
 
-        input_json = json.dumps(merge_input, ensure_ascii=False)
+        # Windows 下通过 shell + stdin 传递中文 JSON 时，容易在 AST 合并链路中被错误替换为 U+FFFD。
+        # 这里统一落到 UTF-8 临时文件，再通过 --input 传给 merger.ts，避免命令行/标准输入编码串码。
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".json",
+            delete=False,
+        ) as temp_file:
+            json.dump(merge_input, temp_file, ensure_ascii=False)
+            temp_input_path = temp_file.name
 
         proc = subprocess.run(
-            ["npx", "tsx", "src/merger.ts"],
+            [_npx_command(), "tsx", "src/merger.ts", "--input", temp_input_path],
             cwd=_AST_MERGER_DIR,
-            input=input_json,
             capture_output=True,
             text=True,
             encoding="utf-8",
             timeout=30,
-            shell=True,
         )
 
         if proc.returncode != 0:
@@ -174,3 +204,59 @@ def _call_ast_merger(merge_input: dict) -> Optional[dict]:
     except Exception as e:
         logger.error(f"[ast-merger] 调用异常: {e}")
         return None
+    finally:
+        if temp_input_path and os.path.exists(temp_input_path):
+            try:
+                os.remove(temp_input_path)
+            except OSError:
+                logger.warning("[ast-merger] 临时输入文件删除失败: %s", temp_input_path)
+
+
+def _npm_command() -> str:
+    """按平台返回可直接执行的 npm 命令。"""
+    return "npm.cmd" if os.name == "nt" else "npm"
+
+
+def _npx_command() -> str:
+    """按平台返回可直接执行的 npx 命令。"""
+    return "npx.cmd" if os.name == "nt" else "npx"
+
+
+def _snapshot_workspace_files(workspace_root: str, updates: list[dict]) -> dict[str, str]:
+    """在 AST 合并前缓存目标文件内容，便于发现乱码后自动回滚。"""
+    snapshots: dict[str, str] = {}
+
+    for update in updates:
+        file_path = update.get("file_path", "")
+        if not file_path or file_path in snapshots:
+            continue
+
+        absolute_path = os.path.join(workspace_root, file_path)
+        if not os.path.exists(absolute_path):
+            continue
+
+        with open(absolute_path, "r", encoding="utf-8") as file:
+            snapshots[file_path] = file.read()
+
+    return snapshots
+
+
+def _restore_workspace_files(
+    workspace_root: str,
+    snapshots: dict[str, str],
+    file_paths,
+) -> None:
+    """将指定文件恢复到 AST 合并前的内容。"""
+    for file_path in file_paths:
+        snapshot = snapshots.get(file_path)
+        if snapshot is None:
+            continue
+
+        absolute_path = os.path.join(workspace_root, file_path)
+        with open(absolute_path, "w", encoding="utf-8") as file:
+            file.write(snapshot)
+
+
+def _contains_replacement_characters(text: str) -> bool:
+    """检测文本中是否包含 U+FFFD，出现时通常说明编码链路已经损坏。"""
+    return "\ufffd" in (text or "")

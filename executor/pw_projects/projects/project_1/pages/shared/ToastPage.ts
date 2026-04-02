@@ -32,19 +32,19 @@ export class ToastPage {
     this.infoToast = page.locator('.el-message--info, .ant-message-info');
   }
 
-    /**
-     * ���Գ��ֳɹ���ʾ��
-     * ������ text ʱУ��ָ���ı���δ����ʱ��У��ɹ�������ʾ���֡�
-     */
-    async expectSuccess(options: { text?: string } = {}): Promise<void> {
-      const { text } = options;
+  /**
+   * 断言出现成功提示。
+   * 传入 text 时校验指定文本，未传入时校验成功提示容器出现。
+   */
+  async expectSuccess(options: { text?: string } = {}): Promise<void> {
+    const { text } = options;
 
-      await expect(this.successToast).toBeVisible();
+    await expect(this.successToast).toBeVisible();
 
-      if (text) {
-        await expect(this.successToast).toContainText(text);
-      }
+    if (text) {
+      await expect(this.successToast).toContainText(text);
     }
+  }
 
   /**
    * 断言出现错误提示，且包含指定消息文本。

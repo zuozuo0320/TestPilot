@@ -13,7 +13,10 @@ from typing import Optional
 from openai import OpenAI
 
 from config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
-from raw_locator_guard import build_step_model_from_recording
+from raw_locator_guard import (
+    build_generation_script_from_recording,
+    build_step_model_from_recording,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +58,16 @@ SYSTEM_PROMPT_REFACTOR = """你是一位受控的 Playwright 脚本重构器。
 你的输入是 Playwright Codegen 录制的原始脚本，你的任务是只做结构化重构，不得改写录制脚本中的原始定位器。
 
 ## 重构规则
-1. 保持原始录制的操作序列不变，不增加也不删除步骤
-2. 将扁平操作列表重构为 test.describe > test > test.step 三层结构
-3. 为每个 test.step 赋予语义化名称（中文）
-4. 只允许做结构组织：拆分 Page Object、创建 spec、组织 import，不允许修改任何原始定位器表达式
-5. 如果原始定位器是链式定位器，抽取时必须保留完整 locator chain，不得简化、替换、拼接新定位器
-6. 可以补充适当的等待与断言，但不能改变原始业务动作顺序
-7. 所有新增函数、方法和关键逻辑都必须补充中文注释或中文 JSDoc
-8. 敏感信息替换为 process.env.XXX
+1. 默认情况下，业务动作顺序必须与录制结果保持一致，不得随意新增、删除、重排步骤。
+2. `raw_script` 只是原始录制来源与原始定位器真源，所有 locator 必须直接来自 `raw_script`。
+3. `step_model_json.steps` 表示原始录制步骤；`step_model_json.generation_steps` 表示平台完成归一化后的生成步骤。
+4. 当 `generation_steps` 存在且与 `steps` 不一致时，代码生成必须以 `generation_steps` 和“生成用归一化录制稿”为准，不得再把被折叠的冗余步骤重新输出回来。
+5. 平台允许的唯一删减是 `normalization_items` 中明确标记的冗余 opener 重复点击，例如第一次点击已经打开弹窗、抽屉或表单，第二次同定位器点击必须折叠为等待已打开状态或直接省略，不能继续生成第二次点击。
+6. 只允许做结构组织：拆分 Page Object、创建 spec、组织 import，不允许发明新的业务动作。
+7. 如果原始定位器是链式定位器，抽取时必须保留完整 locator chain，不得简化、替换、拼接新定位器。
+8. 可以补充适当的等待与断言，但必须服务于下一步真实录制动作，不得凭空发明固定 URL 断言。
+9. 所有新增函数、方法、类和关键逻辑都必须补充中文注释或中文 JSDoc。
+10. 敏感信息替换为 `process.env.XXX`。
 
 ## 输出格式
 你必须输出一个 JSON 对象，包含以下字段：
@@ -74,6 +79,75 @@ SYSTEM_PROMPT_REFACTOR = """你是一位受控的 Playwright 脚本重构器。
 }
 
 只输出 JSON，不要输出任何其他内容。"""
+
+
+def _build_refactor_user_prompt(
+    scenario_desc: str,
+    start_url: str,
+    raw_script: str,
+    step_model_json: Optional[dict],
+    account_ref: Optional[str],
+) -> str:
+    """构建录制增强模式的用户提示，显式传入生成阶段归一化结果。"""
+    generation_script = build_generation_script_from_recording(raw_script, step_model_json)
+    normalization_items = (step_model_json or {}).get("normalization_items") or []
+
+    parts = [
+        "## 测试场景",
+        scenario_desc,
+        "",
+        "## 起始 URL",
+        start_url,
+        "",
+        "## 原始录制稿（仅用于定位器追溯）",
+        "```typescript",
+        raw_script,
+        "```",
+    ]
+
+    if generation_script and generation_script.strip() and generation_script.strip() != raw_script.strip():
+        parts.extend([
+            "",
+            "## 生成用归一化录制稿（仅移除平台判定的冗余 opener 重复点击）",
+            "```typescript",
+            generation_script,
+            "```",
+        ])
+
+    parts.extend([
+        "",
+        "## 强约束",
+        "- 只允许做 POM 和测试结构重组：拆分 Page Object class、创建 spec、组织 import。",
+        "- 定位器必须严格来自原始录制稿，不得改写、简化、替换、拼接或发明新的 locator。",
+        "- 若步骤模型里同时存在 `steps` 与 `generation_steps`，生成阶段必须以 `generation_steps` 为准；`steps` 仅用于追溯原始录制。",
+        "- 若 `normalization_items` 标记了 `collapse_duplicate_opener_click`，不要再输出第二次点击；可改为等待后续真实控件可见，或直接进入下一步真实业务动作。",
+        "- 除平台显式标记的归一化外，不得改变业务动作顺序。",
+        "- 除非原始录制稿明确出现过 URL 等待或 URL 断言，否则禁止凭空新增 `waitForURL` 或 `toHaveURL`。",
+        "- 所有新增函数、方法、类和关键逻辑必须增加中文注释或中文 JSDoc。",
+    ])
+
+    if step_model_json:
+        parts.extend([
+            "",
+            "## 步骤模型（结构化解析结果）",
+            "```json",
+            json.dumps(step_model_json, ensure_ascii=False, indent=2),
+            "```",
+        ])
+
+    if normalization_items:
+        parts.extend([
+            "",
+            "## 归一化说明",
+            "```json",
+            json.dumps(normalization_items, ensure_ascii=False, indent=2),
+            "```",
+        ])
+
+    if account_ref:
+        parts.extend(["", "## 测试账号参考", account_ref])
+
+    return "\n".join(parts)
 
 
 def generate_playwright_script(
@@ -156,35 +230,14 @@ def refactor_recorded_script(
             logger.error(f"[refactor] V1 管线异常，回退到 V0 流程: {e}", exc_info=True)
             # 回退到 V0 单文件流程
 
-    # V0 原始单文件 LLM 重构流程
-    user_prompt = f"""## 测试场景
-{scenario_desc}
-
-## 起始 URL
-{start_url}
-
-## 原始录制稿（Playwright Codegen 输出）
-```typescript
-{raw_script}
-```
-"""
-
-
-    user_prompt += """
-## 强约束
-- 只允许做 POM/测试结构重组：拆分 Page Object class、创建 spec、组织 import。
-- 严格保留 raw_script 中的所有原始定位器，不得改写、简化、替换、合并或补发明新定位器。
-- 如需抽取 locator，必须直接复用 raw_script 中出现过的完整 locator chain。
-- 可以补充等待、断言和结构化封装，但不能改变原始业务动作顺序。
-- 除非 raw_script 中明确出现过 URL 等待或 URL 断言，否则禁止凭空新增固定 URL 的 `waitForURL` / `toHaveURL` 判断。
-- 所有新增函数、方法和关键逻辑必须增加中文注释或中文 JSDoc。
-"""
-
-    if step_model_json:
-        user_prompt += f"\n## 步骤模型（结构化解析结果）\n```json\n{json.dumps(step_model_json, ensure_ascii=False, indent=2)}\n```\n"
-
-    if account_ref:
-        user_prompt += f"\n## 测试账号参考\n{account_ref}\n"
+    # V0 单文件 LLM 重构流程
+    user_prompt = _build_refactor_user_prompt(
+        scenario_desc=scenario_desc,
+        start_url=start_url,
+        raw_script=raw_script,
+        step_model_json=step_model_json,
+        account_ref=account_ref,
+    )
 
     return _call_llm(SYSTEM_PROMPT_REFACTOR, user_prompt, scenario_desc, start_url, [], raw_script=raw_script)
 

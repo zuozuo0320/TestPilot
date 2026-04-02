@@ -37,23 +37,23 @@ type Dependencies struct {
 
 // API 核心结构体
 type API struct {
-	logger          *slog.Logger
-	allowedOrigins  []string
-	authSvc         *service.AuthService
-	userSvc         *service.UserService
-	roleSvc         *service.RoleService
-	projectSvc      *service.ProjectService
-	testCaseSvc     *service.TestCaseService
-	profileSvc      *service.ProfileService
-	executionSvc    *service.ExecutionService
-	defectSvc       *service.DefectService
-	requirementSvc  *service.RequirementService
-	scriptSvc       *service.ScriptService
-	overviewSvc     *service.OverviewService
-	auditSvc        *service.AuditService
-	moduleSvc       *service.ModuleService
-	attachmentSvc   *service.AttachmentService
-	caseHistoryRepo *repository.CaseHistoryRepo
+	logger           *slog.Logger
+	allowedOrigins   []string
+	authSvc          *service.AuthService
+	userSvc          *service.UserService
+	roleSvc          *service.RoleService
+	projectSvc       *service.ProjectService
+	testCaseSvc      *service.TestCaseService
+	profileSvc       *service.ProfileService
+	executionSvc     *service.ExecutionService
+	defectSvc        *service.DefectService
+	requirementSvc   *service.RequirementService
+	scriptSvc        *service.ScriptService
+	overviewSvc      *service.OverviewService
+	auditSvc         *service.AuditService
+	moduleSvc        *service.ModuleService
+	attachmentSvc    *service.AttachmentService
+	caseHistoryRepo  *repository.CaseHistoryRepo
 	caseRelationRepo *repository.CaseRelationRepo
 	xlsxSvc          *service.XlsxService
 	aiScriptSvc      *service.AIScriptService
@@ -62,23 +62,23 @@ type API struct {
 // NewRouter 创建路由引擎并注册所有路由
 func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	a := &API{
-		logger:          deps.Logger,
-		allowedOrigins:  parseAllowedOrigins(corsOrigins),
-		authSvc:         deps.AuthService,
-		userSvc:         deps.UserService,
-		roleSvc:         deps.RoleService,
-		projectSvc:      deps.ProjectService,
-		testCaseSvc:     deps.TestCaseService,
-		profileSvc:      deps.ProfileService,
-		executionSvc:    deps.ExecutionService,
-		defectSvc:       deps.DefectService,
-		requirementSvc:  deps.RequirementService,
-		scriptSvc:       deps.ScriptService,
-		overviewSvc:     deps.OverviewService,
-		auditSvc:        deps.AuditService,
-		moduleSvc:       deps.ModuleService,
-		attachmentSvc:   deps.AttachmentService,
-		caseHistoryRepo: deps.CaseHistoryRepo,
+		logger:           deps.Logger,
+		allowedOrigins:   parseAllowedOrigins(corsOrigins),
+		authSvc:          deps.AuthService,
+		userSvc:          deps.UserService,
+		roleSvc:          deps.RoleService,
+		projectSvc:       deps.ProjectService,
+		testCaseSvc:      deps.TestCaseService,
+		profileSvc:       deps.ProfileService,
+		executionSvc:     deps.ExecutionService,
+		defectSvc:        deps.DefectService,
+		requirementSvc:   deps.RequirementService,
+		scriptSvc:        deps.ScriptService,
+		overviewSvc:      deps.OverviewService,
+		auditSvc:         deps.AuditService,
+		moduleSvc:        deps.ModuleService,
+		attachmentSvc:    deps.AttachmentService,
+		caseHistoryRepo:  deps.CaseHistoryRepo,
 		caseRelationRepo: deps.CaseRelationRepo,
 		xlsxSvc:          deps.XlsxService,
 		aiScriptSvc:      deps.AIScriptService,
@@ -193,6 +193,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	// 录制
 	aiScript.POST("/tasks/:taskID/recording/start", a.startRecording)
 	aiScript.POST("/tasks/:taskID/recording/finish", a.finishRecording)
+	aiScript.POST("/tasks/:taskID/recording/fail", a.failRecording)
 	aiScript.GET("/tasks/:taskID/recordings/latest", a.getLatestRecording)
 	// 脚本版本
 	aiScript.GET("/tasks/:taskID/versions", a.getAIScriptVersions)

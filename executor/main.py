@@ -133,6 +133,54 @@ def _clear_pending_script(task_id: int):
 
 
 # ── Codegen 超时清理后台任务 ──
+def _read_text_file_with_fallback(path: str) -> str:
+    """使用 UTF-8 兜底读取日志文件，避免 Windows 默认编码吞掉关键信息。"""
+    if not os.path.exists(path):
+        return ""
+    with open(path, "r", encoding="utf-8", errors="replace") as file:
+        return file.read()
+
+
+def _tail_text_for_log(text: str, limit: int = 600) -> str:
+    """裁剪日志尾部，确保错误信息既可读又不会过长。"""
+    normalized = (text or "").strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[-limit:]
+
+
+def _build_codegen_failure_message(
+    returncode: int,
+    elapsed_seconds: float,
+    output_file: str,
+    stdout_file: str,
+    stderr_file: str,
+) -> str:
+    """统一拼装录制失败原因，方便前端直接展示和排查。"""
+    stderr_text = _tail_text_for_log(_read_text_file_with_fallback(stderr_file))
+    stdout_text = _tail_text_for_log(_read_text_file_with_fallback(stdout_file))
+
+    reasons = [f"录制进程已退出（退出码 {returncode}）"]
+    if elapsed_seconds < 3:
+        reasons.append("录制窗口可能未正常拉起或刚启动就退出")
+
+    if stderr_text:
+        reasons.append(f"stderr: {stderr_text}")
+    elif stdout_text:
+        reasons.append(f"stdout: {stdout_text}")
+    elif os.path.exists(output_file):
+        reasons.append("检测到了输出文件，但文件内容为空")
+    else:
+        reasons.append("未检测到 Playwright codegen 输出文件")
+
+    return "；".join(reasons)
+
+
+def _npx_command() -> str:
+    """按平台返回可直接执行的 npx 命令。"""
+    return "npx.cmd" if os.name == "nt" else "npx"
+
+
 async def _cleanup_stale_sessions():
     """每 60 秒检查并清理超时的 codegen 会话"""
     import time
@@ -274,6 +322,10 @@ async def execute_refactor(req: RefactorRequest):
 
     logger.info(f"Refactored script for task {req.task_id}, length: {len(gen_result['script_content'])}")
 
+    # 将 step_model 的每个步骤转换为 traces，供后端持久化并在前端展示
+    traces = _step_model_to_traces(step_model)
+    logger.info(f"Converted step_model to {len(traces)} traces for task {req.task_id}")
+
     return {
         "success": True,
         "script_content": gen_result["script_content"],
@@ -281,7 +333,7 @@ async def execute_refactor(req: RefactorRequest):
         "assertion_suggestions": gen_result.get("assertion_suggestions", []),
         "generation_summary": gen_result.get("generation_summary", ""),
         "step_model_json": step_model,
-        "traces": [],
+        "traces": traces,
         "screenshots": [],
         "error_message": "",
         # V1 多文件结果（仅当 project_scope 存在时有值）
@@ -350,7 +402,8 @@ async def _run_codegen(
         from auth_manager import has_valid_auth_state, get_auth_state_path
         from login_handler import auto_login, build_login_config
 
-        auth_state_path = get_auth_state_path(start_url)
+        # 统一改成绝对路径，避免服务从不同工作目录启动时找不到 auth_state。
+        auth_state_path = os.path.abspath(get_auth_state_path(start_url))
 
         # ── 认证状态检查与自动登录 ──
         if not has_valid_auth_state(start_url):
@@ -383,34 +436,45 @@ async def _run_codegen(
             logger.info(f"[codegen:{session_id}] Valid auth state found, will load it")
 
         # ── 构建 codegen 命令 ──
-        cmd = (
-            'npx -y playwright codegen --ignore-https-errors '
-            '--target playwright-test'
-        )
+        cmd = [
+            _npx_command(),
+            "-y",
+            "playwright",
+            "codegen",
+            "--ignore-https-errors",
+            "--target",
+            "playwright-test",
+        ]
 
         # 如果存在有效的 auth_state，加载它
         if os.path.exists(auth_state_path):
-            cmd += f' --load-storage="{auth_state_path}"'
+            cmd.extend(["--load-storage", auth_state_path])
             logger.info(f"[codegen:{session_id}] Loading auth state: {auth_state_path}")
 
         # 每次录制后都保存最新的 auth_state
-        cmd += f' --save-storage="{auth_state_path}"'
-        cmd += f' --output "{output_file}" "{start_url}"'
+        cmd.extend(["--save-storage", auth_state_path])
+        cmd.extend(["--output", output_file, start_url])
 
-        logger.info(f"[codegen:{session_id}] Command: {cmd}")
+        import subprocess as _sp
+        logger.info(f"[codegen:{session_id}] Command: {_sp.list2cmdline(cmd)}")
 
-        proc = await asyncio.create_subprocess_shell(
+        # 使用 subprocess.Popen 替代 asyncio.create_subprocess_shell，
+        # 避免 Windows ProactorEventLoop 在创建管道时出现 [WinError 5] 拒绝访问。
+        import subprocess as _sp
+        proc = _sp.Popen(
             cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            shell=True,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
         )
 
         _codegen_sessions[session_id]["pid"] = proc.pid
         _codegen_sessions[session_id]["status"] = "recording"
         logger.info(f"[codegen:{session_id}] Process started, PID={proc.pid}")
 
-        # 等待用户关闭浏览器 (进程退出)
-        await proc.wait()
+        # 在线程池中等待进程退出，避免阻塞 event loop
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, proc.wait)
 
         logger.info(f"[codegen:{session_id}] Process exited, reading output file")
 
@@ -427,6 +491,128 @@ async def _run_codegen(
         )
 
         # 持久化到磁盘，防止页面刷新/关闭后丢失
+        task_id = _codegen_sessions[session_id].get("task_id")
+        if task_id and script_content:
+            _save_pending_script(task_id, script_content, session_id)
+
+    except Exception as e:
+        logger.error(f"[codegen:{session_id}] Error: {e}", exc_info=True)
+        _codegen_sessions[session_id]["status"] = "error"
+        _codegen_sessions[session_id]["error"] = str(e)
+
+
+async def _run_codegen_v2(
+    session_id: str,
+    start_url: str,
+    output_file: str,
+    auth_config: Optional[dict] = None,
+):
+    """后台运行 playwright codegen，并把录制异常收敛成可诊断的错误信息。"""
+    try:
+        from auth_manager import has_valid_auth_state, get_auth_state_path
+        from login_handler import auto_login, build_login_config
+        import subprocess as _sp
+
+        # 统一改成绝对路径，避免服务从不同工作目录启动时找不到 auth_state。
+        auth_state_path = os.path.abspath(get_auth_state_path(start_url))
+
+        # 认证态优先复用，失效时再尝试自动登录，尽量减少录制前的人工操作。
+        if not has_valid_auth_state(start_url):
+            logger.info(f"[codegen:{session_id}] No valid auth state, attempting auto login")
+            _codegen_sessions[session_id]["status"] = "logging_in"
+
+            login_cfg = build_login_config(start_url, auth_config)
+            if login_cfg.username and login_cfg.login_url:
+                result = await auto_login(start_url, login_cfg)
+                if not result["success"]:
+                    logger.error(
+                        f"[codegen:{session_id}] Auto login failed: {result['error']}"
+                    )
+                    logger.info(f"[codegen:{session_id}] Proceeding without auth state")
+                else:
+                    logger.info(
+                        f"[codegen:{session_id}] Auto login succeeded "
+                        f"(attempts={result['attempts']})"
+                    )
+            else:
+                logger.info(
+                    f"[codegen:{session_id}] No login config provided, "
+                    f"proceeding without auto login"
+                )
+        else:
+            logger.info(f"[codegen:{session_id}] Valid auth state found, will load it")
+
+        cmd = [
+            _npx_command(),
+            "-y",
+            "playwright",
+            "codegen",
+            "--ignore-https-errors",
+            "--target",
+            "playwright-test",
+        ]
+
+        if os.path.exists(auth_state_path):
+            cmd.extend(["--load-storage", auth_state_path])
+            logger.info(f"[codegen:{session_id}] Loading auth state: {auth_state_path}")
+
+        cmd.extend(["--save-storage", auth_state_path])
+        cmd.extend(["--output", output_file, start_url])
+        logger.info(f"[codegen:{session_id}] Command: {_sp.list2cmdline(cmd)}")
+
+        stdout_file = os.path.join(tempfile.gettempdir(), f"codegen_{session_id}.stdout.log")
+        stderr_file = os.path.join(tempfile.gettempdir(), f"codegen_{session_id}.stderr.log")
+        _codegen_sessions[session_id]["stdout_file"] = stdout_file
+        _codegen_sessions[session_id]["stderr_file"] = stderr_file
+
+        # 录制链路优先保证窗口能稳定拉起，因此改为参数数组直启并保留诊断日志。
+        with open(stdout_file, "wb") as stdout_handle, open(stderr_file, "wb") as stderr_handle:
+            proc = _sp.Popen(
+                cmd,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                shell=False,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+            )
+            _codegen_sessions[session_id]["pid"] = proc.pid
+            _codegen_sessions[session_id]["status"] = "recording"
+            logger.info(f"[codegen:{session_id}] Process started, PID={proc.pid}")
+
+            # 在线程池中等待退出，避免阻塞 FastAPI 事件循环。
+            loop = asyncio.get_event_loop()
+            started_at = time.time()
+            returncode = await loop.run_in_executor(None, proc.wait)
+            elapsed_seconds = time.time() - started_at
+
+        logger.info(f"[codegen:{session_id}] Process exited, reading output file")
+
+        script_content = ""
+        if os.path.exists(output_file):
+            with open(output_file, "r", encoding="utf-8") as f:
+                script_content = f.read()
+            os.remove(output_file)
+
+        # 空脚本本质上属于录制失败，不能再返回 completed 误导前端。
+        if not script_content.strip():
+            failure_message = _build_codegen_failure_message(
+                returncode=returncode,
+                elapsed_seconds=elapsed_seconds,
+                output_file=output_file,
+                stdout_file=stdout_file,
+                stderr_file=stderr_file,
+            )
+            logger.error(f"[codegen:{session_id}] Empty script: {failure_message}")
+            _codegen_sessions[session_id]["status"] = "error"
+            _codegen_sessions[session_id]["error"] = failure_message
+            return
+
+        _codegen_sessions[session_id]["status"] = "completed"
+        _codegen_sessions[session_id]["script_content"] = script_content
+        logger.info(
+            f"[codegen:{session_id}] Script captured, length={len(script_content)}"
+        )
+
+        # 落盘保留最近一次待提交脚本，避免页面刷新后丢失录制内容。
         task_id = _codegen_sessions[session_id].get("task_id")
         if task_id and script_content:
             _save_pending_script(task_id, script_content, session_id)
@@ -456,7 +642,7 @@ async def start_codegen(req: CodegenRequest):
 
     # 在后台运行，不阻塞请求（传递 auth_config）
     asyncio.create_task(
-        _run_codegen(session_id, req.start_url, output_file, req.auth_config)
+        _run_codegen_v2(session_id, req.start_url, output_file, req.auth_config)
     )
 
     logger.info(f"[codegen] New session {session_id} for task {req.task_id}")
@@ -536,6 +722,72 @@ async def auth_invalidate(start_url: str):
     from auth_manager import invalidate_auth_state
     invalidate_auth_state(start_url)
     return {"message": f"Auth state invalidated for {start_url}"}
+
+
+
+def _step_model_to_traces(step_model: dict) -> list:
+    """
+    将 parse_step_model 返回的 step_model 转换为 traces 格式。
+    录制增强模式下，Python 端从 step_model.steps 生成 traces 返回给 Go 后端，
+    Go 后端持久化到 ai_script_traces 表，前端操作步骤时间线直接使用 DB 数据。
+    """
+    import re as _re
+    steps = step_model.get("steps") or []
+    traces = []
+    for step in steps:
+        step_no = step.get("stepNo") or step.get("step_no") or (len(traces) + 1)
+        action_type = (step.get("actionType") or step.get("action_type") or "CUSTOM").upper()
+        locator = step.get("locator") or ""
+        input_value = step.get("inputValue") or step.get("input_value") or ""
+        page_url = step.get("pageUrl") or step.get("page_url") or ""
+
+        # 从 Playwright 定位器中提取人类可读的元素名
+        def _readable_from_locator(loc):
+            m = _re.search(r'getBy(?:Role|Text|Label|Placeholder|TestId|AltText|Title)\([\'"]([^\'"]{1,40})', loc)
+            return m.group(1) if m else (loc[:40] if loc else "")
+
+        if action_type == "NAVIGATE":
+            summary = f"导航到 {page_url}" if page_url else f"步骤 {step_no}"
+        elif action_type == "CLICK":
+            readable = _readable_from_locator(locator) or f"元素 {step_no}"
+            summary = f"点击「{readable}」"
+        elif action_type == "INPUT":
+            field = _readable_from_locator(locator) or "输入框"
+            val = (input_value[:20] + ("..." if len(input_value) > 20 else "")) if input_value else ""
+            summary = f"在「{field}」输入 {val}" if val else f"在「{field}」输入"
+        elif action_type == "KEY_PRESS":
+            summary = f"按键 {input_value}" if input_value else f"步骤 {step_no}"
+        elif action_type == "SELECT":
+            summary = f"选择「{input_value}」" if input_value else f"步骤 {step_no}"
+        elif action_type == "WAIT":
+            summary = "等待页面响应"
+        elif action_type == "ASSERT":
+            summary = "断言验证"
+        else:
+            summary = step.get("description") or step.get("targetSummary") or f"步骤 {step_no}"
+
+        traces.append({
+            "trace_no": step_no,
+            "action_type": action_type,
+            "page_url": page_url,
+            "target_summary": summary,
+            "locator_used": locator[:500] if locator else "",
+            "input_value_masked": _mask_input(input_value),
+            "action_result": "success",
+            "error_message": "",
+            "screenshot_url": "",
+            "occurred_at": f"00:{step_no:02d}.00",
+        })
+    return traces
+
+
+def _mask_input(value: str) -> str:
+    """对输入值脱敏处理"""
+    if not value:
+        return ""
+    if len(value) <= 4:
+        return "****"
+    return value[:2] + "***" + value[-2:]
 
 
 if __name__ == "__main__":

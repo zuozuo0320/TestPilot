@@ -24,167 +24,71 @@
         "breadcrumb": [],
         "page_title": [],
         "root_container": [],
-        "url_patterns": [
-          "/workbench"
-        ]
+        "url_patterns": []
       },
       "shared_dependencies": [
-        "DialogPage",
         "NavigationPage"
       ],
       "locators": {
-        "viewTaskButtons": {
-          "summary": "查看任务入口列表"
+        "viewTaskEntry": {
+          "summary": "资产探知页面中的查看任务入口"
         },
-        "createTaskButton": {
-          "summary": "新建任务按钮"
+        "newTaskButton": {
+          "summary": "任务工作台中的新建任务按钮"
         },
         "targetTextarea": {
-          "summary": "目标输入框"
+          "summary": "任务目标输入框"
+        },
+        "templateSelectTextbox": {
+          "summary": "任务模板选择输入框"
+        },
+        "highRiskWeakPasswordPortOption": {
+          "summary": "两高一弱-端口模板选项"
         },
         "confirmButton": {
-          "summary": "确定按钮"
+          "summary": "提交任务的确定按钮"
         },
-        "enterpriseSearchTextbox": {
-          "summary": "企业搜索输入框"
-        },
-        "enterpriseRelationQueryButton": {
-          "summary": "单位关系查询按钮"
-        },
-        "startMappingButton": {
-          "summary": "开始测绘按钮"
-        },
-        "taskNameTextbox": {
-          "summary": "任务名称输入框"
-        },
-        "cloudRecommendationTaskEntry": {
-          "summary": "云端资产推荐任务入口"
-        },
-        "cloudRecommendationCheckboxFirst": {
-          "summary": "首条记录勾选框"
-        },
-        "cloudAssetRecommendationButton": {
-          "summary": "云端资产推荐按钮"
-        },
-        "assetCredibilityAssessmentButton": {
-          "summary": "资产信任度评估按钮"
-        },
-        "assetAccountingScanButton": {
-          "summary": "资产入账扫描按钮"
-        },
-        "thirdViewTaskButton": {
-          "summary": "第三个查看任务入口"
-        },
-        "portRangeSelectTextbox": {
-          "summary": "端口范围选择输入框"
-        },
-        "minus65535ListItem": {
-          "summary": "全端口范围选项"
+        "fullPortTemplateOption": {
+          "summary": "全端口扫描模板选项"
         }
       },
       "actions": {
-        "openTaskCreateDialog": {
-          "summary": "打开新建任务弹窗",
-          "params_signature": "() => Promise<void>",
+        "openViewTaskWorkbench": {
+          "summary": "打开资产探知查看任务工作台",
+          "params_signature": "()",
           "uses_locators": [
-            "createTaskButton"
+            "viewTaskEntry"
           ],
           "update_mode": "non_breaking_only"
         },
-        "createTask": {
-          "summary": "填写目标与可选任务名称并提交新建任务",
-          "params_signature": "{ target: string; taskName?: string }",
+        "expectWorkbenchReady": {
+          "summary": "断言任务工作台已加载完成",
+          "params_signature": "()",
           "uses_locators": [
+            "newTaskButton"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "createHighRiskWeakPasswordTask": {
+          "summary": "创建并下发两高一弱任务",
+          "params_signature": "{ target: string; templateName: string }",
+          "uses_locators": [
+            "newTaskButton",
             "targetTextarea",
-            "taskNameTextbox",
+            "templateSelectTextbox",
+            "highRiskWeakPasswordPortOption",
             "confirmButton"
           ],
           "update_mode": "non_breaking_only"
         },
-        "openTaskListByIndex": {
-          "summary": "点击指定索引的查看任务入口",
-          "params_signature": "(index: number) => Promise<void>",
-          "uses_locators": [
-            "viewTaskButtons"
-          ],
-          "update_mode": "non_breaking_only"
-        },
-        "waitForCloudRecommendationTaskEntryReady": {
-          "summary": "等待云端资产推荐卡片入口可见",
-          "params_signature": "() => Promise<void>",
-          "uses_locators": [
-            "cloudRecommendationTaskEntry"
-          ],
-          "update_mode": "non_breaking_only"
-        },
-        "openCloudRecommendationTaskWorkbench": {
-          "summary": "打开云端资产推荐任务工作台",
-          "params_signature": "() => Promise<void>",
-          "uses_locators": [
-            "cloudRecommendationTaskEntry"
-          ],
-          "update_mode": "non_breaking_only"
-        },
-        "startEnterpriseMapping": {
-          "summary": "搜索企业并发起单位资产测绘",
-          "params_signature": "{ enterpriseName: string }",
-          "uses_locators": [
-            "enterpriseSearchTextbox",
-            "enterpriseRelationQueryButton",
-            "startMappingButton"
-          ],
-          "update_mode": "non_breaking_only"
-        },
-        "runCloudAssetRecommendation": {
-          "summary": "勾选首条记录后执行云端资产推荐",
-          "params_signature": "() => Promise<void>",
-          "uses_locators": [
-            "cloudRecommendationCheckboxFirst",
-            "cloudAssetRecommendationButton"
-          ],
-          "update_mode": "non_breaking_only"
-        },
-        "runAssetCredibilityAssessment": {
-          "summary": "执行资产信任度评估",
-          "params_signature": "() => Promise<void>",
-          "uses_locators": [
-            "assetCredibilityAssessmentButton"
-          ],
-          "update_mode": "non_breaking_only"
-        },
-        "runAssetAccountingScan": {
-          "summary": "执行资产入账扫描",
-          "params_signature": "() => Promise<void>",
-          "uses_locators": [
-            "assetAccountingScanButton"
-          ],
-          "update_mode": "non_breaking_only"
-        },
-        "openThirdViewTaskEntry": {
-          "summary": "打开第三个查看任务入口进入任务工作台",
-          "params_signature": "() => Promise<void>",
-          "uses_locators": [
-            "thirdViewTaskButton"
-          ],
-          "update_mode": "non_breaking_only"
-        },
-        "expectTaskWorkbenchReady": {
-          "summary": "断言任务工作台已就绪",
-          "params_signature": "() => Promise<void>",
-          "uses_locators": [
-            "createTaskButton"
-          ],
-          "update_mode": "non_breaking_only"
-        },
         "createFullPortScanTask": {
-          "summary": "填写任务名称、目标和端口范围后提交新建任务",
-          "params_signature": "{ taskName: string; target: string }",
+          "summary": "创建并下发全端口扫描任务",
+          "params_signature": "{ target: string; templateName: string }",
           "uses_locators": [
-            "createTaskButton",
-            "taskNameTextbox",
+            "newTaskButton",
             "targetTextarea",
-            "portRangeSelectTextbox",
-            "minus65535ListItem",
+            "templateSelectTextbox",
+            "fullPortTemplateOption",
             "confirmButton"
           ],
           "update_mode": "non_breaking_only"
@@ -418,6 +322,14 @@
           "params_signature": "(message?: string)",
           "uses_locators": [
             "errorMessage"
+          ],
+          "update_mode": "non_breaking_only"
+        },
+        "openLoginPage": {
+          "summary": "打开登录页面",
+          "params_signature": "()",
+          "uses_locators": [
+            "usernameInput"
           ],
           "update_mode": "non_breaking_only"
         }

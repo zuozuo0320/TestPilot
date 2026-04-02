@@ -73,4 +73,12 @@ export class LoginPage {
       await expect(this.errorMessage).toBeVisible();
     }
   }
+
+  /**
+   * 打开登录页面。
+   */
+  async openLoginPage(): Promise<void> {
+    await this.page.goto(process.env.BASE_URL || '/login');
+    await expect(this.usernameInput).toBeVisible();
+  }
 }

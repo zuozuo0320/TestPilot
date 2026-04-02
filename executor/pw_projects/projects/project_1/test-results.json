@@ -63,20 +63,20 @@
   },
   "suites": [
     {
-      "title": "asset-discovery\\create-full-port-scan-task.spec.ts",
-      "file": "asset-discovery/create-full-port-scan-task.spec.ts",
+      "title": "task-management\\high-risk-weak-password-task-delivery.spec.ts",
+      "file": "task-management/high-risk-weak-password-task-delivery.spec.ts",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "资产探知",
-          "file": "asset-discovery/create-full-port-scan-task.spec.ts",
+          "title": "任务管理-资产探知",
+          "file": "task-management/high-risk-weak-password-task-delivery.spec.ts",
           "line": 3,
           "column": 6,
           "specs": [
             {
-              "title": "新建下发全端口扫描任务",
+              "title": "两高一弱任务下发",
               "ok": true,
               "tags": [],
               "tests": [
@@ -91,7 +91,7 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3919,
+                      "duration": 3982,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
@@ -99,20 +99,20 @@
                       "steps": [
                         {
                           "title": "进入资产探知任务工作台",
-                          "duration": 1797
+                          "duration": 1301
                         },
                         {
-                          "title": "创建下发全端口扫描任务",
-                          "duration": 1238
+                          "title": "创建两高一弱端口任务",
+                          "duration": 1542
                         }
                       ],
-                      "startTime": "2026-04-01T11:42:04.571Z",
+                      "startTime": "2026-04-02T06:54:51.424Z",
                       "annotations": [],
                       "attachments": [
                         {
                           "name": "screenshot",
                           "contentType": "image/png",
-                          "path": "D:\\ai_project\\TestPilot\\executor\\pw_projects\\projects\\project_1\\test-results\\asset-discovery-create-full-port-scan-task-资产探知-新建下发全端口扫描任务-chromium\\test-finished-1.png"
+                          "path": "D:\\ai_project\\TestPilot\\executor\\pw_projects\\projects\\project_1\\test-results\\task-management-high-risk--0bbc5-delivery-任务管理-资产探知-两高一弱任务下发-chromium\\test-finished-1.png"
                         }
                       ]
                     }
@@ -120,8 +120,8 @@
                   "status": "expected"
                 }
               ],
-              "id": "e42b254560097b1f9e91-99cac15f6b73581e4963",
-              "file": "asset-discovery/create-full-port-scan-task.spec.ts",
+              "id": "9bbb92acaa42611fccae-b35b5adaed42f6430c48",
+              "file": "task-management/high-risk-weak-password-task-delivery.spec.ts",
               "line": 4,
               "column": 7
             }
@@ -132,8 +132,8 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-04-01T11:42:03.734Z",
-    "duration": 5070.059,
+    "startTime": "2026-04-02T06:54:50.564Z",
+    "duration": 5284.28,
     "expected": 1,
     "skipped": 0,
     "unexpected": 0,

@@ -20,6 +20,11 @@
 - Go 后端、Python Executor、Vue 前端在本机启动，便于调试与热更新。
 - 如需验证容器化后端，也可以额外执行 `docker compose --env-file .env up --build -d app`，但 Executor 仍建议本机独立启动。
 
+补充说明：
+
+- 关闭启动 Go 后端、Executor、Vite 的 PowerShell 窗口，会直接结束这些本机前台进程；只有 Docker 容器里的服务会继续运行。
+- 默认推荐的调试形态是“`mysql/redis/app` 可容器化，`executor/front` 本机运行”；这样录制窗口、Playwright 验证和前端热更新更稳定，排障也更直接。
+
 ### 环境要求
 
 | 依赖 | 版本 | 用途 |
@@ -89,6 +94,7 @@ cd ..
 
 > **注意**：Windows 上系统未注册 `python` 命令时，请使用 `py` launcher 代替。
 > Executor 至少需要在 `executor/.env` 中配置 `OPENAI_API_KEY`，建议同时显式配置 `OPENAI_BASE_URL`、`OPENAI_MODEL`、`EXECUTOR_PORT`。
+> 当前代码中的 `OPENAI_MODEL` 默认值仍是 `gpt-4.1`，因此建议在 `executor/.env` 中显式写入你要使用的模型，不要依赖默认值。
 > `executor/ast_merger/` 会在首次执行 V1 页面增量合并时自动 `npm install`，上面的预装步骤只是为了减少第一次等待时间。
 
 ### Step 2.1 — 当前测试智编工作区说明
@@ -112,13 +118,13 @@ npm run dev          # 启动 Vite 开发服务器
 
 ### 服务总览
 
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 前端 | http://localhost:5173 | Vue 3 + Vite HMR |
-| 后端 API | http://localhost:8080 | Go Gin RESTful API |
-| Executor | http://localhost:8100 | Python FastAPI + AI 引擎 |
-| MySQL | localhost:3306 | Docker 容器 |
-| Redis | localhost:6379 | Docker 容器 |
+| 服务 | 地址 | 默认启动方式 | 说明 |
+|------|------|--------------|------|
+| 前端 | http://localhost:5173 | 本机前台进程 | Vue 3 + Vite HMR |
+| 后端 API | http://localhost:8080 | 本机前台进程或 `app` 容器 | Go Gin RESTful API |
+| Executor | http://localhost:8100 | 本机前台进程 | Python FastAPI + AI 引擎 |
+| MySQL | localhost:3306 | Docker 容器 | 基础数据库 |
+| Redis | localhost:6379 | Docker 容器 | 缓存与队列依赖 |
 
 ### 验证服务是否正常
 
@@ -175,7 +181,7 @@ curl http://localhost:8100/health
 | `EXECUTOR_PORT` | 服务端口 | `8100` |
 | `OPENAI_API_KEY` | LLM API Key | 必填 |
 | `OPENAI_BASE_URL` | LLM 网关地址 | 建议显式配置，如 `https://api.openai.com/v1` |
-| `OPENAI_MODEL` | 模型 | `gpt-4.1` |
+| `OPENAI_MODEL` | 模型 | `gpt-4.1`（代码默认值，建议显式配置） |
 | `BROWSER_HEADLESS` | 浏览器是否无头运行 | `true` |
 | `EXECUTOR_API_KEY` | 鉴权密钥 | 与 Go 后端一致 |
 | `CODEGEN_SESSION_TIMEOUT_SEC` | 录制超时 | `600` |

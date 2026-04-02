@@ -417,10 +417,12 @@ def _split_statements(script: str) -> list[str]:
             brace_depth += 1
         elif char == "}":
             brace_depth = max(brace_depth - 1, 0)
-        # Playwright 录制脚本通常包裹在 test(...) => { ... } 代码块中，
-        # 业务语句结束时，outer test( 的括号深度通常停留在 1，函数体花括号深度也停留在 1。
-        # 因此这里允许在 paren_depth <= 1 且 brace_depth <= 1 时切分语句。
-        elif char == ";" and paren_depth <= 1 and bracket_depth == 0 and brace_depth <= 1:
+        # Playwright 录制脚本通常包裹在 test(...) => { ... } 代码块中。
+        # 业务语句（await page.xxx(...)）末尾的分号出现时，括号和方括号一定是平衡的
+        # （paren_depth == 1 表示仍在 test() 内，bracket_depth == 0）。
+        # 注意：filter({ hasText: '...' }) 等内联对象会让 brace_depth 短暂升到 2 以上，
+        # 但在语句末尾 ; 处内联对象的花括号已经闭合，因此不能用 brace_depth 作为切分条件。
+        elif char == ";" and paren_depth <= 1 and bracket_depth == 0:
             current.append(char)
             statement = "".join(current).strip()
             if statement:
@@ -487,16 +489,193 @@ def _strip_page_prefix(locator: str) -> str:
     return locator
 
 
+def _ensure_page_prefix(locator: str) -> str:
+    """为 locator 补齐 page. 前缀，便于做统一归一化比较。"""
+    candidate = (locator or "").strip()
+    if not candidate:
+        return ""
+    if candidate.startswith("page.") or candidate.startswith("this.page."):
+        return candidate
+    return f"page.{candidate.lstrip('.')}"
+
+
+def _normalize_step_locator(locator: str) -> str:
+    """标准化 step_model 中的 locator，避免 page 前缀差异影响比较结果。"""
+    candidate = _ensure_page_prefix(locator)
+    if not candidate:
+        return ""
+    return normalize_locator_expression(candidate)
+
+
+def _locator_looks_like_button_trigger(locator: str) -> bool:
+    """判断定位器是否更像按钮型 opener。"""
+    normalized = _normalize_step_locator(locator)
+    if not normalized:
+        return False
+    return bool(re.search(r"getByRole\((['\"])button\1", normalized))
+
+
+def _locator_looks_like_form_control(locator: str) -> bool:
+    """判断定位器是否更像弹窗或表单内部控件。"""
+    normalized = _normalize_step_locator(locator)
+    if not normalized:
+        return False
+
+    patterns = (
+        r"locator\((['\"])textarea\1\)",
+        r"locator\((['\"])(?:input|select)\1\)",
+        r"getByRole\((['\"])(?:textbox|combobox|spinbutton|checkbox|radio|switch)\1",
+        r"getByLabel\(",
+        r"getByPlaceholder\(",
+        r"getByDisplayValue\(",
+    )
+    return any(re.search(pattern, normalized) for pattern in patterns)
+
+
+def _find_next_meaningful_step(parsed_steps: list[dict], start_index: int) -> Optional[dict]:
+    """向后查找下一个真正参与业务判断的步骤，跳过等待和断言候选。"""
+    for index in range(start_index, len(parsed_steps)):
+        step = parsed_steps[index]["step"]
+        if step.get("action_type") in {"WAIT", "ASSERT_CANDIDATE"}:
+            continue
+        return parsed_steps[index]
+    return None
+
+
+def _should_collapse_duplicate_opener_click(
+    previous_step: dict,
+    current_step: dict,
+    next_meaningful_step: Optional[dict],
+) -> bool:
+    """
+    判断当前点击是否属于“冗余 opener 重复点击”。
+
+    只有当两次连续点击同一按钮型 opener，且后续步骤已经进入表单/弹窗内部交互时，
+    才允许在生成阶段折叠掉第二次点击，避免把录制噪声直接带进产物脚本。
+    """
+    if previous_step.get("action_type") != "CLICK" or current_step.get("action_type") != "CLICK":
+        return False
+
+    previous_locator = _normalize_step_locator(previous_step.get("locator", ""))
+    current_locator = _normalize_step_locator(current_step.get("locator", ""))
+    if not previous_locator or previous_locator != current_locator:
+        return False
+
+    if not _locator_looks_like_button_trigger(current_step.get("locator", "")):
+        return False
+
+    if not next_meaningful_step:
+        return False
+
+    next_action_type = (next_meaningful_step.get("action_type") or "").upper()
+    if next_action_type in {"INPUT", "SELECT", "KEY_PRESS"}:
+        return True
+
+    if next_action_type == "CLICK":
+        next_locator = next_meaningful_step.get("locator", "")
+        if _normalize_step_locator(next_locator) == current_locator:
+            return False
+        return _locator_looks_like_form_control(next_locator)
+
+    return False
+
+
+def _build_generation_projection(parsed_steps: list[dict]) -> tuple[list[dict], list[dict]]:
+    """基于原始步骤构建生成阶段使用的步骤序列和归一化说明。"""
+    kept_steps: list[dict] = []
+    normalization_items: list[dict] = []
+
+    for index, parsed_step in enumerate(parsed_steps):
+        current_step = parsed_step["step"]
+        previous_step = kept_steps[-1]["step"] if kept_steps else None
+        next_meaningful = _find_next_meaningful_step(parsed_steps, index + 1)
+
+        if previous_step and _should_collapse_duplicate_opener_click(
+            previous_step=previous_step,
+            current_step=current_step,
+            next_meaningful_step=next_meaningful["step"] if next_meaningful else None,
+        ):
+            normalization_items.append({
+                "type": "collapse_duplicate_opener_click",
+                "kept_raw_step_no": previous_step.get("step_no"),
+                "removed_raw_step_no": current_step.get("step_no"),
+                "locator": current_step.get("locator", ""),
+                "next_action_type": next_meaningful["step"].get("action_type") if next_meaningful else "",
+                "next_locator": next_meaningful["step"].get("locator", "") if next_meaningful else "",
+                "reason": "连续两次点击同一 opener，且后续已进入表单或弹窗内部交互，生成阶段仅保留第一次点击。",
+                "removed_statement_index": parsed_step["statement_index"],
+            })
+            continue
+
+        kept_steps.append(parsed_step)
+
+    generation_steps: list[dict] = []
+    for generation_step_no, parsed_step in enumerate(kept_steps, start=1):
+        raw_step = parsed_step["step"]
+        generation_steps.append({
+            "step_no": generation_step_no,
+            "raw_step_no": raw_step.get("step_no"),
+            "action_type": raw_step.get("action_type", ""),
+            "locator": raw_step.get("locator", ""),
+            "input_value": raw_step.get("input_value", ""),
+            "page_url": raw_step.get("page_url", ""),
+        })
+
+    return generation_steps, normalization_items
+
+
+def _build_generation_script_from_statements(
+    raw_script: str,
+    statements: list[str],
+    normalization_items: list[dict],
+) -> str:
+    """按归一化结果裁剪录制稿，生成供代码生成阶段使用的录制脚本。"""
+    removed_statement_indexes = {
+        item.get("removed_statement_index")
+        for item in normalization_items
+        if item.get("removed_statement_index") is not None
+    }
+    if not removed_statement_indexes:
+        return raw_script.strip()
+
+    kept_statements = [
+        statement
+        for index, statement in enumerate(statements)
+        if index not in removed_statement_indexes
+    ]
+    return "\n".join(kept_statements).strip()
+
+
+def build_generation_script_from_recording(raw_script: str, step_model: Optional[dict] = None) -> str:
+    """对外暴露生成阶段使用的归一化录制稿，供不同生成链路复用。"""
+    if step_model and step_model.get("generation_script"):
+        return step_model["generation_script"]
+
+    built_step_model = step_model or build_step_model_from_recording(raw_script)
+    generation_script = built_step_model.get("generation_script")
+    if generation_script:
+        return generation_script
+    return (raw_script or "").strip()
+
+
 
 def build_step_model_from_recording(raw_script: str) -> dict:
     """从录制脚本中构建结构化 step_model，并完整保留链式定位器。"""
     if not raw_script or not raw_script.strip():
-        return {"steps": [], "total_steps": 0}
+        return {
+            "steps": [],
+            "total_steps": 0,
+            "generation_steps": [],
+            "generation_total_steps": 0,
+            "normalization_items": [],
+            "generation_script": "",
+        }
 
-    steps: list[dict] = []
+    statements = _split_statements(raw_script)
+    parsed_steps: list[dict] = []
     step_no = 0
 
-    for statement in _split_statements(raw_script):
+    for statement_index, statement in enumerate(statements):
         stripped = statement.strip()
         if not stripped or stripped.startswith("import "):
             continue
@@ -504,24 +683,30 @@ def build_step_model_from_recording(raw_script: str) -> dict:
         goto_match = re.search(r"page\.goto\((?P<args>[\s\S]+?)\)\s*;?$", stripped)
         if goto_match:
             step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "NAVIGATE",
-                "locator": "",
-                "input_value": "",
-                "page_url": _parse_first_arg(goto_match.group("args")),
+            parsed_steps.append({
+                "statement_index": statement_index,
+                "step": {
+                    "step_no": step_no,
+                    "action_type": "NAVIGATE",
+                    "locator": "",
+                    "input_value": "",
+                    "page_url": _parse_first_arg(goto_match.group("args")),
+                },
             })
             continue
 
         wait_match = re.search(r"page\.waitFor(?:URL|LoadState)\((?P<args>[\s\S]+?)\)\s*;?$", stripped)
         if wait_match:
             step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "WAIT",
-                "locator": "",
-                "input_value": _parse_first_arg(wait_match.group("args")),
-                "page_url": "",
+            parsed_steps.append({
+                "statement_index": statement_index,
+                "step": {
+                    "step_no": step_no,
+                    "action_type": "WAIT",
+                    "locator": "",
+                    "input_value": _parse_first_arg(wait_match.group("args")),
+                    "page_url": "",
+                },
             })
             continue
 
@@ -546,12 +731,15 @@ def build_step_model_from_recording(raw_script: str) -> dict:
 
             if action_type:
                 step_no += 1
-                steps.append({
-                    "step_no": step_no,
-                    "action_type": action_type,
-                    "locator": _strip_page_prefix(locator),
-                    "input_value": _parse_first_arg(args_text),
-                    "page_url": "",
+                parsed_steps.append({
+                    "statement_index": statement_index,
+                    "step": {
+                        "step_no": step_no,
+                        "action_type": action_type,
+                        "locator": _strip_page_prefix(locator),
+                        "input_value": _parse_first_arg(args_text),
+                        "page_url": "",
+                    },
                 })
                 continue
 
@@ -566,17 +754,39 @@ def build_step_model_from_recording(raw_script: str) -> dict:
                     expect_target = match.group("target").strip()
 
             step_no += 1
-            steps.append({
-                "step_no": step_no,
-                "action_type": "ASSERT_CANDIDATE",
-                "locator": expect_target,
-                "input_value": "",
-                "page_url": "",
+            parsed_steps.append({
+                "statement_index": statement_index,
+                "step": {
+                    "step_no": step_no,
+                    "action_type": "ASSERT_CANDIDATE",
+                    "locator": expect_target,
+                    "input_value": "",
+                    "page_url": "",
+                },
             })
+
+    steps = [parsed_step["step"] for parsed_step in parsed_steps]
+    generation_steps, normalization_items = _build_generation_projection(parsed_steps)
+    generation_script = _build_generation_script_from_statements(
+        raw_script=raw_script,
+        statements=statements,
+        normalization_items=normalization_items,
+    )
 
     return {
         "steps": steps,
         "total_steps": len(steps),
+        "generation_steps": generation_steps,
+        "generation_total_steps": len(generation_steps),
+        "normalization_items": [
+            {
+                key: value
+                for key, value in item.items()
+                if key != "removed_statement_index"
+            }
+            for item in normalization_items
+        ],
+        "generation_script": generation_script,
     }
 
 

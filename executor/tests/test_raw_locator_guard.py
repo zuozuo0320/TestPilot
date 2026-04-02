@@ -48,6 +48,44 @@ test('test', async ({ page }) => {
         self.assertEqual(result["steps"][6]["action_type"], "INPUT")
         self.assertEqual(result["steps"][6]["input_value"], "北京华顺信安")
 
+    def test_build_step_model_collapses_duplicate_opener_click_for_generation(self) -> None:
+        """生成阶段应折叠重复的按钮型 opener 点击，但原始步骤仍需完整保留。"""
+        raw_script = """test('test', async ({ page }) => {
+  await page.getByRole('button', { name: '新建任务' }).click();
+  await page.getByRole('button', { name: '新建任务' }).click();
+  await page.locator('textarea').fill('10.10.10.200');
+});"""
+
+        result = build_step_model_from_recording(raw_script)
+
+        self.assertEqual(result["total_steps"], 3)
+        self.assertEqual(result["generation_total_steps"], 2)
+        self.assertEqual(len(result["normalization_items"]), 1)
+        self.assertEqual(
+            result["normalization_items"][0]["type"],
+            "collapse_duplicate_opener_click",
+        )
+        self.assertEqual(result["generation_steps"][0]["raw_step_no"], 1)
+        self.assertEqual(result["generation_steps"][1]["raw_step_no"], 3)
+        self.assertEqual(
+            result["generation_script"].count("getByRole('button', { name: '新建任务' }).click()"),
+            1,
+        )
+
+    def test_build_step_model_keeps_duplicate_textbox_clicks(self) -> None:
+        """文本框等非按钮控件的重复点击不应被误判为 opener 去重。"""
+        raw_script = """test('test', async ({ page }) => {
+  await page.getByRole('textbox', { name: '请输入企业名称进行搜索' }).click();
+  await page.getByRole('textbox', { name: '请输入企业名称进行搜索' }).click();
+  await page.getByRole('textbox', { name: '请输入企业名称进行搜索' }).fill('北京华顺信安');
+});"""
+
+        result = build_step_model_from_recording(raw_script)
+
+        self.assertEqual(result["total_steps"], 3)
+        self.assertEqual(result["generation_total_steps"], 3)
+        self.assertEqual(result["normalization_items"], [])
+
     def test_validate_locator_preservation_blocks_rewritten_role_locator(self) -> None:
         """应当识别 LLM 把录制稿中的 getByRole 文本改写为错误值的情况。"""
         raw_script = """test('test', async ({ page }) => {

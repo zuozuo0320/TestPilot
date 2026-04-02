@@ -1330,6 +1330,17 @@ export default defineConfig({
 }
 ```
 
+其中 `step_model_json` 的最小约束需要升级为“原始步骤 + 生成步骤”双视角：
+- `steps`：原始录制步骤，完整保留录制顺序，供追溯、审计、回放时间线展示。
+- `generation_steps`：平台归一化后的生成步骤，供 LLM 与代码生成链路作为唯一业务动作序列使用。
+- `normalization_items`：平台显式执行过的归一化动作清单。当前首个固定规则为 `collapse_duplicate_opener_click`，用于折叠“第一次点击已打开弹窗/抽屉/表单，但录制稿里又连续点了第二次同 opener”的冗余点击。
+- `generation_script`：基于 `generation_steps` 裁剪后的生成用录制稿，要求严格复用原始录制中的 locator，不允许改写 locator，只允许去掉 `normalization_items` 明确标记的冗余步骤。
+
+生成链路必须遵守：
+- `raw_script` 只作为原始定位器来源与追溯依据。
+- 当 `steps` 与 `generation_steps` 不一致时，代码生成必须以 `generation_steps` 和 `generation_script` 为准。
+- 除 `normalization_items` 明确允许的归一化外，LLM 不得额外删除、补发明或重排业务动作。
+
 建议的响应结构如下：
 
 ```json

@@ -14,12 +14,14 @@ v1_generation_pipeline.py — V1 多文件生成管线
 import json
 import logging
 import os
+import re
 from typing import Optional
 
 from project_workspace import ProjectScope, resolve_project_scope, ensure_project_ready, compute_file_hash
 from page_registry import PageRegistry
 from fixture_builder import write_base_fixture
 from raw_locator_guard import (
+    build_generation_script_from_recording,
     validate_v1_critical_locator_coverage,
     validate_v1_locator_preservation,
     validate_v1_url_semantics_preservation,
@@ -99,6 +101,56 @@ def run_v1_pipeline(
             "script_content": "",
             "generation_summary": "V1 生成失败：LLM 返回为空",
             "error_message": "V1 LLM 调用失败",
+        }
+
+    text_integrity_guard_result = _validate_generated_text_integrity(llm_result)
+    if text_integrity_guard_result.get("manual_review_items"):
+        llm_result["manual_review_items"] = _dedupe_items(
+            llm_result.get("manual_review_items", []) + text_integrity_guard_result["manual_review_items"]
+        )
+        llm_result["risk_hints"] = _dedupe_items(
+            llm_result.get("risk_hints", []) + [
+                f"检测到 {len(text_integrity_guard_result.get('corrupted_fields', []))} 处疑似编码损坏输出，已阻止写入工作区"
+            ]
+        )
+        llm_result["text_integrity_guard_result"] = text_integrity_guard_result
+        logger.warning(
+            "[v1-pipeline] 文本完整性守卫发现 %s 个问题，已阻止写入",
+            len(text_integrity_guard_result["manual_review_items"]),
+        )
+        return {
+            "success": False,
+            "script_content": "",
+            "generation_summary": "V1 生成失败：文本完整性守卫拦截了疑似乱码输出",
+            "error_message": "检测到生成结果存在乱码占位符字符 U+FFFD，已阻止写入工作区",
+            "risk_hints": llm_result.get("risk_hints", []),
+            "manual_review_items": llm_result.get("manual_review_items", []),
+            "text_integrity_guard_result": text_integrity_guard_result,
+        }
+
+    shared_navigation_guard_result = _validate_shared_navigation_boundary(llm_result, registry)
+    if shared_navigation_guard_result.get("manual_review_items"):
+        llm_result["manual_review_items"] = _dedupe_items(
+            llm_result.get("manual_review_items", []) + shared_navigation_guard_result["manual_review_items"]
+        )
+        llm_result["risk_hints"] = _dedupe_items(
+            llm_result.get("risk_hints", []) + [
+                f"检测到 {len(shared_navigation_guard_result.get('violations', []))} 处共享导航越界输出，已阻止写入工作区"
+            ]
+        )
+        llm_result["shared_navigation_guard_result"] = shared_navigation_guard_result
+        logger.warning(
+            "[v1-pipeline] 共享导航边界守卫发现 %s 个问题，已阻止写入",
+            len(shared_navigation_guard_result["manual_review_items"]),
+        )
+        return {
+            "success": False,
+            "script_content": "",
+            "generation_summary": "V1 生成失败：共享导航边界守卫拦截了越界的业务页面导航输出",
+            "error_message": "检测到 LLM 将共享导航逻辑错误写入业务 Page Object，已阻止写入工作区",
+            "risk_hints": llm_result.get("risk_hints", []),
+            "manual_review_items": llm_result.get("manual_review_items", []),
+            "shared_navigation_guard_result": shared_navigation_guard_result,
         }
 
     locator_guard_result = validate_v1_locator_preservation(raw_script=raw_script, llm_result=llm_result)
@@ -206,6 +258,9 @@ def _build_v1_system_prompt(
         logger.error("[v1-pipeline] V1 prompt 模板加载失败")
         return ""
 
+    generation_script = build_generation_script_from_recording(raw_script, step_model_json)
+    normalization_items = (step_model_json or {}).get("normalization_items") or []
+
     # 替换占位符
     prompt = template
     prompt = prompt.replace("{{PROJECT_SCOPE}}", json.dumps(scope.to_dict(), ensure_ascii=False, indent=2))
@@ -213,6 +268,33 @@ def _build_v1_system_prompt(
     prompt = prompt.replace("{{RAW_SCRIPT}}", raw_script)
     prompt = prompt.replace("{{STEP_MODEL}}", json.dumps(step_model_json or {}, ensure_ascii=False, indent=2))
     prompt = prompt.replace("{{SCENARIO_DESC}}", scenario_desc)
+
+    prompt += """
+
+## 生成阶段补充规则（高优先级）
+- `raw_script` 只作为原始定位器来源与追溯依据。
+- 若 `step_model_json.steps` 与 `step_model_json.generation_steps` 不一致，代码生成必须以 `generation_steps` 为准。
+- 若 `normalization_items` 中存在 `collapse_duplicate_opener_click`，不得把被折叠的第二次 opener 点击再次写入最终产物；可以改为等待后续真实控件可见，或直接进入下一步真实业务动作。
+- 除平台显式标记的归一化外，不得改变业务动作顺序。
+"""
+
+    if generation_script and generation_script.strip() and generation_script.strip() != raw_script.strip():
+        prompt += f"""
+
+## 生成用归一化录制稿
+```typescript
+{generation_script}
+```
+"""
+
+    if normalization_items:
+        prompt += f"""
+
+## 归一化说明
+```json
+{json.dumps(normalization_items, ensure_ascii=False, indent=2)}
+```
+"""
 
     return prompt
 
@@ -225,14 +307,19 @@ def _build_v1_user_prompt(
     account_ref: Optional[str],
 ) -> str:
     """构建 user prompt"""
+    normalization_items = (step_model_json or {}).get("normalization_items") or []
+    has_generation_projection = bool((step_model_json or {}).get("generation_steps"))
     parts = [
         "请根据以上规则，将原始录制脚本重构为 V1 工程化输出。",
         "严格约束：LLM 只允许做 POM 结构化组织，不允许修改、简化、替换任何原始定位器。",
         "如果需要新增 locator 定义，必须直接复用 raw_script 中已出现过的完整 locator chain。",
+        "若步骤模型同时存在 `steps` 与 `generation_steps`，请以 `generation_steps` 作为生成阶段的业务动作序列。",
         "所有新增类、方法和关键逻辑都必须补充中文注释或中文 JSDoc。",
         f"\n场景描述: {scenario_desc}",
         f"起始 URL: {start_url}",
     ]
+    if has_generation_projection and normalization_items:
+        parts.append("平台已识别到冗余 opener 重复点击，请不要再输出被折叠的第二次点击。")
     if account_ref:
         parts.append(f"测试账号参考: {account_ref}")
 
@@ -480,6 +567,176 @@ def _dedupe_items(items: list[str]) -> list[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _validate_generated_text_integrity(llm_result: dict) -> dict:
+    """
+    检查 LLM 输出中是否已经出现 U+FFFD 乱码占位符。
+
+    一旦出现该字符，说明文本在某个环节被错误解码或模型直接输出了坏字符。
+    这类内容继续落盘后，最容易导致中文文本定位器全部失效，因此这里直接拦截。
+    """
+    corrupted_fields: list[dict[str, str]] = []
+
+    def check_text(field_path: str, text: str) -> None:
+        if "\ufffd" not in (text or ""):
+            return
+        corrupted_fields.append({
+            "field": field_path,
+            "reason": "包含乱码占位符字符 U+FFFD",
+        })
+
+    spec_file = llm_result.get("spec_file") or {}
+    check_text(f"spec_file({spec_file.get('path', 'unknown')}).content", spec_file.get("content", ""))
+
+    for page_create in llm_result.get("page_creates", []):
+        page_path = page_create.get("path", page_create.get("class_name", "unknown"))
+        check_text(f"page_create({page_path}).content", page_create.get("content", ""))
+
+    for page_update in llm_result.get("page_updates", []):
+        page_name = page_update.get("page_name", "unknown")
+
+        for locator_item in page_update.get("new_locators", []):
+            locator_name = locator_item.get("name", "unknown")
+            check_text(
+                f"page_update({page_name}).new_locators[{locator_name}].definition",
+                locator_item.get("definition", ""),
+            )
+
+        for action_item in page_update.get("new_actions", []):
+            action_name = action_item.get("name", "unknown")
+            check_text(
+                f"page_update({page_name}).new_actions[{action_name}].content",
+                action_item.get("content", ""),
+            )
+
+        for action_item in page_update.get("extend_actions", []):
+            action_name = action_item.get("name", "unknown")
+            check_text(
+                f"page_update({page_name}).extend_actions[{action_name}].content",
+                action_item.get("content", ""),
+            )
+
+    manual_review_items = [
+        f"{item['field']} 出现乱码占位符字符 U+FFFD，疑似编码损坏"
+        for item in corrupted_fields
+    ]
+
+    return {
+        "corrupted_fields": corrupted_fields,
+        "manual_review_items": _dedupe_items(manual_review_items),
+    }
+
+
+def _validate_shared_navigation_boundary(llm_result: dict, registry: PageRegistry) -> dict:
+    """
+    校验共享导航边界，禁止把菜单/导航/面包屑这类共享能力写入 BusinessPage。
+
+    这类逻辑应该统一沉淀在 NavigationPage 中。
+    如果业务页面继续承载共享导航 locator/action，就很容易在不同项目里重复生成
+    隐藏节点误点、菜单副本冲突、维护成本高等问题。
+    """
+    shared_page_names = set(registry.shared.keys()) | {"NavigationPage", "DialogPage", "ToastPage", "LoginPage"}
+    violations: list[dict[str, str]] = []
+    keyword_pattern = re.compile(r"(menu|nav|navigation|breadcrumb|菜单|导航|面包屑)", re.IGNORECASE)
+
+    def is_business_page(page_name: str) -> bool:
+        return bool(page_name) and page_name not in shared_page_names
+
+    def add_violation(source: str, reason: str) -> None:
+        violations.append({
+            "source": source,
+            "reason": reason,
+        })
+
+    def has_shared_navigation_keyword(*values: str) -> bool:
+        return any(keyword_pattern.search(value or "") for value in values)
+
+    for page_update in llm_result.get("page_updates", []):
+        page_name = page_update.get("page_name", "")
+        if not is_business_page(page_name):
+            continue
+
+        for locator_item in page_update.get("new_locators", []):
+            locator_name = locator_item.get("name", "")
+            locator_summary = locator_item.get("summary", "")
+            if has_shared_navigation_keyword(locator_name, locator_summary):
+                add_violation(
+                    f"page_update({page_name}).new_locators[{locator_name or 'unknown'}]",
+                    "BusinessPage 不应新增共享菜单/导航/面包屑 locator，请改用 NavigationPage",
+                )
+
+        for action_item in page_update.get("new_actions", []):
+            action_name = action_item.get("name", "")
+            action_summary = action_item.get("summary", "")
+            if has_shared_navigation_keyword(action_name, action_summary):
+                add_violation(
+                    f"page_update({page_name}).new_actions[{action_name or 'unknown'}]",
+                    "BusinessPage 不应新增共享菜单/导航/面包屑 action，请改用 NavigationPage",
+                )
+
+        for action_item in page_update.get("extend_actions", []):
+            action_name = action_item.get("name", "")
+            action_summary = action_item.get("summary", "")
+            if has_shared_navigation_keyword(action_name, action_summary):
+                add_violation(
+                    f"page_update({page_name}).extend_actions[{action_name or 'unknown'}]",
+                    "BusinessPage 不应扩展为共享菜单/导航/面包屑 action，请改用 NavigationPage",
+                )
+
+    for page_create in llm_result.get("page_creates", []):
+        class_name = page_create.get("class_name", "")
+        if not is_business_page(class_name):
+            continue
+
+        content = page_create.get("content", "")
+        suspicious_matches = re.findall(
+            r"readonly\s+([A-Za-z0-9_]*(?:Menu|Nav|Navigation|Breadcrumb)[A-Za-z0-9_]*)\s*:\s*Locator",
+            content,
+            flags=re.IGNORECASE,
+        )
+        for match in suspicious_matches:
+            add_violation(
+                f"page_create({class_name}).locator[{match}]",
+                "BusinessPage 不应定义共享菜单/导航/面包屑 locator，请改用 NavigationPage",
+            )
+
+        comment_matches = re.findall(r"/\*\*([\s\S]*?)\*/", content)
+        for comment in comment_matches:
+            if has_shared_navigation_keyword(comment):
+                add_violation(
+                    f"page_create({class_name}).comment",
+                    "BusinessPage 注释中出现共享菜单/导航/面包屑职责，疑似边界越界",
+                )
+                break
+
+    for page_name, update_data in (llm_result.get("registry_updates") or {}).items():
+        if not is_business_page(page_name):
+            continue
+
+        for locator_name in (update_data.get("locators") or {}).keys():
+            if has_shared_navigation_keyword(locator_name):
+                add_violation(
+                    f"registry_updates({page_name}).locators[{locator_name}]",
+                    "BusinessPage registry 不应登记共享菜单/导航/面包屑 locator",
+                )
+
+        for action_name in (update_data.get("actions") or {}).keys():
+            if has_shared_navigation_keyword(action_name):
+                add_violation(
+                    f"registry_updates({page_name}).actions[{action_name}]",
+                    "BusinessPage registry 不应登记共享菜单/导航/面包屑 action",
+                )
+
+    manual_review_items = [
+        f"{item['source']}：{item['reason']}"
+        for item in violations
+    ]
+
+    return {
+        "violations": violations,
+        "manual_review_items": _dedupe_items(manual_review_items),
+    }
 
 
 def _build_response(

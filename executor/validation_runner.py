@@ -409,6 +409,68 @@ def _find_matching_spec(workspace_root: Path, script_content: str, task_id: int,
     return spec_path
 
 
+def _detect_workspace_preflight_issues(workspace_root: Path) -> list[str]:
+    """扫描项目工作区中明显损坏的生成物，提前给出可定位的错误原因。"""
+    issues: list[str] = []
+    pages_dir = workspace_root / "pages"
+    tests_dir = workspace_root / "tests"
+
+    ts_files: list[Path] = []
+    if pages_dir.exists():
+        ts_files.extend(pages_dir.rglob("*.ts"))
+    if tests_dir.exists():
+        ts_files.extend(tests_dir.rglob("*.ts"))
+
+    shared_boundary_pattern = re.compile(
+        r"readonly\s+[A-Za-z0-9_]*(?:Menu|Nav|Navigation|Breadcrumb)[A-Za-z0-9_]*\s*:\s*Locator",
+        re.IGNORECASE,
+    )
+
+    for file_path in ts_files:
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            issues.append(f"{file_path.relative_to(workspace_root)} 读取失败: {exc}")
+            continue
+
+        if "\ufffd" in content:
+            issues.append(
+                f"{file_path.relative_to(workspace_root)} 包含乱码占位符字符 U+FFFD，疑似生成阶段编码损坏"
+            )
+
+        # 只对业务页面做共享导航越界检查，shared 页面允许存在这些能力。
+        if file_path.is_relative_to(pages_dir / "shared"):
+            continue
+        if file_path.parent != pages_dir:
+            continue
+
+        if shared_boundary_pattern.search(content):
+            issues.append(
+                f"{file_path.relative_to(workspace_root)} 在 BusinessPage 中定义了共享菜单/导航/面包屑 locator"
+            )
+
+    return issues
+
+
+def _build_preflight_failure(start_time: float, issues: list[str]) -> dict:
+    """构建工作区预检失败结果，避免继续执行误导性的 Playwright 点击超时。"""
+    duration_ms = int((time.time() - start_time) * 1000)
+    fail_reason = "；".join(issues[:3])
+    logs = [{"level": "ERROR", "message": issue} for issue in issues[:20]]
+    return {
+        "success": False,
+        "total_step_count": 0,
+        "passed_step_count": 0,
+        "failed_step_no": None,
+        "fail_reason": fail_reason,
+        "assertion_summary": [],
+        "duration_ms": duration_ms,
+        "logs": logs,
+        "screenshots": [],
+        "error_message": fail_reason,
+    }
+
+
 def _run_v1_project_validation(
     task_id: int,
     script_version_id: int,
@@ -450,6 +512,12 @@ def _run_v1_project_validation(
 
     # 对历史项目做一次运行期文件补齐，避免 registry 升级后缺失内置 shared 模板文件。
     sync_workspace_support_files(str(workspace_root))
+
+    # 预检生成物完整性，避免把生成阶段的问题误判为 Playwright 元素定位失败。
+    preflight_issues = _detect_workspace_preflight_issues(workspace_root)
+    if preflight_issues:
+        logger.error("[v1-validation] 工作区预检失败: %s", " | ".join(preflight_issues[:5]))
+        return _build_preflight_failure(start_time, preflight_issues)
     
     # 确保 node_modules 已安装
     node_modules = workspace_root / "node_modules"

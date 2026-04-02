@@ -56,6 +56,11 @@ type finishRecordingRequest struct {
 	TriggerAIRefactor bool   `json:"trigger_ai_refactor"`
 }
 
+type failRecordingRequest struct {
+	RecordingID uint   `json:"recording_id" binding:"required,min=1"`
+	Reason      string `json:"reason" binding:"required,min=1,max=2000"`
+}
+
 type updateTaskCasesRequest struct {
 	CaseIDs []uint `json:"case_ids" binding:"required,min=1"`
 }
@@ -408,6 +413,27 @@ func (a *API) finishRecording(c *gin.Context) {
 }
 
 // getLatestRecording 获取最近录制结果
+// failRecording 标记录制失败，避免异常会话长期卡在 RECORDING。
+func (a *API) failRecording(c *gin.Context) {
+	user := currentUser(c)
+	taskID, ok := parseUintParam(c, "taskID")
+	if !ok {
+		return
+	}
+
+	var req failRecordingRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+
+	if err := a.aiScriptSvc.FailRecording(c.Request.Context(), user.ID, taskID, req.RecordingID, req.Reason); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+
+	response.OK(c, gin.H{"message": "recording failed"})
+}
+
 func (a *API) getLatestRecording(c *gin.Context) {
 	taskID, ok := parseUintParam(c, "taskID")
 	if !ok {

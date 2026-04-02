@@ -60,6 +60,12 @@
 - 通用消息提示 → ToastPage
 - 公共导航跳转 → NavigationPage
 
+#### 1.5 菜单导航归属（关键规则）
+- 左侧菜单、顶部导航、模块切换这类共享导航动作，优先归属 `NavigationPage`
+- 如果 raw_script 中只是通过菜单进入某个业务页面，**优先在 spec 中调用** `navigationPage.goToMenu()` / `navigationPage.goToMenuPath()`
+- **不要**为了点击共享菜单，在 BusinessPage 中新增 `taskManagementMenuSpan`、`assetDiscoveryMenuText` 这类共享导航 locator，除非该菜单交互带有明确业务语义且无法由 `NavigationPage` 承担
+- 如果页面中存在同名隐藏节点或折叠菜单副本，导航实现必须优先命中**可见的菜单触发节点**，不要直接点击任意 `getByText()` 命中的第一个副本
+
 ### 2. Create / Update 规则
 
 #### 2.1 支持的 5 类操作
