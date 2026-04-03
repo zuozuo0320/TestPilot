@@ -16,14 +16,15 @@
 
 当前 README 推荐的开发部署方式是：
 
-- `MySQL`、`Redis` 通过 Docker Compose 启动。
-- Go 后端、Python Executor、Vue 前端在本机启动，便于调试与热更新。
-- 如需验证容器化后端，也可以额外执行 `docker compose --env-file .env up --build -d app`，但 Executor 仍建议本机独立启动。
+- `app`、`MySQL`、`Redis` 统一通过 `TestPilot/docker-compose.yml` 启动。
+- `Python Executor`、`Vue 前端` 保持本机启动，便于录制窗口调试与前端热更新。
+- 不再推荐单独运行 `go run ./cmd/server`、`.\testpilot.exe` 等本地 Go 后端进程。
 
 补充说明：
 
-- 关闭启动 Go 后端、Executor、Vite 的 PowerShell 窗口，会直接结束这些本机前台进程；只有 Docker 容器里的服务会继续运行。
-- 默认推荐的调试形态是“`mysql/redis/app` 可容器化，`executor/front` 本机运行”；这样录制窗口、Playwright 验证和前端热更新更稳定，排障也更直接。
+- 关闭启动 Executor、Vite 的 PowerShell 窗口，会直接结束这些本机前台进程；Docker 容器里的 `app/mysql/redis` 会继续运行。
+- 默认推荐的调试形态固定为“`app/mysql/redis` 容器运行，`executor/front` 本机运行”；这样录制窗口、Playwright 验证和前端热更新更稳定，排障也更直接。
+- 如在 Codex 中协作，推荐直接使用一键启动脚本或 skill，不要临时改回本地 Go 后端。
 
 ### 环境要求
 
@@ -34,31 +35,32 @@
 | Node.js | 20+ | 前端 + Playwright |
 | Docker | 24+ | MySQL 8.4 / Redis 7.4 |
 
-### Step 0 — 启动基础设施（MySQL + Redis）
+### Step 0 — 一键启动推荐方式
+
+推荐优先使用一键脚本：
 
 ```powershell
-# 在项目根目录执行，使用 .env 中的配置启动容器
-docker compose --env-file .env up -d mysql redis
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\ai_project\.agents\skills\start-testpilot-services\scripts\start-services.ps1
+```
 
-# 等待健康检查通过（约 10-15 秒）
+如果只想检查当前环境状态：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\ai_project\.agents\skills\start-testpilot-services\scripts\check-services.ps1
+```
+
+### Step 1 — 启动容器后端（app + MySQL + Redis）
+
+```powershell
+# 在 TestPilot 目录执行，使用固定 compose 文件启动容器
+docker compose -f docker-compose.yml --env-file .env up -d app mysql redis
+
+# 等待健康检查通过（约 10-20 秒）
 docker compose ps   # STATUS 列应显示 healthy
 ```
 
 > MySQL 默认账号 `testpilot / testpilot`，数据库 `testpilot`，端口 `3306`
 > Redis 无密码，端口 `6379`
-
-### Step 1 — 启动 Go 后端（端口 8080）
-
-```powershell
-# 在项目根目录执行
-$env:EXECUTOR_URL = "http://127.0.0.1:8100"
-go run ./cmd/server
-
-# 或直接运行预编译二进制
-.\testpilot.exe
-```
-
-首次启动会自动执行 SQL 迁移和种子数据初始化（`AUTO_SEED=true`）。
 
 ### Step 2 — 启动 Python Executor（端口 8100）
 
@@ -121,7 +123,7 @@ npm run dev          # 启动 Vite 开发服务器
 | 服务 | 地址 | 默认启动方式 | 说明 |
 |------|------|--------------|------|
 | 前端 | http://localhost:5173 | 本机前台进程 | Vue 3 + Vite HMR |
-| 后端 API | http://localhost:8080 | 本机前台进程或 `app` 容器 | Go Gin RESTful API |
+| 后端 API | http://localhost:8080 | `app` 容器 | Go Gin RESTful API |
 | Executor | http://localhost:8100 | 本机前台进程 | Python FastAPI + AI 引擎 |
 | MySQL | localhost:3306 | Docker 容器 | 基础数据库 |
 | Redis | localhost:6379 | Docker 容器 | 缓存与队列依赖 |
@@ -147,8 +149,8 @@ curl http://localhost:8100/health
 | `.venv` 目录不存在 | 执行 `py -m venv .venv` 创建虚拟环境 |
 | Executor 启动报 `OPENAI_API_KEY` 缺失 | 在 `executor/.env` 中配置有效的 API Key |
 | Executor 启动后模型地址不生效 | 检查变量名是否为 `OPENAI_BASE_URL`，不是 `OPENAI_API_BASE` |
-| MySQL 连接失败 | 确认 Docker 容器已启动：`docker compose ps` |
-| 后端找不到 Executor | 确保设置了 `$env:EXECUTOR_URL = "http://127.0.0.1:8100"` |
+| MySQL 连接失败 | 确认 `app/mysql/redis` 已通过 `docker compose -f docker-compose.yml --env-file .env up -d app mysql redis` 启动 |
+| 后端健康检查失败 | 先看 `docker compose ps`，再看 `docker compose logs --tail 120 app` |
 | 首次 V1 重构或验证等待较久 | 这是项目工作区或 `ast_merger` 首次自动安装依赖，可提前执行 `npm install` 预热 |
 
 ### 默认账号

@@ -184,6 +184,8 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	// 任务
 	aiScript.GET("/tasks", a.listAIScriptTasks)
 	aiScript.POST("/tasks", a.createAIScriptTask)
+	aiScript.POST("/tasks/batch-discard", a.batchDiscardTasks)
+	aiScript.POST("/tasks/batch-delete", a.batchDeleteTasks)
 	aiScript.GET("/tasks/:taskID", a.getAIScriptTask)
 	aiScript.POST("/tasks/:taskID/execute", a.executeAIScriptTask)
 	aiScript.POST("/tasks/:taskID/discard", a.discardTask)

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"testpilot/internal/dto/response"
+	"testpilot/internal/model"
 	"testpilot/internal/service"
 )
 
@@ -43,6 +44,25 @@ type discardScriptRequest struct {
 }
 
 type discardTaskRequest struct {
+	Reason string `json:"reason" binding:"required,max=255"`
+}
+
+type taskFilterSnapshotRequest struct {
+	ProjectID  uint   `json:"project_id"`
+	Keyword    string `json:"keyword" binding:"omitempty,max=255"`
+	TaskStatus string `json:"task_status" binding:"omitempty,max=32"`
+}
+
+type batchTaskSelectionRequest struct {
+	SelectionMode   string                     `json:"selection_mode" binding:"required,oneof=IDS FILTER_ALL"`
+	TaskIDs         []uint                     `json:"task_ids"`
+	ExcludedTaskIDs []uint                     `json:"excluded_task_ids"`
+	FilterSnapshot  *taskFilterSnapshotRequest `json:"filter_snapshot"`
+	ExpectedTotal   int                        `json:"expected_total" binding:"omitempty,min=0"`
+}
+
+type batchDiscardTasksRequest struct {
+	batchTaskSelectionRequest
 	Reason string `json:"reason" binding:"required,max=255"`
 }
 
@@ -323,6 +343,9 @@ func (a *API) discardScript(c *gin.Context) {
 // discardTask 废弃任务
 func (a *API) discardTask(c *gin.Context) {
 	user := currentUser(c)
+	if !requireRole(c, user, model.GlobalRoleManager) {
+		return
+	}
 	taskID, ok := parseUintParam(c, "taskID")
 	if !ok {
 		return
@@ -340,9 +363,37 @@ func (a *API) discardTask(c *gin.Context) {
 	response.OK(c, gin.H{"message": "任务已废弃"})
 }
 
+// batchDiscardTasks 批量废弃任务。
+func (a *API) batchDiscardTasks(c *gin.Context) {
+	user := currentUser(c)
+	if !requireRole(c, user, model.GlobalRoleManager) {
+		return
+	}
+
+	var req batchDiscardTasksRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+
+	input := service.BatchDiscardTasksInput{
+		BatchTaskSelectionInput: buildBatchTaskSelectionInput(req.batchTaskSelectionRequest),
+		Reason:                  req.Reason,
+	}
+
+	result, err := a.aiScriptSvc.BatchDiscardTasks(c.Request.Context(), user.ID, input)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
 // deleteTask 删除已废弃任务
 func (a *API) deleteTask(c *gin.Context) {
 	user := currentUser(c)
+	if !requireRole(c, user, model.GlobalRoleManager) {
+		return
+	}
 	taskID, ok := parseUintParam(c, "taskID")
 	if !ok {
 		return
@@ -353,6 +404,50 @@ func (a *API) deleteTask(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"message": "任务已删除"})
+}
+
+// batchDeleteTasks 批量删除任务。
+func (a *API) batchDeleteTasks(c *gin.Context) {
+	user := currentUser(c)
+	if !requireRole(c, user, model.GlobalRoleManager) {
+		return
+	}
+
+	var req batchTaskSelectionRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+
+	result, err := a.aiScriptSvc.BatchDeleteTasks(
+		c.Request.Context(),
+		user.ID,
+		buildBatchTaskSelectionInput(req),
+	)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
+// buildBatchTaskSelectionInput 将 HTTP 请求结构转换为 Service 层输入。
+func buildBatchTaskSelectionInput(req batchTaskSelectionRequest) service.BatchTaskSelectionInput {
+	var filterSnapshot *service.TaskFilterSnapshot
+	if req.FilterSnapshot != nil {
+		filterSnapshot = &service.TaskFilterSnapshot{
+			ProjectID:  req.FilterSnapshot.ProjectID,
+			Keyword:    req.FilterSnapshot.Keyword,
+			TaskStatus: req.FilterSnapshot.TaskStatus,
+		}
+	}
+
+	return service.BatchTaskSelectionInput{
+		SelectionMode:   service.BatchTaskSelectionMode(req.SelectionMode),
+		TaskIDs:         req.TaskIDs,
+		ExcludedTaskIDs: req.ExcludedTaskIDs,
+		FilterSnapshot:  filterSnapshot,
+		ExpectedTotal:   req.ExpectedTotal,
+	}
 }
 
 // cloneTask 克隆任务配置

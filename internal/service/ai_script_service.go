@@ -124,6 +124,54 @@ type CreateTaskInput struct {
 	FrameworkType  string `json:"framework_type"`
 }
 
+// BatchTaskSelectionMode 表示批量任务选择模型。
+type BatchTaskSelectionMode string
+
+const (
+	// BatchTaskSelectionModeIDs 表示按显式勾选的任务 ID 集合执行批量操作。
+	BatchTaskSelectionModeIDs BatchTaskSelectionMode = "IDS"
+	// BatchTaskSelectionModeFilterAll 表示按当前筛选结果全选执行批量操作。
+	BatchTaskSelectionModeFilterAll BatchTaskSelectionMode = "FILTER_ALL"
+)
+
+// TaskFilterSnapshot 表示任务列表的筛选快照。
+type TaskFilterSnapshot struct {
+	ProjectID  uint   `json:"project_id"`
+	Keyword    string `json:"keyword"`
+	TaskStatus string `json:"task_status"`
+}
+
+// BatchTaskSelectionInput 表示批量任务操作的统一选择输入。
+type BatchTaskSelectionInput struct {
+	SelectionMode   BatchTaskSelectionMode `json:"selection_mode"`
+	TaskIDs         []uint                 `json:"task_ids"`
+	ExcludedTaskIDs []uint                 `json:"excluded_task_ids"`
+	FilterSnapshot  *TaskFilterSnapshot    `json:"filter_snapshot"`
+	ExpectedTotal   int                    `json:"expected_total"`
+}
+
+// BatchDiscardTasksInput 表示批量废弃任务的输入。
+type BatchDiscardTasksInput struct {
+	BatchTaskSelectionInput
+	Reason string `json:"reason"`
+}
+
+// BatchTaskActionReasonStat 表示批量操作原因聚合统计。
+type BatchTaskActionReasonStat struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
+// BatchTaskActionResult 表示批量操作的处理结果摘要。
+type BatchTaskActionResult struct {
+	Matched       int                         `json:"matched"`
+	Success       int                         `json:"success"`
+	Skipped       int                         `json:"skipped"`
+	Failed        int                         `json:"failed"`
+	SkipReasons   []BatchTaskActionReasonStat `json:"skip_reasons,omitempty"`
+	FailedReasons []BatchTaskActionReasonStat `json:"failed_reasons,omitempty"`
+}
+
 // ExecutorGenerateRequest 发送给 Python 执行服务的生成请求
 type ExecutorGenerateRequest struct {
 	TaskID       uint   `json:"task_id"`
@@ -1052,6 +1100,14 @@ func (s *AIScriptService) DiscardScript(ctx context.Context, userID, scriptID ui
 
 // DiscardTask 废弃任务
 func (s *AIScriptService) DiscardTask(ctx context.Context, userID, taskID uint, reason string) error {
+	if err := s.ensureTaskManagePermission(ctx, userID); err != nil {
+		return err
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ErrBadRequest("AI_SCRIPT_4001", "废弃原因不能为空")
+	}
+
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1062,10 +1118,14 @@ func (s *AIScriptService) DiscardTask(ctx context.Context, userID, taskID uint, 
 	if task.TaskStatus == model.AITaskStatusDiscarded {
 		return ErrConflict("AI_SCRIPT_4005", "任务已废弃，不可重复操作")
 	}
+	if !canDiscardTaskStatus(task.TaskStatus) {
+		return ErrConflict("AI_SCRIPT_4005", fmt.Sprintf("当前状态 %s 不允许废弃", task.TaskStatus))
+	}
 
 	if err := s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
 		"task_status":    model.AITaskStatusDiscarded,
 		"discard_reason": reason,
+		"updated_by":     userID,
 	}); err != nil {
 		return ErrInternal("AI_TASK_DISCARD_FAILED", err)
 	}
@@ -1074,6 +1134,10 @@ func (s *AIScriptService) DiscardTask(ctx context.Context, userID, taskID uint, 
 
 // DeleteTask 删除已废弃任务（物理删除 + 级联清理）
 func (s *AIScriptService) DeleteTask(ctx context.Context, userID, taskID uint) error {
+	if err := s.ensureTaskManagePermission(ctx, userID); err != nil {
+		return err
+	}
+
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1089,6 +1153,251 @@ func (s *AIScriptService) DeleteTask(ctx context.Context, userID, taskID uint) e
 		return ErrInternal("AI_TASK_DELETE_FAILED", err)
 	}
 	return nil
+}
+
+// BatchDiscardTasks 批量废弃任务，支持显式勾选与按筛选结果全选两种模式。
+func (s *AIScriptService) BatchDiscardTasks(ctx context.Context, userID uint, input BatchDiscardTasksInput) (*BatchTaskActionResult, error) {
+	if err := s.ensureTaskManagePermission(ctx, userID); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(input.Reason) == "" {
+		return nil, ErrBadRequest("AI_SCRIPT_4001", "废弃原因不能为空")
+	}
+
+	resolution, err := s.resolveBatchTaskSelection(ctx, input.BatchTaskSelectionInput)
+	if err != nil {
+		return nil, err
+	}
+
+	result := newBatchTaskActionAccumulator(resolution.Matched)
+	for _, taskID := range resolution.RequestedIDs {
+		task, exists := resolution.TasksByID[taskID]
+		if !exists {
+			result.addFailed("任务不存在")
+			continue
+		}
+		if !canDiscardTaskStatus(task.TaskStatus) {
+			result.addSkipped(discardTaskSkipReason(task.TaskStatus))
+			continue
+		}
+		if err := s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
+			"task_status":    model.AITaskStatusDiscarded,
+			"discard_reason": strings.TrimSpace(input.Reason),
+			"updated_by":     userID,
+		}); err != nil {
+			result.addFailed("批量废弃写库失败")
+			continue
+		}
+		result.success++
+	}
+
+	return result.toResult(), nil
+}
+
+// BatchDeleteTasks 批量删除任务，仅允许删除已废弃任务。
+func (s *AIScriptService) BatchDeleteTasks(ctx context.Context, userID uint, input BatchTaskSelectionInput) (*BatchTaskActionResult, error) {
+	if err := s.ensureTaskManagePermission(ctx, userID); err != nil {
+		return nil, err
+	}
+
+	resolution, err := s.resolveBatchTaskSelection(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	result := newBatchTaskActionAccumulator(resolution.Matched)
+	for _, taskID := range resolution.RequestedIDs {
+		task, exists := resolution.TasksByID[taskID]
+		if !exists {
+			result.addFailed("任务不存在")
+			continue
+		}
+		if task.TaskStatus != model.AITaskStatusDiscarded {
+			result.addSkipped("仅允许删除已废弃任务")
+			continue
+		}
+		if err := s.repo.DeleteTask(ctx, taskID); err != nil {
+			result.addFailed("批量删除执行失败")
+			continue
+		}
+		result.success++
+	}
+
+	return result.toResult(), nil
+}
+
+// batchTaskSelectionResolution 表示批量选择解析后的真实任务集合。
+type batchTaskSelectionResolution struct {
+	Matched      int
+	RequestedIDs []uint
+	TasksByID    map[uint]*model.AIScriptTask
+}
+
+// batchTaskActionAccumulator 用于汇总批量操作的成功、跳过和失败统计。
+type batchTaskActionAccumulator struct {
+	matched       int
+	success       int
+	skipped       int
+	failed        int
+	skipReasons   map[string]int
+	failedReasons map[string]int
+}
+
+// newBatchTaskActionAccumulator 创建批量操作结果累加器。
+func newBatchTaskActionAccumulator(matched int) *batchTaskActionAccumulator {
+	return &batchTaskActionAccumulator{
+		matched:       matched,
+		skipReasons:   make(map[string]int),
+		failedReasons: make(map[string]int),
+	}
+}
+
+// addSkipped 记录一条被跳过的任务原因。
+func (a *batchTaskActionAccumulator) addSkipped(reason string) {
+	a.skipped++
+	a.skipReasons[reason]++
+}
+
+// addFailed 记录一条执行失败的任务原因。
+func (a *batchTaskActionAccumulator) addFailed(reason string) {
+	a.failed++
+	a.failedReasons[reason]++
+}
+
+// toResult 将累加器转换为最终返回结果。
+func (a *batchTaskActionAccumulator) toResult() *BatchTaskActionResult {
+	return &BatchTaskActionResult{
+		Matched:       a.matched,
+		Success:       a.success,
+		Skipped:       a.skipped,
+		Failed:        a.failed,
+		SkipReasons:   buildBatchReasonStats(a.skipReasons),
+		FailedReasons: buildBatchReasonStats(a.failedReasons),
+	}
+}
+
+// buildBatchReasonStats 将原因计数字典转换为返回结构。
+func buildBatchReasonStats(reasonMap map[string]int) []BatchTaskActionReasonStat {
+	if len(reasonMap) == 0 {
+		return nil
+	}
+
+	stats := make([]BatchTaskActionReasonStat, 0, len(reasonMap))
+	for reason, count := range reasonMap {
+		stats = append(stats, BatchTaskActionReasonStat{
+			Reason: reason,
+			Count:  count,
+		})
+	}
+	return stats
+}
+
+// ensureTaskManagePermission 校验当前用户是否具备任务治理能力。
+func (s *AIScriptService) ensureTaskManagePermission(ctx context.Context, userID uint) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrInternal("AI_USER_QUERY_FAILED", err)
+	}
+	if user == nil {
+		return ErrNotFound("USER_NOT_FOUND", "用户不存在")
+	}
+	if user.Role != model.GlobalRoleAdmin && user.Role != model.GlobalRoleManager {
+		return ErrForbidden("AI_SCRIPT_4006", "当前用户无权限执行该操作")
+	}
+	return nil
+}
+
+// resolveBatchTaskSelection 解析批量操作目标任务集合。
+func (s *AIScriptService) resolveBatchTaskSelection(ctx context.Context, input BatchTaskSelectionInput) (*batchTaskSelectionResolution, error) {
+	switch input.SelectionMode {
+	case BatchTaskSelectionModeIDs:
+		taskIDs := deduplicateUints(input.TaskIDs)
+		if len(taskIDs) == 0 {
+			return nil, ErrBadRequest("AI_SCRIPT_4001", "批量操作至少需要选择一条任务")
+		}
+
+		tasks, err := s.repo.ListTasksByIDs(ctx, taskIDs)
+		if err != nil {
+			return nil, ErrInternal("AI_TASK_LIST_FAILED", err)
+		}
+
+		return &batchTaskSelectionResolution{
+			Matched:      len(taskIDs),
+			RequestedIDs: taskIDs,
+			TasksByID:    buildTaskPointerMap(tasks),
+		}, nil
+
+	case BatchTaskSelectionModeFilterAll:
+		if input.FilterSnapshot == nil {
+			return nil, ErrBadRequest("AI_SCRIPT_4001", "筛选全选模式缺少筛选快照")
+		}
+
+		excludedTaskIDs := deduplicateUints(input.ExcludedTaskIDs)
+		tasks, err := s.repo.ListTasksByFilter(
+			ctx,
+			input.FilterSnapshot.ProjectID,
+			strings.TrimSpace(input.FilterSnapshot.Keyword),
+			input.FilterSnapshot.TaskStatus,
+			excludedTaskIDs,
+		)
+		if err != nil {
+			return nil, ErrInternal("AI_TASK_LIST_FAILED", err)
+		}
+
+		requestedIDs := make([]uint, 0, len(tasks))
+		for _, task := range tasks {
+			requestedIDs = append(requestedIDs, task.ID)
+		}
+
+		return &batchTaskSelectionResolution{
+			Matched:      len(requestedIDs),
+			RequestedIDs: requestedIDs,
+			TasksByID:    buildTaskPointerMap(tasks),
+		}, nil
+
+	default:
+		return nil, ErrBadRequest("AI_SCRIPT_4001", "selection_mode 无效")
+	}
+}
+
+// buildTaskPointerMap 将任务切片转换为按 ID 索引的任务映射。
+func buildTaskPointerMap(tasks []model.AIScriptTask) map[uint]*model.AIScriptTask {
+	taskMap := make(map[uint]*model.AIScriptTask, len(tasks))
+	for i := range tasks {
+		task := tasks[i]
+		taskCopy := task
+		taskMap[task.ID] = &taskCopy
+	}
+	return taskMap
+}
+
+// canDiscardTaskStatus 判断任务状态是否允许执行废弃。
+func canDiscardTaskStatus(status string) bool {
+	switch status {
+	case model.AITaskStatusDraft,
+		model.AITaskStatusPendingExecute,
+		model.AITaskStatusGenerateFailed,
+		model.AITaskStatusGenerateSuccess,
+		model.AITaskStatusPendingConfirm,
+		model.AITaskStatusPendingRevalidate,
+		model.AITaskStatusConfirmed,
+		model.AITaskStatusManualReview:
+		return true
+	default:
+		return false
+	}
+}
+
+// discardTaskSkipReason 返回任务因状态原因无法废弃时的提示语。
+func discardTaskSkipReason(status string) string {
+	switch status {
+	case model.AITaskStatusDiscarded:
+		return "任务已废弃，无需重复处理"
+	case model.AITaskStatusRunning:
+		return "RUNNING 状态不可废弃"
+	default:
+		return fmt.Sprintf("当前状态 %s 不允许废弃", status)
+	}
 }
 
 // CloneTask 复制任务配置生成新任务

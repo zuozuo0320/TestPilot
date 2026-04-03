@@ -19,6 +19,23 @@ func NewAIScriptRepo(db *gorm.DB) *AIScriptRepo {
 	return &AIScriptRepo{db: db}
 }
 
+// buildTaskQuery 构建任务列表查询条件，供分页查询与批量操作复用。
+func (r *AIScriptRepo) buildTaskQuery(ctx context.Context, projectID uint, keyword string, taskStatus string) *gorm.DB {
+	q := r.db.WithContext(ctx).Model(&model.AIScriptTask{})
+
+	if projectID > 0 {
+		q = q.Where("project_id = ?", projectID)
+	}
+	if keyword != "" {
+		q = q.Where("task_name LIKE ?", "%"+keyword+"%")
+	}
+	if taskStatus != "" {
+		q = q.Where("task_status = ?", taskStatus)
+	}
+
+	return q
+}
+
 // ── 任务 CRUD ──
 
 // CreateTask 创建任务
@@ -37,17 +54,7 @@ func (r *AIScriptRepo) GetTask(ctx context.Context, id uint) (*model.AIScriptTas
 
 // ListTasks 分页查询任务列表
 func (r *AIScriptRepo) ListTasks(ctx context.Context, projectID uint, keyword string, taskStatus string, page, pageSize int) ([]model.AIScriptTask, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.AIScriptTask{})
-
-	if projectID > 0 {
-		q = q.Where("project_id = ?", projectID)
-	}
-	if keyword != "" {
-		q = q.Where("task_name LIKE ?", "%"+keyword+"%")
-	}
-	if taskStatus != "" {
-		q = q.Where("task_status = ?", taskStatus)
-	}
+	q := r.buildTaskQuery(ctx, projectID, keyword, taskStatus)
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -60,6 +67,32 @@ func (r *AIScriptRepo) ListTasks(ctx context.Context, projectID uint, keyword st
 		return nil, 0, err
 	}
 	return tasks, total, nil
+}
+
+// ListTasksByIDs 按任务 ID 集合查询任务，用于批量操作前解析真实任务集。
+func (r *AIScriptRepo) ListTasksByIDs(ctx context.Context, ids []uint) ([]model.AIScriptTask, error) {
+	if len(ids) == 0 {
+		return []model.AIScriptTask{}, nil
+	}
+
+	var tasks []model.AIScriptTask
+	err := r.db.WithContext(ctx).
+		Where("id IN ?", ids).
+		Order("created_at DESC").
+		Find(&tasks).Error
+	return tasks, err
+}
+
+// ListTasksByFilter 按筛选快照查询全部命中任务，支持批量操作的筛选结果全选。
+func (r *AIScriptRepo) ListTasksByFilter(ctx context.Context, projectID uint, keyword string, taskStatus string, excludedIDs []uint) ([]model.AIScriptTask, error) {
+	q := r.buildTaskQuery(ctx, projectID, keyword, taskStatus)
+	if len(excludedIDs) > 0 {
+		q = q.Where("id NOT IN ?", excludedIDs)
+	}
+
+	var tasks []model.AIScriptTask
+	err := q.Order("created_at DESC").Find(&tasks).Error
+	return tasks, err
 }
 
 // UpdateTaskStatus 更新任务状态
