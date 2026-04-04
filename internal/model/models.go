@@ -23,6 +23,12 @@ const (
 	ProjectStatusActive   = "active"
 	ProjectStatusArchived = "archived"
 
+	// ---- 测试用例状态 ----
+	TestCaseStatusDraft     = "draft"     // 草稿
+	TestCaseStatusPending   = "pending"   // 待评审
+	TestCaseStatusActive    = "active"    // 已生效
+	TestCaseStatusDiscarded = "discarded" // 已废弃
+
 	// ---- 种子数据标识 ----
 	SeedProjectName = "AiSight Demo"
 )
@@ -131,15 +137,17 @@ type TestCase struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
 	ProjectID    uint      `json:"project_id" gorm:"not null;index;uniqueIndex:idx_project_testcase_title"`
 	Title        string    `json:"title" gorm:"size:200;not null;uniqueIndex:idx_project_testcase_title"`
+	Status       string    `json:"status" gorm:"size:20;not null;default:draft;index"`   // 草稿(draft)/待评审(pending)/已生效(active)/已废弃(discarded)
+	Version      string    `json:"version" gorm:"size:20;not null;default:V1"`           // 版本号，如 V1, V2...
 	Level        string    `json:"level" gorm:"size:10;default:P1"`
 	ReviewResult string    `json:"review_result" gorm:"size:30;default:未评审"`
 	ExecResult   string    `json:"exec_result" gorm:"size:30;default:未执行"`
 	ModuleID     uint      `json:"module_id" gorm:"default:0;index"`
 	ModulePath   string    `json:"module_path" gorm:"size:255;default:/"`
 	Tags         string    `json:"tags" gorm:"size:500"`
-	Precondition string    `json:"precondition" gorm:"type:longtext"`
-	Steps        string    `json:"steps" gorm:"type:longtext"`
-	Remark       string    `json:"remark" gorm:"type:longtext"`
+	Precondition string    `json:"precondition" gorm:"type:text"`
+	Steps        string    `json:"steps" gorm:"type:text"`
+	Remark       string    `json:"remark" gorm:"type:text"`
 	Priority     string    `json:"priority" gorm:"size:20;default:medium"`
 	CreatedBy    uint      `json:"created_by" gorm:"not null;default:0;index"`
 	UpdatedBy    uint      `json:"updated_by" gorm:"not null;default:0;index"`

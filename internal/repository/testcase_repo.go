@@ -68,7 +68,10 @@ type TestCaseRepository interface {
 	BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error)
 	BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error)
 	BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error)
+	UpdateModulePathsByPrefix(ctx context.Context, projectID uint, oldPrefix, newPrefix string) error
 	CloneCase(ctx context.Context, projectID, sourceID, userID uint) (*model.TestCase, error)
+	CountByModule(ctx context.Context, moduleID uint) (int64, error)
+	DB(ctx context.Context) *gorm.DB
 }
 
 // testCaseRepo TestCaseRepository 的 GORM 实现
@@ -291,4 +294,25 @@ func (r *testCaseRepo) CloneCase(ctx context.Context, projectID, sourceID, userI
 		return nil, err
 	}
 	return clone, nil
+}
+
+func (r *testCaseRepo) UpdateModulePathsByPrefix(ctx context.Context, projectID uint, oldPrefix, newPrefix string) error {
+	// 使用 SQLite / MySQL 兼容的字符串替换函数
+	// 注意：在重命名 /内容 为 /新内容 时，/内容/子项 应该变为 /新内容/子项
+	// 我们使用 LIKE 和 REPLACE
+	query := r.db.WithContext(ctx).Model(&model.TestCase{}).
+		Where("project_id = ? AND (module_path = ? OR module_path LIKE ?)", projectID, oldPrefix, oldPrefix+"/%")
+
+	// GORM 自动处理不同数据库的字符串操作（在 SQLite 中也是 REPLACE）
+	return query.Update("module_path", gorm.Expr("REPLACE(module_path, ?, ?)", oldPrefix, newPrefix)).Error
+}
+
+func (r *testCaseRepo) CountByModule(ctx context.Context, moduleID uint) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.TestCase{}).Where("module_id = ?", moduleID).Count(&count).Error
+	return count, err
+}
+
+func (r *testCaseRepo) DB(ctx context.Context) *gorm.DB {
+	return r.db.WithContext(ctx)
 }

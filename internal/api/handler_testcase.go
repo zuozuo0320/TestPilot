@@ -117,7 +117,7 @@ func (a *API) updateTestCase(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	updated, err := a.testCaseSvc.Update(c.Request.Context(), projectID, tcID, service.UpdateTestCaseInput{
+	updated, err := a.testCaseSvc.Update(c.Request.Context(), projectID, tcID, user.ID, service.UpdateTestCaseInput{
 		Title:        req.Title,
 		Level:        req.Level,
 		ReviewResult: req.ReviewResult,
@@ -342,4 +342,80 @@ func (a *API) deleteCaseRelation(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"deleted": true})
+}
+
+// ========== 状态流转 (提审/废弃/恢复) ==========
+
+// submitReview 提交评审
+func (a *API) submitReview(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	tcID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+
+	if err := a.testCaseSvc.SubmitReview(c.Request.Context(), projectID, tcID, user.ID); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, "submitted")
+}
+
+// discardTestCase 废弃用例
+func (a *API) discardTestCase(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	// 权限：仅限项目管理员或系统管理员
+	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+		return
+	}
+	tcID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+
+	if err := a.testCaseSvc.Discard(c.Request.Context(), projectID, tcID, user.ID); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, "discarded")
+}
+
+// recoverTestCase 恢复用例
+func (a *API) recoverTestCase(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	// 权限：仅限项目管理员或系统管理员
+	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
+		return
+	}
+	tcID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+
+	if err := a.testCaseSvc.Recover(c.Request.Context(), projectID, tcID, user.ID); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, "recovered")
 }

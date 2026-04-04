@@ -480,8 +480,21 @@ async def _run_codegen(
 
         script_content = ""
         if os.path.exists(output_file):
-            with open(output_file, "r", encoding="utf-8") as f:
-                script_content = f.read()
+            try:
+                # 首先尝试 UTF-8 (标准且最通用)
+                with open(output_file, "r", encoding="utf-8") as f:
+                    script_content = f.read()
+            except UnicodeDecodeError:
+                try:
+                    # 其次尝试 GBK (Windows 中文环境常见编码)
+                    with open(output_file, "r", encoding="gbk") as f:
+                        script_content = f.read()
+                except UnicodeDecodeError:
+                    # 最后尝试带错误容忍的 utf-8 或原生 bytes
+                    with open(output_file, "rb") as f:
+                        raw_data = f.read()
+                        script_content = raw_data.decode("utf-8", errors="replace")
+            
             os.remove(output_file)  # 清理临时文件
 
         _codegen_sessions[session_id]["status"] = "completed"
@@ -588,8 +601,17 @@ async def _run_codegen_v2(
 
         script_content = ""
         if os.path.exists(output_file):
-            with open(output_file, "r", encoding="utf-8") as f:
-                script_content = f.read()
+            try:
+                with open(output_file, "r", encoding="utf-8") as f:
+                    script_content = f.read()
+            except UnicodeDecodeError:
+                try:
+                    with open(output_file, "r", encoding="gbk") as f:
+                        script_content = f.read()
+                except UnicodeDecodeError:
+                    with open(output_file, "rb") as f:
+                        raw_data = f.read()
+                        script_content = raw_data.decode("utf-8", errors="replace")
             os.remove(output_file)
 
         # 空脚本本质上属于录制失败，不能再返回 completed 误导前端。

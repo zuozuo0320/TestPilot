@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"gorm.io/gorm"
 	"testpilot/internal/api"
 	"testpilot/internal/config"
 	"testpilot/internal/execution"
@@ -36,11 +37,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 数据库连接逻辑助手 (严格遵循 MySQL)
+	connectDB := func() (*gorm.DB, error) {
+		return store.NewMySQL(cfg, logger)
+	}
+
 	// 子命令
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "migrate":
-			db, err := store.NewMySQL(cfg, logger)
+			db, err := connectDB()
 			if err != nil {
 				logger.Error("db connect failed", "error", err)
 				os.Exit(1)
@@ -52,7 +58,7 @@ func main() {
 			logger.Info("migration done")
 			return
 		case "migrate-sql":
-			db, err := store.NewMySQL(cfg, logger)
+			db, err := connectDB()
 			if err != nil {
 				logger.Error("db connect failed", "error", err)
 				os.Exit(1)
@@ -64,7 +70,7 @@ func main() {
 			logger.Info("sql migration done")
 			return
 		case "seed":
-			db, err := store.NewMySQL(cfg, logger)
+			db, err := connectDB()
 			if err != nil {
 				logger.Error("db connect failed", "error", err)
 				os.Exit(1)
@@ -78,8 +84,8 @@ func main() {
 		}
 	}
 
-	// 连接数据库
-	db, err := store.NewMySQL(cfg, logger)
+	// 连接主数据库
+	db, err := connectDB()
 	if err != nil {
 		logger.Error("db connect failed", "error", err)
 		os.Exit(1)
@@ -89,9 +95,15 @@ func main() {
 		os.Exit(1)
 	}
 	// 执行增量 SQL 迁移（处理 AutoMigrate 无法完成的变更）
-	if err := migration.Run(db, logger); err != nil {
-		logger.Error("sql migration failed", "error", err)
-		os.Exit(1)
+	// 注意：仅在 MySQL 模式下运行，SQLite 脚本不兼容。
+	if cfg.DBHost != "" && cfg.DBHost != "127.0.0.1" || os.Getenv("DB_HOST") != "" {
+		// 这里的逻辑有点简单，更严谨的做法是检查 db.Dialector.Name()
+		if db.Dialector.Name() == "mysql" {
+			if err := migration.Run(db, logger); err != nil {
+				logger.Error("sql migration failed", "error", err)
+				os.Exit(1)
+			}
+		}
 	}
 	if cfg.AutoSeed {
 		if err := seed.Seed(db, logger); err != nil {
@@ -131,7 +143,7 @@ func main() {
 	userSvc := service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr)
 	roleSvc := service.NewRoleService(roleRepo, auditRepo, txMgr)
 	projectSvc := service.NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
-	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo)
+	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo)
 	profileSvc := service.NewProfileService(userRepo, auditRepo, txMgr)
 	executionSvc := service.NewExecutionService(executionRepo, txMgr, mockExecutor, redisClient, logger)
 	defectSvc := service.NewDefectService(defectRepo, executionRepo)
@@ -139,7 +151,7 @@ func main() {
 	scriptSvc := service.NewScriptService(scriptRepo, testCaseRepo)
 	overviewSvc := service.NewOverviewService(projectRepo, requirementRepo, testCaseRepo, scriptRepo, executionRepo, defectRepo)
 	auditSvc := service.NewAuditService(auditRepo)
-	moduleSvc := service.NewModuleService(moduleRepo)
+	moduleSvc := service.NewModuleService(moduleRepo, testCaseRepo)
 	attachmentSvc := service.NewAttachmentService(attachmentRepo, "./uploads")
 	xlsxSvc := service.NewXlsxService(testCaseRepo)
 	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)

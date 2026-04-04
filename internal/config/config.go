@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 // Config stores runtime settings for the demo service.
@@ -28,12 +30,12 @@ type Config struct {
 	RunFailRate        float64
 	CORSAllowOrigins   string
 	JWTSecret          string
-	ExecutorURL        string // Python 执行服务地址（后端内部调用用）
 	ExecutorPublicURL  string // Python 执行服务地址（前端浏览器可访问）
 	ExecutorAPIKey     string // Python 执行服务 API Key
 }
 
 func Load() Config {
+	_ = godotenv.Load() // 自动加载 .env 文件，忽略不存在的错误
 	return Config{
 		AppPort:            getEnv("APP_PORT", "8080"),
 		LogLevel:           strings.ToLower(getEnv("LOG_LEVEL", "info")),

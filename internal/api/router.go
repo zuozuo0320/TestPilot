@@ -153,7 +153,11 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	// Parameterized :testcaseID routes
 	auth.PUT("/projects/:projectID/testcases/:testcaseID", a.updateTestCase)
 	auth.DELETE("/projects/:projectID/testcases/:testcaseID", a.deleteTestCase)
-	auth.POST("/projects/:projectID/testcases/:testcaseID/clone", a.cloneTestCase)
+	// Single testcase operations (Use singular "testcase" to avoid Gin POST conflict with static "testcases" batch routes)
+	auth.POST("/projects/:projectID/testcase/:testcaseID/clone", a.cloneTestCase)
+	auth.POST("/projects/:projectID/testcase/:testcaseID/submit-review", a.submitReview)
+	auth.POST("/projects/:projectID/testcase/:testcaseID/discard", a.discardTestCase)
+	auth.POST("/projects/:projectID/testcase/:testcaseID/recover", a.recoverTestCase)
 	auth.GET("/projects/:projectID/testcases/:testcaseID/history", a.listCaseHistory)
 	auth.GET("/projects/:projectID/testcases/:testcaseID/relations", a.listCaseRelations)
 	auth.POST("/projects/:projectID/testcases/:testcaseID/relations", a.createCaseRelation)

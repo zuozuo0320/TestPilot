@@ -92,3 +92,32 @@ func (r *ModuleRepo) MoveModule(id uint, newParentID uint, sortOrder int) error 
 	return r.db.Model(&model.Module{}).Where("id = ?", id).
 		Updates(map[string]interface{}{"parent_id": newParentID, "sort_order": sortOrder}).Error
 }
+
+// GetFullPath returns the slash-separated path for a module (e.g. "/Level1/Level2").
+func (r *ModuleRepo) GetFullPath(id uint) (string, error) {
+	if id == 0 {
+		return "", nil
+	}
+	var path []string
+	currentID := id
+	for currentID != 0 {
+		var m model.Module
+		if err := r.db.Select("id, parent_id, name").First(&m, currentID).Error; err != nil {
+			return "", err
+		}
+		path = append([]string{m.Name}, path...)
+		currentID = m.ParentID
+	}
+	return "/" + joinStrings(path, "/"), nil
+}
+
+func joinStrings(parts []string, sep string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	res := parts[0]
+	for i := 1; i < len(parts); i++ {
+		res += sep + parts[i]
+	}
+	return res
+}

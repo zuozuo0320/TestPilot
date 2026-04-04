@@ -15,8 +15,11 @@ func NewCaseHistoryRepo(db *gorm.DB) *CaseHistoryRepo {
 }
 
 // Create inserts a history record.
-func (r *CaseHistoryRepo) Create(h *model.CaseHistory) error {
-	return r.db.Create(h).Error
+func (r *CaseHistoryRepo) Create(db *gorm.DB, h *model.CaseHistory) error {
+	if db == nil {
+		db = r.db
+	}
+	return db.Create(h).Error
 }
 
 // CreateBatch inserts multiple history records.
