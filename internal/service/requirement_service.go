@@ -23,14 +23,14 @@ func NewRequirementService(reqRepo repository.RequirementRepository, tcRepo repo
 // Create 创建需求
 func (s *RequirementService) Create(ctx context.Context, projectID uint, title, content string) (*model.Requirement, error) {
 	if strings.TrimSpace(title) == "" {
-		return nil, ErrBadRequest("MISSING_TITLE", "title is required")
+		return nil, ErrBadRequest(CodeParamsError, "title is required")
 	}
 	entity := model.Requirement{ProjectID: projectID, Title: strings.TrimSpace(title), Content: strings.TrimSpace(content)}
 	if err := s.requirementRepo.Create(ctx, &entity); err != nil {
 		if isDuplicateError(err) {
-			return nil, ErrConflict("REQUIREMENT_EXISTS", "requirement already exists")
+			return nil, ErrConflict(CodeConflict, "requirement already exists")
 		}
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return &entity, nil
 }
@@ -45,7 +45,7 @@ func (s *RequirementService) LinkTestCase(ctx context.Context, projectID, requir
 	reqBelong, _ := s.requirementRepo.BelongsToProject(ctx, requirementID, projectID)
 	tcBelong, _ := s.testCaseRepo.BelongsToProject(ctx, testCaseID, projectID)
 	if !reqBelong || !tcBelong {
-		return ErrNotFound("ENTITY_NOT_FOUND", "requirement or testcase not found in project")
+		return ErrNotFound(CodeNotFound, "requirement or testcase not found in project")
 	}
 	return s.requirementRepo.LinkTestCase(ctx, requirementID, testCaseID)
 }

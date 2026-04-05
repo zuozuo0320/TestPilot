@@ -37,6 +37,8 @@ type TestCaseListItem struct {
 	ID            uint   `json:"id"`
 	ProjectID     uint   `json:"project_id"`
 	Title         string `json:"title"`
+	Status        string `json:"status"`
+	Version       string `json:"version"`
 	Level         string `json:"level"`
 	ReviewResult  string `json:"review_result"`
 	ExecResult    string `json:"exec_result"`
@@ -169,7 +171,7 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 	var items []TestCaseListItem
 	offset := (f.Page - 1) * f.PageSize
 	err := baseQuery.
-		Select("test_cases.id, test_cases.project_id, test_cases.title, test_cases.level, test_cases.review_result, test_cases.exec_result, test_cases.module_id, test_cases.module_path, test_cases.tags, test_cases.precondition, test_cases.steps, test_cases.remark, test_cases.priority, test_cases.created_by, test_cases.updated_by, test_cases.created_at, test_cases.updated_at, cu.name AS created_by_name, uu.name AS updated_by_name").
+		Select("test_cases.id, test_cases.project_id, test_cases.title, test_cases.status, test_cases.version, test_cases.level, test_cases.review_result, test_cases.exec_result, test_cases.module_id, test_cases.module_path, test_cases.tags, test_cases.precondition, test_cases.steps, test_cases.remark, test_cases.priority, test_cases.created_by, test_cases.updated_by, test_cases.created_at, test_cases.updated_at, cu.name AS created_by_name, uu.name AS updated_by_name").
 		Joins("LEFT JOIN users cu ON cu.id = test_cases.created_by").
 		Joins("LEFT JOIN users uu ON uu.id = test_cases.updated_by").
 		Order(orderColumn + " " + sortOrder).

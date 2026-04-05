@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"testpilot/internal/dto/response"
+	"testpilot/internal/service"
 )
 
 func (a *API) uploadAttachment(c *gin.Context) {
@@ -25,7 +26,7 @@ func (a *API) uploadAttachment(c *gin.Context) {
 
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		response.Error(c, 400, "no file provided")
+		response.Error(c, 400, service.CodeParamsError, "no file provided")
 		return
 	}
 	defer file.Close()
@@ -74,7 +75,7 @@ func (a *API) deleteAttachment(c *gin.Context) {
 	}
 	attID, err := strconv.ParseUint(c.Param("attachmentID"), 10, 64)
 	if err != nil {
-		response.Error(c, 400, "invalid attachment ID")
+		response.Error(c, 400, service.CodeParamsError, "invalid attachment ID")
 		return
 	}
 	if err := a.attachmentSvc.Delete(uint(attID)); err != nil {
@@ -95,7 +96,7 @@ func (a *API) downloadAttachment(c *gin.Context) {
 	}
 	attID, err := strconv.ParseUint(c.Param("attachmentID"), 10, 64)
 	if err != nil {
-		response.Error(c, 400, "invalid attachment ID")
+		response.Error(c, 400, service.CodeParamsError, "invalid attachment ID")
 		return
 	}
 	fullPath, fileName, err := a.attachmentSvc.GetFilePath(uint(attID))

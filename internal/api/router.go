@@ -31,8 +31,10 @@ type Dependencies struct {
 	AttachmentService  *service.AttachmentService
 	CaseHistoryRepo    *repository.CaseHistoryRepo
 	CaseRelationRepo   *repository.CaseRelationRepo
-	XlsxService        *service.XlsxService
-	AIScriptService    *service.AIScriptService
+	XlsxService            *service.XlsxService
+	AIScriptService        *service.AIScriptService
+	CaseReviewService      *service.CaseReviewService
+	CaseReviewSubmitService *service.CaseReviewSubmitService
 }
 
 // API 核心结构体
@@ -55,8 +57,10 @@ type API struct {
 	attachmentSvc    *service.AttachmentService
 	caseHistoryRepo  *repository.CaseHistoryRepo
 	caseRelationRepo *repository.CaseRelationRepo
-	xlsxSvc          *service.XlsxService
-	aiScriptSvc      *service.AIScriptService
+	xlsxSvc              *service.XlsxService
+	aiScriptSvc          *service.AIScriptService
+	caseReviewSvc        *service.CaseReviewService
+	caseReviewSubmitSvc  *service.CaseReviewSubmitService
 }
 
 // NewRouter 创建路由引擎并注册所有路由
@@ -80,8 +84,10 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		attachmentSvc:    deps.AttachmentService,
 		caseHistoryRepo:  deps.CaseHistoryRepo,
 		caseRelationRepo: deps.CaseRelationRepo,
-		xlsxSvc:          deps.XlsxService,
-		aiScriptSvc:      deps.AIScriptService,
+		xlsxSvc:             deps.XlsxService,
+		aiScriptSvc:         deps.AIScriptService,
+		caseReviewSvc:       deps.CaseReviewService,
+		caseReviewSubmitSvc: deps.CaseReviewSubmitService,
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -158,6 +164,8 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.POST("/projects/:projectID/testcase/:testcaseID/submit-review", a.submitReview)
 	auth.POST("/projects/:projectID/testcase/:testcaseID/discard", a.discardTestCase)
 	auth.POST("/projects/:projectID/testcase/:testcaseID/recover", a.recoverTestCase)
+	auth.POST("/projects/:projectID/testcase/:testcaseID/approve-review", a.approveReview)
+	auth.POST("/projects/:projectID/testcase/:testcaseID/reject-review", a.rejectReview)
 	auth.GET("/projects/:projectID/testcases/:testcaseID/history", a.listCaseHistory)
 	auth.GET("/projects/:projectID/testcases/:testcaseID/relations", a.listCaseRelations)
 	auth.POST("/projects/:projectID/testcases/:testcaseID/relations", a.createCaseRelation)
@@ -216,6 +224,24 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	// 轨迹与证据
 	aiScript.GET("/tasks/:taskID/traces", a.getAIScriptTraces)
 	aiScript.GET("/tasks/:taskID/evidences", a.getAIScriptEvidences)
+
+	// ---- 用例评审 ----
+	caseReview := auth.Group("/projects/:projectID/case-reviews")
+	caseReview.GET("", a.listReviews)
+	caseReview.POST("", a.createReview)
+	caseReview.GET("/:reviewID", a.getReview)
+	caseReview.PUT("/:reviewID", a.updateReview)
+	caseReview.DELETE("/:reviewID", a.deleteReview)
+	caseReview.POST("/:reviewID/close", a.closeReview)
+	caseReview.POST("/:reviewID/copy", a.copyReview)
+	caseReview.GET("/:reviewID/items", a.listItems)
+	caseReview.POST("/:reviewID/items/link", a.linkItems)
+	caseReview.POST("/:reviewID/items/unlink", a.unlinkItems)
+	caseReview.POST("/:reviewID/items/batch-review", a.batchReviewItems)
+	caseReview.POST("/:reviewID/items/batch-reassign", a.batchReassignReviewers)
+	caseReview.POST("/:reviewID/items/batch-resubmit", a.batchResubmitItems)
+	caseReview.POST("/:reviewID/items/:itemID/review", a.submitItemReview)
+	caseReview.GET("/:reviewID/items/:itemID/records", a.listItemRecords)
 
 	return r
 }

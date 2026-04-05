@@ -334,7 +334,7 @@ func (a *API) deleteCaseRelation(c *gin.Context) {
 	}
 	relID, err := strconv.ParseUint(c.Param("relationID"), 10, 64)
 	if err != nil {
-		response.Error(c, 400, "invalid relation ID")
+		response.Error(c, 400, service.CodeParamsError, "invalid relation ID")
 		return
 	}
 	if err := a.caseRelationRepo.Delete(uint(relID)); err != nil {
@@ -418,4 +418,54 @@ func (a *API) recoverTestCase(c *gin.Context) {
 		return
 	}
 	response.OK(c, "recovered")
+}
+
+// approveReview 评审通过
+func (a *API) approveReview(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager, model.GlobalRoleReviewer) {
+		return
+	}
+	tcID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+
+	if err := a.testCaseSvc.ApproveReview(c.Request.Context(), projectID, tcID, user.ID); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, "approved")
+}
+
+// rejectReview 评审驳回
+func (a *API) rejectReview(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager, model.GlobalRoleReviewer) {
+		return
+	}
+	tcID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+
+	if err := a.testCaseSvc.RejectReview(c.Request.Context(), projectID, tcID, user.ID); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, "rejected")
 }

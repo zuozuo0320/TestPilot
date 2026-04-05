@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"testpilot/internal/dto/response"
+	"testpilot/internal/service"
 )
 
 func (a *API) projectDemoOverview(c *gin.Context) {
@@ -29,7 +30,7 @@ func (a *API) projectDemoOverview(c *gin.Context) {
 func (a *API) mockGitLabWebhook(c *gin.Context) {
 	var payload map[string]any
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.Error(c, http.StatusBadRequest, service.CodeParamsError, err.Error())
 		return
 	}
 	response.OK(c, gin.H{"received": true, "payload": payload})

@@ -101,7 +101,7 @@ func (s *OverviewService) GetOverview(ctx context.Context, projectID uint) (map[
 
 	totalResults, passedResults, err := s.executionRepo.CountResultsByRun(ctx, latestRun.ID)
 	if err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	passRate := 0.0
 	if totalResults > 0 {

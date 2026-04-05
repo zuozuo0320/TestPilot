@@ -34,14 +34,14 @@ type AuthResult struct {
 // 禁用用户返回「账号已被禁用」，成功后更新 last_login_at
 func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthResult, error) {
 	if email == "" || password == "" {
-		return nil, ErrBadRequest("INVALID_PARAMS", "email and password are required")
+		return nil, ErrBadRequest(CodeParamsError, "email and password are required")
 	}
 	user, err := s.userRepo.FindByEmail(ctx, email)
 	if err != nil {
-		return nil, ErrUnauthorized("INVALID_CREDENTIALS", "invalid email or password")
+		return nil, ErrUnauthorized(CodeUnauthorized, "invalid email or password")
 	}
 	if user.DeletedAt.Valid {
-		return nil, ErrUnauthorized("USER_DELETED", "user has been deleted")
+		return nil, ErrUnauthorized(CodeUnauthorized, "user has been deleted")
 	}
 	if !user.Active {
 		return nil, ErrUserDisabled
@@ -50,12 +50,12 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 	// 校验密码（兼容旧数据：无密码哈希时使用硬编码默认密码）
 	if user.PasswordHash != "" {
 		if !pkgauth.CheckPassword(password, user.PasswordHash) {
-			return nil, ErrUnauthorized("INVALID_CREDENTIALS", "invalid email or password")
+			return nil, ErrUnauthorized(CodeUnauthorized, "invalid email or password")
 		}
 	} else {
 		// 兼容旧数据：PasswordHash 为空时仅接受默认密码
 		if password != "TestPilot@2026" {
-			return nil, ErrUnauthorized("INVALID_CREDENTIALS", "invalid email or password")
+			return nil, ErrUnauthorized(CodeUnauthorized, "invalid email or password")
 		}
 	}
 
@@ -80,14 +80,14 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 func (s *AuthService) RefreshToken(ctx context.Context, refreshTokenStr string) (*AuthResult, error) {
 	claims, err := pkgauth.ParseToken(s.jwtCfg.Secret, refreshTokenStr)
 	if err != nil {
-		return nil, ErrUnauthorized("INVALID_REFRESH_TOKEN", err.Error())
+		return nil, ErrUnauthorized(CodeUnauthorized, err.Error())
 	}
 	user, findErr := s.userRepo.FindByIDUnscoped(ctx, claims.UserID)
 	if findErr != nil {
-		return nil, ErrUnauthorized("USER_NOT_FOUND", "user not found")
+		return nil, ErrUnauthorized(CodeUnauthorized, "user not found")
 	}
 	if user.DeletedAt.Valid || !user.Active {
-		return nil, ErrForbidden("USER_UNAVAILABLE", "user is unavailable")
+		return nil, ErrForbidden(CodeForbidden, "user is unavailable")
 	}
 	tokenPair, err := pkgauth.GenerateTokenPair(s.jwtCfg, user.ID, user.Role)
 	if err != nil {
@@ -105,13 +105,13 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshTokenStr string) 
 func (s *AuthService) FindUserForAuth(ctx context.Context, userID uint) (*model.User, error) {
 	user, err := s.userRepo.FindByIDUnscoped(ctx, userID)
 	if err != nil {
-		return nil, ErrUnauthorized("USER_NOT_FOUND", "user not found")
+		return nil, ErrUnauthorized(CodeUnauthorized, "user not found")
 	}
 	if user.DeletedAt.Valid {
-		return nil, ErrUnauthorized("USER_DELETED", "user deleted")
+		return nil, ErrUnauthorized(CodeUnauthorized, "user deleted")
 	}
 	if !user.Active {
-		return nil, ErrForbidden("USER_FROZEN", "user is frozen")
+		return nil, ErrForbidden(CodeForbidden, "user is frozen")
 	}
 	return user, nil
 }

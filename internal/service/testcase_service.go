@@ -45,7 +45,7 @@ type CreateTestCaseInput struct {
 // Create 创建用例
 func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, input CreateTestCaseInput) (*model.TestCase, error) {
 	if strings.TrimSpace(input.Title) == "" {
-		return nil, ErrBadRequest("MISSING_TITLE", "title is required")
+		return nil, ErrBadRequest(CodeParamsError, "title is required")
 	}
 	priority := strings.ToLower(strings.TrimSpace(input.Priority))
 	if priority == "" {
@@ -85,9 +85,9 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 	}
 	if err := s.testCaseRepo.Create(ctx, &entity); err != nil {
 		if isDuplicateError(err) {
-			return nil, ErrConflict("TESTCASE_EXISTS", "testcase already exists")
+			return nil, ErrConflict(CodeConflict, "testcase already exists")
 		}
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return &entity, nil
 }
@@ -126,7 +126,7 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 	if input.Title != nil {
 		t := strings.TrimSpace(*input.Title)
 		if t == "" {
-			return nil, ErrBadRequest("MISSING_TITLE", "title is required")
+			return nil, ErrBadRequest(CodeParamsError, "title is required")
 		}
 		if t != entity.Title {
 			updates["title"] = t
@@ -216,19 +216,19 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 		updates["exec_result"] = "未执行"
 	} else if entity.Status == model.TestCaseStatusPending && isSubstantialChange {
 		// 待评审状态禁止直接编辑核心内容
-		return nil, ErrBadRequest("STATUS_LOCKED", "pending case cannot be edited, please retract first")
+		return nil, ErrBadRequest(CodeParamsError, "pending case cannot be edited, please retract first")
 	} else if entity.Status == model.TestCaseStatusDiscarded {
 		// 已废弃状态禁止编辑
-		return nil, ErrBadRequest("STATUS_LOCKED", "discarded case is read-only")
+		return nil, ErrBadRequest(CodeParamsError, "discarded case is read-only")
 	}
 	if len(updates) == 0 {
-		return nil, ErrBadRequest("NO_FIELDS", "no fields to update")
+		return nil, ErrBadRequest(CodeParamsError, "no fields to update")
 	}
 	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
 		if isDuplicateError(err) {
-			return nil, ErrConflict("TESTCASE_EXISTS", "testcase already exists")
+			return nil, ErrConflict(CodeConflict, "testcase already exists")
 		}
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	updated, _ := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	return updated, nil
@@ -238,7 +238,7 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint) error {
 	rows, err := s.testCaseRepo.Delete(ctx, testCaseID, projectID)
 	if err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if rows == 0 {
 		return ErrTestCaseNotFound
@@ -249,7 +249,7 @@ func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint
 // BatchDelete 批量删除用例
 func (s *TestCaseService) BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error) {
 	if len(ids) == 0 {
-		return 0, ErrBadRequest("EMPTY_IDS", "no IDs provided")
+		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
 	}
 	return s.testCaseRepo.BatchDelete(ctx, projectID, ids)
 }
@@ -257,11 +257,11 @@ func (s *TestCaseService) BatchDelete(ctx context.Context, projectID uint, ids [
 // BatchUpdateLevel 批量修改等级
 func (s *TestCaseService) BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error) {
 	if len(ids) == 0 {
-		return 0, ErrBadRequest("EMPTY_IDS", "no IDs provided")
+		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
 	}
 	l := strings.ToUpper(strings.TrimSpace(level))
 	if l == "" {
-		return 0, ErrBadRequest("MISSING_LEVEL", "level is required")
+		return 0, ErrBadRequest(CodeParamsError, "level is required")
 	}
 	return s.testCaseRepo.BatchUpdateLevel(ctx, projectID, ids, l)
 }
@@ -269,7 +269,7 @@ func (s *TestCaseService) BatchUpdateLevel(ctx context.Context, projectID uint, 
 // BatchMove 批量移动用例到另一目录
 func (s *TestCaseService) BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error) {
 	if len(ids) == 0 {
-		return 0, ErrBadRequest("EMPTY_IDS", "no IDs provided")
+		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
 	}
 	return s.testCaseRepo.BatchMove(ctx, projectID, ids, moduleID, modulePath)
 }
@@ -292,7 +292,7 @@ func (s *TestCaseService) SubmitReview(ctx context.Context, projectID, testCaseI
 		return ErrTestCaseNotFound
 	}
 	if entity.Status != model.TestCaseStatusDraft {
-		return ErrBadRequest("INVALID_STATUS", "only draft can be submitted for review")
+		return ErrBadRequest(CodeParamsError, "only draft can be submitted for review")
 	}
 	updates := map[string]any{
 		"status":        model.TestCaseStatusPending,
@@ -313,7 +313,7 @@ func (s *TestCaseService) Discard(ctx context.Context, projectID, testCaseID, us
 		return ErrTestCaseNotFound
 	}
 	if entity.Status != model.TestCaseStatusActive {
-		return ErrBadRequest("INVALID_STATUS", "only active case can be discarded")
+		return ErrBadRequest(CodeParamsError, "only active case can be discarded")
 	}
 	updates := map[string]any{
 		"status": model.TestCaseStatusDiscarded,
@@ -326,6 +326,46 @@ func (s *TestCaseService) Discard(ctx context.Context, projectID, testCaseID, us
 	return nil
 }
 
+// ApproveReview 评审通过 (Pending -> Active)
+func (s *TestCaseService) ApproveReview(ctx context.Context, projectID, testCaseID, userID uint) error {
+	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
+	if err != nil {
+		return ErrTestCaseNotFound
+	}
+	if entity.Status != model.TestCaseStatusPending {
+		return ErrBadRequest(CodeParamsError, "only pending case can be approved")
+	}
+	updates := map[string]any{
+		"status":        model.TestCaseStatusActive,
+		"review_result": "已通过",
+	}
+	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
+		return err
+	}
+	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "approve_review", "testcase", testCaseID, "pending", "active")
+	return nil
+}
+
+// RejectReview 评审驳回 (Pending -> Draft)
+func (s *TestCaseService) RejectReview(ctx context.Context, projectID, testCaseID, userID uint) error {
+	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
+	if err != nil {
+		return ErrTestCaseNotFound
+	}
+	if entity.Status != model.TestCaseStatusPending {
+		return ErrBadRequest(CodeParamsError, "only pending case can be rejected")
+	}
+	updates := map[string]any{
+		"status":        model.TestCaseStatusDraft,
+		"review_result": "已驳回",
+	}
+	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
+		return err
+	}
+	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "reject_review", "testcase", testCaseID, "pending", "draft")
+	return nil
+}
+
 // Recover 恢复用例 (Discarded -> Draft)
 func (s *TestCaseService) Recover(ctx context.Context, projectID, testCaseID, userID uint) error {
 	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
@@ -333,7 +373,7 @@ func (s *TestCaseService) Recover(ctx context.Context, projectID, testCaseID, us
 		return ErrTestCaseNotFound
 	}
 	if entity.Status != model.TestCaseStatusDiscarded {
-		return ErrBadRequest("INVALID_STATUS", "only discarded case can be recovered")
+		return ErrBadRequest(CodeParamsError, "only discarded case can be recovered")
 	}
 	updates := map[string]any{
 		"status":        model.TestCaseStatusDraft,

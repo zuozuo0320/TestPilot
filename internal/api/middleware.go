@@ -12,6 +12,7 @@ import (
 
 	"testpilot/internal/dto/response"
 	pkgauth "testpilot/internal/pkg/auth"
+	"testpilot/internal/service"
 )
 
 // requestIDMiddleware 为每个请求分配唯一 Request-ID
@@ -37,7 +38,7 @@ func (a *API) recoveryMiddleware() gin.HandlerFunc {
 					"path", c.Request.URL.Path,
 					"panic", r,
 				)
-				response.Error(c, http.StatusInternalServerError, "internal server error")
+				response.Error(c, http.StatusInternalServerError, service.CodeInternal, "internal server error")
 				c.Abort()
 			}
 		}()
@@ -100,7 +101,7 @@ func (a *API) authMiddleware() gin.HandlerFunc {
 			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 			claims, err := pkgauth.ParseToken(jwtCfg.Secret, tokenStr)
 			if err != nil {
-				response.Error(c, http.StatusUnauthorized, err.Error())
+				response.Error(c, http.StatusUnauthorized, service.CodeUnauthorized, err.Error())
 				c.Abort()
 				return
 			}
@@ -109,13 +110,13 @@ func (a *API) authMiddleware() gin.HandlerFunc {
 			// 2. 兼容旧 X-User-ID header（过渡期）
 			userIDText := c.GetHeader("X-User-ID")
 			if userIDText == "" {
-				response.Error(c, http.StatusUnauthorized, "missing Authorization header")
+				response.Error(c, http.StatusUnauthorized, service.CodeUnauthorized, "missing Authorization header")
 				c.Abort()
 				return
 			}
 			userID64, err := strconv.ParseUint(userIDText, 10, 64)
 			if err != nil || userID64 == 0 {
-				response.Error(c, http.StatusUnauthorized, "invalid X-User-ID header")
+				response.Error(c, http.StatusUnauthorized, service.CodeUnauthorized, "invalid X-User-ID header")
 				c.Abort()
 				return
 			}

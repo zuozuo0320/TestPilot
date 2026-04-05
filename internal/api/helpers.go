@@ -13,6 +13,7 @@ import (
 
 	"testpilot/internal/dto/response"
 	"testpilot/internal/model"
+	"testpilot/internal/service"
 )
 
 // bindJSON 绑定 JSON 并格式化校验错误
@@ -40,9 +41,9 @@ func bindJSON(c *gin.Context, obj any) bool {
 					msgs = append(msgs, fmt.Sprintf("%s: %s=%s", field, fe.Tag(), fe.Param()))
 				}
 			}
-			response.Error(c, http.StatusBadRequest, strings.Join(msgs, "; "))
+			response.Error(c, http.StatusBadRequest, service.CodeParamsError, strings.Join(msgs, "; "))
 		} else {
-			response.Error(c, http.StatusBadRequest, err.Error())
+			response.Error(c, http.StatusBadRequest, service.CodeParamsError, err.Error())
 		}
 		return false
 	}
@@ -81,7 +82,7 @@ func parseUintParam(c *gin.Context, key string) (uint, bool) {
 	text := c.Param(key)
 	value, err := strconv.ParseUint(text, 10, 64)
 	if err != nil || value == 0 {
-		response.Error(c, http.StatusBadRequest, fmt.Sprintf("invalid path param: %s", key))
+		response.Error(c, http.StatusBadRequest, service.CodeParamsError, fmt.Sprintf("invalid path param: %s", key))
 		return 0, false
 	}
 	return uint(value), true
@@ -110,7 +111,7 @@ func requireRole(c *gin.Context, user model.User, roles ...string) bool {
 			return true
 		}
 	}
-	response.Error(c, http.StatusForbidden, "insufficient role")
+	response.Error(c, http.StatusForbidden, service.CodeForbidden, "insufficient role")
 	return false
 }
 

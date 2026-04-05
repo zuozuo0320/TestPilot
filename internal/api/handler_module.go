@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"testpilot/internal/dto/response"
+	"testpilot/internal/service"
 )
 
 func (a *API) listModules(c *gin.Context) {
@@ -62,7 +63,7 @@ func (a *API) renameModule(c *gin.Context) {
 	}
 	moduleID, err := strconv.ParseUint(c.Param("moduleID"), 10, 64)
 	if err != nil {
-		response.Error(c, 400, "invalid module ID")
+		response.Error(c, 400, service.CodeParamsError, "invalid module ID")
 		return
 	}
 	var req struct {
@@ -90,7 +91,7 @@ func (a *API) moveModule(c *gin.Context) {
 	}
 	moduleID, err := strconv.ParseUint(c.Param("moduleID"), 10, 64)
 	if err != nil {
-		response.Error(c, 400, "invalid module ID")
+		response.Error(c, 400, service.CodeParamsError, "invalid module ID")
 		return
 	}
 	var req struct {
@@ -118,7 +119,7 @@ func (a *API) deleteModule(c *gin.Context) {
 	}
 	moduleID, err := strconv.ParseUint(c.Param("moduleID"), 10, 64)
 	if err != nil {
-		response.Error(c, 400, "invalid module ID")
+		response.Error(c, 400, service.CodeParamsError, "invalid module ID")
 		return
 	}
 	if err := a.moduleSvc.Delete(c.Request.Context(), uint(moduleID)); err != nil {

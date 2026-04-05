@@ -23,17 +23,17 @@ func NewDefectService(defectRepo repository.DefectRepository, executionRepo repo
 // Create 创建缺陷
 func (s *DefectService) Create(ctx context.Context, projectID, userID, runResultID uint, title, description, severity string) (*model.Defect, error) {
 	if runResultID == 0 || strings.TrimSpace(title) == "" {
-		return nil, ErrBadRequest("MISSING_FIELDS", "run_result_id/title is required")
+		return nil, ErrBadRequest(CodeParamsError, "run_result_id/title is required")
 	}
 	sev := strings.ToLower(strings.TrimSpace(severity))
 	if sev == "" {
 		sev = "medium"
 	}
 	if !isValidSeverity(sev) {
-		return nil, ErrBadRequest("INVALID_SEVERITY", "severity should be low/medium/high/critical")
+		return nil, ErrBadRequest(CodeParamsError, "severity should be low/medium/high/critical")
 	}
 	if _, err := s.executionRepo.FindResultByID(ctx, runResultID, projectID); err != nil {
-		return nil, ErrNotFound("RUN_RESULT_NOT_FOUND", "run result not found")
+		return nil, ErrNotFound(CodeNotFound, "run result not found")
 	}
 	defect := model.Defect{
 		ProjectID: projectID, RunResultID: runResultID,
@@ -41,7 +41,7 @@ func (s *DefectService) Create(ctx context.Context, projectID, userID, runResult
 		Severity: sev, Status: "open", CreatedBy: userID,
 	}
 	if err := s.defectRepo.Create(ctx, &defect); err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return &defect, nil
 }

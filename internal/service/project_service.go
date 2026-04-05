@@ -37,15 +37,15 @@ func NewProjectService(
 func (s *ProjectService) Create(ctx context.Context, userID uint, name, description, avatar string) (*model.Project, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return nil, ErrBadRequest("MISSING_NAME", "project name is required")
+		return nil, ErrBadRequest(CodeParamsError, "project name is required")
 	}
 	// 项目名称全局唯一
 	exists, err := s.projectRepo.ExistsByName(ctx, name, 0)
 	if err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	if exists {
-		return nil, ErrConflict("PROJECT_EXISTS", "项目名称已存在")
+		return nil, ErrConflict(CodeConflict, "项目名称已存在")
 	}
 	project := model.Project{
 		Name:        name,
@@ -54,12 +54,12 @@ func (s *ProjectService) Create(ctx context.Context, userID uint, name, descript
 		Status:      model.ProjectStatusActive,
 	}
 	if err := s.projectRepo.Create(ctx, &project); err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	// 将创建者设为项目 owner
 	member := model.ProjectMember{ProjectID: project.ID, UserID: userID, Role: model.MemberRoleOwner}
 	if err := s.projectRepo.AddMember(ctx, &member); err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return &project, nil
 }
@@ -78,15 +78,15 @@ func (s *ProjectService) Update(ctx context.Context, actorID, projectID uint, na
 	if name != nil {
 		n := strings.TrimSpace(*name)
 		if n == "" {
-			return nil, ErrBadRequest("INVALID_NAME", "project name is required")
+			return nil, ErrBadRequest(CodeParamsError, "project name is required")
 		}
 		// 名称唯一性
 		exists, err := s.projectRepo.ExistsByName(ctx, n, projectID)
 		if err != nil {
-			return nil, ErrInternal("DB_ERROR", err)
+			return nil, ErrInternal(CodeInternal, err)
 		}
 		if exists {
-			return nil, ErrConflict("PROJECT_EXISTS", "项目名称已存在")
+			return nil, ErrConflict(CodeConflict, "项目名称已存在")
 		}
 		updates["name"] = n
 	}
@@ -97,10 +97,10 @@ func (s *ProjectService) Update(ctx context.Context, actorID, projectID uint, na
 		updates["avatar"] = strings.TrimSpace(*avatar)
 	}
 	if len(updates) == 0 {
-		return nil, ErrBadRequest("NO_FIELDS", "no valid fields to update")
+		return nil, ErrBadRequest(CodeParamsError, "no valid fields to update")
 	}
 	if err := s.projectRepo.Updates(ctx, projectID, updates); err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return s.projectRepo.FindByID(ctx, projectID)
 }
@@ -165,12 +165,12 @@ func (s *ProjectService) Delete(ctx context.Context, actorID, projectID uint) er
 	}
 	// 必须已归档
 	if !model.IsArchivedProject(project.Status) {
-		return ErrBadRequest("NOT_ARCHIVED", "项目必须先归档后才可删除")
+		return ErrBadRequest(CodeParamsError, "项目必须先归档后才可删除")
 	}
 	// 检查用例数
 	tcCount, err := s.projectRepo.CountTestCases(ctx, projectID)
 	if err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if tcCount > 0 {
 		return ErrProjectNotEmpty
@@ -178,14 +178,14 @@ func (s *ProjectService) Delete(ctx context.Context, actorID, projectID uint) er
 	// 检查缺陷数
 	defectCount, err := s.projectRepo.CountDefects(ctx, projectID)
 	if err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if defectCount > 0 {
 		return ErrProjectNotEmpty
 	}
 	// 清理成员关系后删除项目
 	if err := s.projectRepo.DeleteAllMembers(ctx, projectID); err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	return s.projectRepo.Delete(ctx, projectID)
 }
@@ -193,7 +193,7 @@ func (s *ProjectService) Delete(ctx context.Context, actorID, projectID uint) er
 // AddMember 添加项目成员
 func (s *ProjectService) AddMember(ctx context.Context, projectID, userID uint, role string) (*model.ProjectMember, error) {
 	if userID == 0 || !model.IsValidMemberRole(role) {
-		return nil, ErrBadRequest("INVALID_PARAMS", "user_id/role is invalid")
+		return nil, ErrBadRequest(CodeParamsError, "user_id/role is invalid")
 	}
 	// 检查项目是否存在
 	project, err := s.projectRepo.FindByID(ctx, projectID)
@@ -205,11 +205,11 @@ func (s *ProjectService) AddMember(ctx context.Context, projectID, userID uint, 
 	}
 	// 检查目标用户是否存在
 	if _, err := s.userRepo.FindByID(ctx, userID); err != nil {
-		return nil, ErrNotFound("USER_NOT_FOUND", "target user not found")
+		return nil, ErrNotFound(CodeNotFound, "target user not found")
 	}
 	member := model.ProjectMember{ProjectID: projectID, UserID: userID, Role: role}
 	if err := s.projectRepo.AddMember(ctx, &member); err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return &member, nil
 }
@@ -227,7 +227,7 @@ func (s *ProjectService) RemoveMember(ctx context.Context, projectID, userID uin
 	// 校验目标用户的全局角色，admin/manager 为受保护成员不可移除
 	targetUser, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
-		return ErrNotFound("USER_NOT_FOUND", "target user not found")
+		return ErrNotFound(CodeNotFound, "target user not found")
 	}
 	// 这里同时检查主角色缓存和角色绑定表，避免多角色成员绕过前端禁删限制。
 	isProtected, err := s.hasProtectedGlobalRole(ctx, targetUser)
@@ -235,7 +235,7 @@ func (s *ProjectService) RemoveMember(ctx context.Context, projectID, userID uin
 		return err
 	}
 	if isProtected {
-		return ErrForbidden("PROTECTED_MEMBER", "admin/manager 角色的成员不可移除")
+		return ErrForbidden(CodeForbidden, "admin/manager 角色的成员不可移除")
 	}
 	return s.projectRepo.RemoveMember(ctx, projectID, userID)
 }
@@ -257,7 +257,7 @@ func (s *ProjectService) RequireAccess(ctx context.Context, user model.User, pro
 	}
 	isMember, err := s.projectRepo.IsMember(ctx, projectID, user.ID)
 	if err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if !isMember {
 		return ErrNoProjectAccess
@@ -269,7 +269,7 @@ func (s *ProjectService) RequireAccess(ctx context.Context, user model.User, pro
 // 这里同时检查缓存主角色和角色关联表，避免多角色场景下被绕过。
 func (s *ProjectService) hasProtectedGlobalRole(ctx context.Context, user *model.User) (bool, error) {
 	if user == nil {
-		return false, ErrNotFound("USER_NOT_FOUND", "target user not found")
+		return false, ErrNotFound(CodeNotFound, "target user not found")
 	}
 	if model.IsProtectedGlobalRole(strings.TrimSpace(user.Role)) {
 		return true, nil
@@ -277,7 +277,7 @@ func (s *ProjectService) hasProtectedGlobalRole(ctx context.Context, user *model
 
 	hasAdmin, err := s.userRepo.HasRoleName(ctx, user.ID, model.GlobalRoleAdmin)
 	if err != nil {
-		return false, ErrInternal("DB_ERROR", err)
+		return false, ErrInternal(CodeInternal, err)
 	}
 	if hasAdmin {
 		return true, nil
@@ -285,7 +285,7 @@ func (s *ProjectService) hasProtectedGlobalRole(ctx context.Context, user *model
 
 	hasManager, err := s.userRepo.HasRoleName(ctx, user.ID, model.GlobalRoleManager)
 	if err != nil {
-		return false, ErrInternal("DB_ERROR", err)
+		return false, ErrInternal(CodeInternal, err)
 	}
 	// manager 既可能落在主角色缓存，也可能只存在于角色绑定表，所以这里需要补一次关联查询。
 	return hasManager, nil

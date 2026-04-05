@@ -48,7 +48,7 @@ func NewExecutionService(
 func (s *ExecutionService) CreateRun(ctx context.Context, projectID, userID uint, mode string, scriptID uint, scriptIDs []uint) (*RunOutput, error) {
 	scripts, err := s.executionRepo.ResolveScripts(ctx, projectID, mode, scriptID, uniqueUint(scriptIDs))
 	if err != nil {
-		return nil, ErrBadRequest("RESOLVE_SCRIPTS", err.Error())
+		return nil, ErrBadRequest(CodeParamsError, err.Error())
 	}
 
 	run := model.Run{ProjectID: projectID, TriggeredBy: userID, Mode: mode, Status: "running"}
@@ -77,7 +77,7 @@ func (s *ExecutionService) CreateRun(ctx context.Context, projectID, userID uint
 		return s.executionRepo.SaveRunTx(tx, &run)
 	})
 	if err != nil {
-		return nil, ErrInternal("TX_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	s.cacheRunStatus(ctx, run.ID, overallStatus)
@@ -88,11 +88,11 @@ func (s *ExecutionService) CreateRun(ctx context.Context, projectID, userID uint
 func (s *ExecutionService) ListResults(ctx context.Context, runID, projectID uint) (*model.Run, []model.RunResult, error) {
 	run, err := s.executionRepo.FindRun(ctx, runID, projectID)
 	if err != nil {
-		return nil, nil, ErrNotFound("RUN_NOT_FOUND", "run not found")
+		return nil, nil, ErrNotFound(CodeNotFound, "run not found")
 	}
 	results, err := s.executionRepo.ListResults(ctx, runID, projectID)
 	if err != nil {
-		return nil, nil, ErrInternal("DB_ERROR", err)
+		return nil, nil, ErrInternal(CodeInternal, err)
 	}
 	return run, results, nil
 }

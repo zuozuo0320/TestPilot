@@ -30,6 +30,7 @@ type Config struct {
 	RunFailRate        float64
 	CORSAllowOrigins   string
 	JWTSecret          string
+	ExecutorURL        string // Python 执行服务内部地址（Go 后端调用）
 	ExecutorPublicURL  string // Python 执行服务地址（前端浏览器可访问）
 	ExecutorAPIKey     string // Python 执行服务 API Key
 }

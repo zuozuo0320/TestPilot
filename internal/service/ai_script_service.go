@@ -248,16 +248,16 @@ type EditScriptInput struct {
 // CreateTask 创建生成任务（事务保证一致性）
 func (s *AIScriptService) CreateTask(ctx context.Context, userID uint, input CreateTaskInput) (*model.AIScriptTask, error) {
 	if strings.TrimSpace(input.TaskName) == "" {
-		return nil, ErrBadRequest("MISSING_TASK_NAME", "任务名称不能为空")
+		return nil, ErrBadRequest(CodeParamsError, "任务名称不能为空")
 	}
 	if strings.TrimSpace(input.ScenarioDesc) == "" {
-		return nil, ErrBadRequest("MISSING_SCENARIO_DESC", "场景描述不能为空")
+		return nil, ErrBadRequest(CodeParamsError, "场景描述不能为空")
 	}
 	if strings.TrimSpace(input.StartURL) == "" {
-		return nil, ErrBadRequest("MISSING_START_URL", "起始地址不能为空")
+		return nil, ErrBadRequest(CodeParamsError, "起始地址不能为空")
 	}
 	if len(input.CaseIDs) == 0 {
-		return nil, ErrBadRequest("MISSING_CASE_IDS", "至少需要关联一条测试用例")
+		return nil, ErrBadRequest(CodeParamsError, "至少需要关联一条测试用例")
 	}
 
 	// 去重 CaseIDs
@@ -273,7 +273,7 @@ func (s *AIScriptService) CreateTask(ctx context.Context, userID uint, input Cre
 		genMode = model.AIGenerationModeRecordingEnhanced
 	}
 	if genMode != model.AIGenerationModeRecordingEnhanced && genMode != model.AIGenerationModeAIDirect {
-		return nil, ErrBadRequest("INVALID_GENERATION_MODE", "生成模式无效，仅支持 RECORDING_ENHANCED 或 AI_DIRECT")
+		return nil, ErrBadRequest(CodeParamsError, "生成模式无效，仅支持 RECORDING_ENHANCED 或 AI_DIRECT")
 	}
 
 	task := &model.AIScriptTask{
@@ -311,7 +311,7 @@ func (s *AIScriptService) CreateTask(ctx context.Context, userID uint, input Cre
 	})
 	if err != nil {
 		s.logger.Error("CreateTask transaction failed", "error", err, "user_id", userID)
-		return nil, ErrInternal("AI_TASK_CREATE_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	task.CaseCount = int64(len(uniqueCaseIDs))
@@ -323,9 +323,9 @@ func (s *AIScriptService) GetTask(ctx context.Context, taskID uint) (*model.AISc
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_TASK_NOT_FOUND", "任务不存在")
+			return nil, ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return nil, ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	s.fillTaskVirtualFields(ctx, task)
 	return task, nil
@@ -342,7 +342,7 @@ func (s *AIScriptService) ListTasks(ctx context.Context, projectID uint, keyword
 
 	tasks, total, err := s.repo.ListTasks(ctx, projectID, keyword, taskStatus, page, pageSize)
 	if err != nil {
-		return nil, 0, ErrInternal("AI_TASK_LIST_FAILED", err)
+		return nil, 0, ErrInternal(CodeInternal, err)
 	}
 
 	// 批量填充虚拟字段，减少 N+1 查询影响
@@ -355,20 +355,20 @@ func (s *AIScriptService) ExecuteTask(ctx context.Context, userID, taskID uint) 
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrNotFound("AI_TASK_NOT_FOUND", "任务不存在")
+			return ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	// 仅 AI_DIRECT 模式可通过此接口触发，RECORDING_ENHANCED 走录制接口
 	if task.GenerationMode != model.AIGenerationModeAIDirect {
-		return ErrConflict("AI_TASK_MODE_MISMATCH",
+		return ErrConflict(CodeConflict,
 			"当前任务为录制增强模式，请通过录制接口操作，此接口仅用于 AI 直生模式")
 	}
 
 	// 仅 PENDING_EXECUTE / GENERATE_FAILED 状态可触发执行
 	if task.TaskStatus != model.AITaskStatusPendingExecute && task.TaskStatus != model.AITaskStatusGenerateFailed {
-		return ErrConflict("AI_TASK_STATUS_INVALID",
+		return ErrConflict(CodeConflict,
 			fmt.Sprintf("当前状态 %s 不允许执行生成，仅 DRAFT 或 GENERATE_FAILED 可触发", task.TaskStatus))
 	}
 
@@ -378,7 +378,7 @@ func (s *AIScriptService) ExecuteTask(ctx context.Context, userID, taskID uint) 
 		"task_status":       model.AITaskStatusRunning,
 		"latest_execute_at": &now,
 	}); err != nil {
-		return ErrInternal("AI_TASK_UPDATE_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	// 异步调用 Python 执行服务
@@ -521,15 +521,15 @@ func (s *AIScriptService) handleGenerateResult(ctx context.Context, taskID, user
 // EditScript 编辑脚本（生成新版本，事务保证一致性）
 func (s *AIScriptService) EditScript(ctx context.Context, userID, taskID uint, input EditScriptInput) (*model.AIScriptVersion, error) {
 	if strings.TrimSpace(input.ScriptContent) == "" {
-		return nil, ErrBadRequest("MISSING_SCRIPT_CONTENT", "脚本内容不能为空")
+		return nil, ErrBadRequest(CodeParamsError, "脚本内容不能为空")
 	}
 
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_TASK_NOT_FOUND", "任务不存在")
+			return nil, ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return nil, ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 仅特定状态可编辑
@@ -539,7 +539,7 @@ func (s *AIScriptService) EditScript(ctx context.Context, userID, taskID uint, i
 		model.AITaskStatusPendingRevalidate: true,
 	}
 	if !allowed[task.TaskStatus] {
-		return nil, ErrConflict("AI_TASK_STATUS_INVALID",
+		return nil, ErrConflict(CodeConflict,
 			fmt.Sprintf("当前状态 %s 不允许编辑脚本", task.TaskStatus))
 	}
 
@@ -605,7 +605,7 @@ func (s *AIScriptService) EditScript(ctx context.Context, userID, taskID uint, i
 	})
 	if err != nil {
 		s.logger.Error("EditScript transaction failed", "error", err, "task_id", taskID)
-		return nil, ErrInternal("AI_SCRIPT_CREATE_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	return version, nil
@@ -615,7 +615,7 @@ func (s *AIScriptService) EditScript(ctx context.Context, userID, taskID uint, i
 func (s *AIScriptService) GetScriptVersions(ctx context.Context, taskID uint) ([]model.AIScriptVersion, error) {
 	versions, err := s.repo.ListScriptVersions(ctx, taskID)
 	if err != nil {
-		return nil, ErrInternal("AI_SCRIPT_LIST_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 批量查询创建人，避免 N+1
@@ -635,9 +635,9 @@ func (s *AIScriptService) GetCurrentScript(ctx context.Context, taskID uint) (*m
 	version, err := s.repo.GetCurrentScriptVersion(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_SCRIPT_NOT_FOUND", "当前无脚本版本")
+			return nil, ErrNotFound(CodeNotFound, "当前无脚本版本")
 		}
-		return nil, ErrInternal("AI_SCRIPT_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	user, _ := s.userRepo.FindByID(ctx, version.CreatedBy)
 	if user != nil {
@@ -651,31 +651,31 @@ func (s *AIScriptService) TriggerValidation(ctx context.Context, userID, taskID,
 	// 防重复验证
 	hasActive, err := s.repo.HasActiveValidation(ctx, scriptVersionID)
 	if err != nil {
-		return nil, ErrInternal("AI_VALIDATION_CHECK_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	if hasActive {
-		return nil, ErrConflict("AI_VALIDATION_IN_PROGRESS", "该版本正在验证中，请稍后再试")
+		return nil, ErrConflict(CodeConflict, "该版本正在验证中，请稍后再试")
 	}
 
 	version, err := s.repo.GetScriptVersion(ctx, scriptVersionID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_SCRIPT_NOT_FOUND", "脚本版本不存在")
+			return nil, ErrNotFound(CodeNotFound, "脚本版本不存在")
 		}
-		return nil, ErrInternal("AI_SCRIPT_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_TASK_NOT_FOUND", "任务不存在")
+			return nil, ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return nil, ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 校验 scriptVersion 归属于此 task
 	if version.TaskID != taskID {
-		return nil, ErrBadRequest("AI_SCRIPT_TASK_MISMATCH", "脚本版本不属于当前任务")
+		return nil, ErrBadRequest(CodeParamsError, "脚本版本不属于当前任务")
 	}
 
 	// 创建验证记录
@@ -690,7 +690,7 @@ func (s *AIScriptService) TriggerValidation(ctx context.Context, userID, taskID,
 	}
 
 	if err := s.repo.CreateValidation(ctx, validation); err != nil {
-		return nil, ErrInternal("AI_VALIDATION_CREATE_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 更新脚本版本的验证状态
@@ -863,7 +863,7 @@ func (s *AIScriptService) failValidation(ctx context.Context, validationID, scri
 func (s *AIScriptService) GetTraces(ctx context.Context, taskID uint) ([]model.AIScriptTrace, error) {
 	traces, err := s.repo.ListTraces(ctx, taskID)
 	if err != nil {
-		return nil, ErrInternal("AI_TRACE_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return traces, nil
 }
@@ -873,9 +873,9 @@ func (s *AIScriptService) GetLatestValidation(ctx context.Context, scriptVersion
 	v, err := s.repo.GetLatestValidation(ctx, scriptVersionID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_VALIDATION_NOT_FOUND", "暂无验证记录")
+			return nil, ErrNotFound(CodeNotFound, "暂无验证记录")
 		}
-		return nil, ErrInternal("AI_VALIDATION_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	// 填充触发人名称
 	user, _ := s.userRepo.FindByID(ctx, v.TriggeredBy)
@@ -900,7 +900,7 @@ func (s *AIScriptService) GetLatestValidation(ctx context.Context, scriptVersion
 func (s *AIScriptService) GetEvidences(ctx context.Context, taskID uint) ([]model.AIScriptEvidence, error) {
 	evidences, err := s.repo.ListEvidences(ctx, taskID)
 	if err != nil {
-		return nil, ErrInternal("AI_EVIDENCE_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return evidences, nil
 }
@@ -1042,18 +1042,18 @@ func (s *AIScriptService) ConfirmScript(ctx context.Context, userID, scriptID ui
 	version, err := s.repo.GetScriptVersion(ctx, scriptID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrNotFound("AI_SCRIPT_4004", "脚本版本不存在")
+			return ErrNotFound(CodeNotFound, "脚本版本不存在")
 		}
-		return ErrInternal("AI_SCRIPT_QUERY_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if version.ScriptStatus == model.AIScriptStatusDiscarded {
-		return ErrConflict("AI_SCRIPT_4010", "已废弃版本不允许操作")
+		return ErrConflict(CodeConflict, "已废弃版本不允许操作")
 	}
 	if version.ValidationStatus != model.AIValidationStatusPassed {
-		return ErrConflict("AI_SCRIPT_4007", "脚本尚未验证通过，不允许确认")
+		return ErrConflict(CodeConflict, "脚本尚未验证通过，不允许确认")
 	}
 	if !version.IsCurrentFlag {
-		return ErrConflict("AI_SCRIPT_4008", "当前版本不是任务主版本")
+		return ErrConflict(CodeConflict, "当前版本不是任务主版本")
 	}
 
 	now := time.Now()
@@ -1062,7 +1062,7 @@ func (s *AIScriptService) ConfirmScript(ctx context.Context, userID, scriptID ui
 		"confirmed_by":  &userID,
 		"confirmed_at":  &now,
 	}); err != nil {
-		return ErrInternal("AI_SCRIPT_CONFIRM_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	// 同步任务状态
@@ -1081,19 +1081,19 @@ func (s *AIScriptService) DiscardScript(ctx context.Context, userID, scriptID ui
 	version, err := s.repo.GetScriptVersion(ctx, scriptID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrNotFound("AI_SCRIPT_4004", "脚本版本不存在")
+			return ErrNotFound(CodeNotFound, "脚本版本不存在")
 		}
-		return ErrInternal("AI_SCRIPT_QUERY_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if version.ScriptStatus == model.AIScriptStatusDiscarded {
-		return ErrConflict("AI_SCRIPT_4010", "已废弃版本不允许操作")
+		return ErrConflict(CodeConflict, "已废弃版本不允许操作")
 	}
 
 	if err := s.repo.UpdateScriptVersionFields(ctx, scriptID, map[string]interface{}{
 		"script_status": model.AIScriptStatusDiscarded,
 		"comment_text":  reason,
 	}); err != nil {
-		return ErrInternal("AI_SCRIPT_DISCARD_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	return nil
 }
@@ -1105,21 +1105,21 @@ func (s *AIScriptService) DiscardTask(ctx context.Context, userID, taskID uint, 
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
-		return ErrBadRequest("AI_SCRIPT_4001", "废弃原因不能为空")
+		return ErrBadRequest(CodeParamsError, "废弃原因不能为空")
 	}
 
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrNotFound("AI_SCRIPT_4003", "任务不存在")
+			return ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if task.TaskStatus == model.AITaskStatusDiscarded {
-		return ErrConflict("AI_SCRIPT_4005", "任务已废弃，不可重复操作")
+		return ErrConflict(CodeConflict, "任务已废弃，不可重复操作")
 	}
 	if !canDiscardTaskStatus(task.TaskStatus) {
-		return ErrConflict("AI_SCRIPT_4005", fmt.Sprintf("当前状态 %s 不允许废弃", task.TaskStatus))
+		return ErrConflict(CodeConflict, fmt.Sprintf("当前状态 %s 不允许废弃", task.TaskStatus))
 	}
 
 	if err := s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
@@ -1127,7 +1127,7 @@ func (s *AIScriptService) DiscardTask(ctx context.Context, userID, taskID uint, 
 		"discard_reason": reason,
 		"updated_by":     userID,
 	}); err != nil {
-		return ErrInternal("AI_TASK_DISCARD_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	return nil
 }
@@ -1141,16 +1141,16 @@ func (s *AIScriptService) DeleteTask(ctx context.Context, userID, taskID uint) e
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrNotFound("AI_SCRIPT_4003", "任务不存在")
+			return ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if task.TaskStatus != model.AITaskStatusDiscarded {
-		return ErrConflict("AI_SCRIPT_4011", "仅允许删除已废弃任务")
+		return ErrConflict(CodeConflict, "仅允许删除已废弃任务")
 	}
 
 	if err := s.repo.DeleteTask(ctx, taskID); err != nil {
-		return ErrInternal("AI_TASK_DELETE_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	return nil
 }
@@ -1161,7 +1161,7 @@ func (s *AIScriptService) BatchDiscardTasks(ctx context.Context, userID uint, in
 		return nil, err
 	}
 	if strings.TrimSpace(input.Reason) == "" {
-		return nil, ErrBadRequest("AI_SCRIPT_4001", "废弃原因不能为空")
+		return nil, ErrBadRequest(CodeParamsError, "废弃原因不能为空")
 	}
 
 	resolution, err := s.resolveBatchTaskSelection(ctx, input.BatchTaskSelectionInput)
@@ -1296,13 +1296,13 @@ func buildBatchReasonStats(reasonMap map[string]int) []BatchTaskActionReasonStat
 func (s *AIScriptService) ensureTaskManagePermission(ctx context.Context, userID uint) error {
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
-		return ErrInternal("AI_USER_QUERY_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if user == nil {
-		return ErrNotFound("USER_NOT_FOUND", "用户不存在")
+		return ErrNotFound(CodeNotFound, "用户不存在")
 	}
 	if user.Role != model.GlobalRoleAdmin && user.Role != model.GlobalRoleManager {
-		return ErrForbidden("AI_SCRIPT_4006", "当前用户无权限执行该操作")
+		return ErrForbidden(CodeForbidden, "当前用户无权限执行该操作")
 	}
 	return nil
 }
@@ -1313,12 +1313,12 @@ func (s *AIScriptService) resolveBatchTaskSelection(ctx context.Context, input B
 	case BatchTaskSelectionModeIDs:
 		taskIDs := deduplicateUints(input.TaskIDs)
 		if len(taskIDs) == 0 {
-			return nil, ErrBadRequest("AI_SCRIPT_4001", "批量操作至少需要选择一条任务")
+			return nil, ErrBadRequest(CodeParamsError, "批量操作至少需要选择一条任务")
 		}
 
 		tasks, err := s.repo.ListTasksByIDs(ctx, taskIDs)
 		if err != nil {
-			return nil, ErrInternal("AI_TASK_LIST_FAILED", err)
+			return nil, ErrInternal(CodeInternal, err)
 		}
 
 		return &batchTaskSelectionResolution{
@@ -1329,7 +1329,7 @@ func (s *AIScriptService) resolveBatchTaskSelection(ctx context.Context, input B
 
 	case BatchTaskSelectionModeFilterAll:
 		if input.FilterSnapshot == nil {
-			return nil, ErrBadRequest("AI_SCRIPT_4001", "筛选全选模式缺少筛选快照")
+			return nil, ErrBadRequest(CodeParamsError, "筛选全选模式缺少筛选快照")
 		}
 
 		excludedTaskIDs := deduplicateUints(input.ExcludedTaskIDs)
@@ -1341,7 +1341,7 @@ func (s *AIScriptService) resolveBatchTaskSelection(ctx context.Context, input B
 			excludedTaskIDs,
 		)
 		if err != nil {
-			return nil, ErrInternal("AI_TASK_LIST_FAILED", err)
+			return nil, ErrInternal(CodeInternal, err)
 		}
 
 		requestedIDs := make([]uint, 0, len(tasks))
@@ -1356,7 +1356,7 @@ func (s *AIScriptService) resolveBatchTaskSelection(ctx context.Context, input B
 		}, nil
 
 	default:
-		return nil, ErrBadRequest("AI_SCRIPT_4001", "selection_mode 无效")
+		return nil, ErrBadRequest(CodeParamsError, "selection_mode 无效")
 	}
 }
 
@@ -1405,15 +1405,15 @@ func (s *AIScriptService) CloneTask(ctx context.Context, userID, taskID uint, ne
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_SCRIPT_4003", "任务不存在")
+			return nil, ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return nil, ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 获取原任务关联的用例
 	caseIDs, err := s.repo.GetTaskCaseIDs(ctx, taskID)
 	if err != nil {
-		return nil, ErrInternal("AI_TASK_CASE_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	return s.CreateTask(ctx, userID, CreateTaskInput{
@@ -1433,21 +1433,21 @@ func (s *AIScriptService) StartRecording(ctx context.Context, userID, taskID uin
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_SCRIPT_4003", "任务不存在")
+			return nil, ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return nil, ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	if task.GenerationMode != model.AIGenerationModeRecordingEnhanced {
-		return nil, ErrConflict("AI_TASK_MODE_MISMATCH", "仅录制增强模式支持录制")
+		return nil, ErrConflict(CodeConflict, "仅录制增强模式支持录制")
 	}
 	if task.TaskStatus != model.AITaskStatusPendingExecute && task.TaskStatus != model.AITaskStatusGenerateFailed {
-		return nil, ErrConflict("AI_SCRIPT_4005", fmt.Sprintf("当前状态 %s 不允许开始录制", task.TaskStatus))
+		return nil, ErrConflict(CodeConflict, fmt.Sprintf("当前状态 %s 不允许开始录制", task.TaskStatus))
 	}
 
 	// #4 并发录制互斥检查：同一任务只允许一个活跃录制
 	existingRecording, _ := s.repo.FindLatestRecordingByTaskID(ctx, taskID)
 	if existingRecording != nil && existingRecording.RecordingStatus == model.AIRecordingStatusRecording {
-		return nil, ErrConflict("AI_RECORDING_IN_PROGRESS", "该任务已有进行中的录制会话，请等待完成或取消后重试")
+		return nil, ErrConflict(CodeConflict, "该任务已有进行中的录制会话，请等待完成或取消后重试")
 	}
 
 	session := &model.AIScriptRecordingSession{
@@ -1457,7 +1457,7 @@ func (s *AIScriptService) StartRecording(ctx context.Context, userID, taskID uin
 		CreatedBy:       userID,
 	}
 	if err := s.repo.CreateRecordingSession(ctx, session); err != nil {
-		return nil, ErrInternal("AI_RECORDING_CREATE_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 更新任务状态
@@ -1481,7 +1481,7 @@ func (s *AIScriptService) FinishRecording(ctx context.Context, userID, taskID ui
 		"finished_at":        &now,
 	}
 	if err := s.repo.UpdateRecordingSessionFields(ctx, recordingID, updates); err != nil {
-		return ErrInternal("AI_RECORDING_UPDATE_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	// 如果需要触发 AI 重构，可在此异步调用 executor/refactor
@@ -1506,7 +1506,7 @@ func (s *AIScriptService) FailRecording(ctx context.Context, userID, taskID uint
 		"finished_at":      &now,
 	}
 	if err := s.repo.UpdateRecordingSessionFields(ctx, recordingID, updates); err != nil {
-		return ErrInternal("AI_RECORDING_UPDATE_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	// 录制失败后把任务切回可重试状态，避免页面长期卡在运行中。
@@ -1523,9 +1523,9 @@ func (s *AIScriptService) GetLatestRecording(ctx context.Context, taskID uint) (
 	session, err := s.repo.FindLatestRecordingByTaskID(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound("AI_RECORDING_NOT_FOUND", "未找到录制记录")
+			return nil, ErrNotFound(CodeNotFound, "未找到录制记录")
 		}
-		return nil, ErrInternal("AI_RECORDING_QUERY_FAILED", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return session, nil
 }
@@ -1846,15 +1846,15 @@ func (s *AIScriptService) GetValidationHistory(ctx context.Context, scriptVersio
 // UpdateTaskCases 更新任务关联用例
 func (s *AIScriptService) UpdateTaskCases(ctx context.Context, userID, taskID uint, caseIDs []uint) error {
 	if len(caseIDs) == 0 {
-		return ErrBadRequest("AI_SCRIPT_4002", "至少需要关联一条测试用例")
+		return ErrBadRequest(CodeParamsError, "至少需要关联一条测试用例")
 	}
 
 	_, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrNotFound("AI_SCRIPT_4003", "任务不存在")
+			return ErrNotFound(CodeNotFound, "任务不存在")
 		}
-		return ErrInternal("AI_TASK_QUERY_FAILED", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	uniqueIDs := deduplicateUints(caseIDs)
@@ -1882,9 +1882,9 @@ func (s *AIScriptService) ExportScript(ctx context.Context, scriptID uint) (stri
 	version, err := s.repo.GetScriptVersion(ctx, scriptID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", "", ErrNotFound("AI_SCRIPT_4004", "脚本版本不存在")
+			return "", "", ErrNotFound(CodeNotFound, "脚本版本不存在")
 		}
-		return "", "", ErrInternal("AI_SCRIPT_QUERY_FAILED", err)
+		return "", "", ErrInternal(CodeInternal, err)
 	}
 	fileName := fmt.Sprintf("task-%d-v%d.spec.ts", version.TaskID, version.VersionNo)
 	return version.ScriptContent, fileName, nil

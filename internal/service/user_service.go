@@ -109,27 +109,27 @@ func (s *UserService) GetProjectIDs(ctx context.Context, userID uint) ([]uint, e
 func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUserInput) (*model.User, error) {
 	// 基础校验
 	if input.Name == "" || input.Email == "" {
-		return nil, ErrBadRequest("MISSING_FIELDS", "name/email is required")
+		return nil, ErrBadRequest(CodeParamsError, "name/email is required")
 	}
 	if !isValidPersonName(input.Name) {
-		return nil, ErrBadRequest("INVALID_NAME", "name is invalid")
+		return nil, ErrBadRequest(CodeParamsError, "name is invalid")
 	}
 	if !isValidEmail(input.Email) {
-		return nil, ErrBadRequest("INVALID_EMAIL", "email is invalid")
+		return nil, ErrBadRequest(CodeParamsError, "email is invalid")
 	}
 	if input.Phone != "" && !isValidPhone(input.Phone) {
-		return nil, ErrBadRequest("INVALID_PHONE", "phone is invalid")
+		return nil, ErrBadRequest(CodeParamsError, "phone is invalid")
 	}
 	if len(input.RoleIDs) == 0 {
-		return nil, ErrBadRequest("MISSING_ROLE_IDS", "role_ids is required")
+		return nil, ErrBadRequest(CodeParamsError, "role_ids is required")
 	}
 	if len(input.ProjectIDs) == 0 {
-		return nil, ErrBadRequest("MISSING_PROJECT_IDS", "project_ids is required")
+		return nil, ErrBadRequest(CodeParamsError, "project_ids is required")
 	}
 
 	// 密码校验（FR-02-12）
 	if input.Password == "" {
-		return nil, ErrBadRequest("MISSING_PASSWORD", "password is required")
+		return nil, ErrBadRequest(CodeParamsError, "password is required")
 	}
 	if err := validatePassword(input.Password); err != nil {
 		return nil, err
@@ -137,13 +137,13 @@ func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUser
 
 	// 唯一性校验
 	if exists, err := s.userRepo.ExistsByEmail(ctx, input.Email, 0); err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	} else if exists {
 		return nil, ErrEmailExists
 	}
 	if input.Phone != "" {
 		if exists, err := s.userRepo.ExistsByPhone(ctx, input.Phone, 0); err != nil {
-			return nil, ErrInternal("DB_ERROR", err)
+			return nil, ErrInternal(CodeInternal, err)
 		} else if exists {
 			return nil, ErrPhoneExists
 		}
@@ -152,19 +152,19 @@ func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUser
 	// 角色验证：不可分配 admin
 	roles, err := s.roleRepo.FindByIDs(ctx, input.RoleIDs)
 	if err != nil || len(roles) != len(input.RoleIDs) {
-		return nil, ErrBadRequest("INVALID_ROLE_IDS", "role_ids contains invalid id")
+		return nil, ErrBadRequest(CodeParamsError, "role_ids contains invalid id")
 	}
 	if containsRoleName(roles, model.GlobalRoleAdmin) {
-		return nil, ErrBadRequest("ADMIN_ASSIGN_BLOCKED", "创建用户时不可分配 admin 角色")
+		return nil, ErrBadRequest(CodeParamsError, "创建用户时不可分配 admin 角色")
 	}
 
 	// 项目验证
 	allExist, err := s.projectRepo.ExistAll(ctx, input.ProjectIDs)
 	if err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	if !allExist {
-		return nil, ErrBadRequest("INVALID_PROJECT_IDS", "project_ids contains invalid id")
+		return nil, ErrBadRequest(CodeParamsError, "project_ids contains invalid id")
 	}
 
 	// 确定缓存主角色
@@ -208,9 +208,9 @@ func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUser
 	})
 	if err != nil {
 		if isDuplicateError(err) {
-			return nil, ErrConflict("USER_EXISTS", "user already exists")
+			return nil, ErrConflict(CodeConflict, "user already exists")
 		}
-		return nil, ErrInternal("TX_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return &entity, nil
 }
@@ -223,14 +223,14 @@ func (s *UserService) Update(ctx context.Context, actorID, userID uint, input Up
 		return nil, ErrUserNotFound
 	}
 	if target.DeletedAt.Valid {
-		return nil, ErrBadRequest("USER_DELETED", "cannot update deleted user")
+		return nil, ErrBadRequest(CodeParamsError, "cannot update deleted user")
 	}
 
 	updates := map[string]any{}
 	if input.Name != nil {
 		name := strings.TrimSpace(*input.Name)
 		if !isValidPersonName(name) {
-			return nil, ErrBadRequest("INVALID_NAME", "name is invalid")
+			return nil, ErrBadRequest(CodeParamsError, "name is invalid")
 		}
 		updates["name"] = name
 	}
@@ -238,7 +238,7 @@ func (s *UserService) Update(ctx context.Context, actorID, userID uint, input Up
 		phone := strings.TrimSpace(*input.Phone)
 		if phone != "" {
 			if !isValidPhone(phone) {
-				return nil, ErrBadRequest("INVALID_PHONE", "phone is invalid")
+				return nil, ErrBadRequest(CodeParamsError, "phone is invalid")
 			}
 			if exists, _ := s.userRepo.ExistsByPhone(ctx, phone, target.ID); exists {
 				return nil, ErrPhoneExists
@@ -258,20 +258,20 @@ func (s *UserService) Update(ctx context.Context, actorID, userID uint, input Up
 
 	if input.RoleIDs != nil {
 		if len(roleIDs) == 0 {
-			return nil, ErrBadRequest("MISSING_ROLE_IDS", "至少保留一个角色")
+			return nil, ErrBadRequest(CodeParamsError, "至少保留一个角色")
 		}
 		roles, err := s.roleRepo.FindByIDs(ctx, roleIDs)
 		if err != nil || len(roles) != len(roleIDs) {
-			return nil, ErrBadRequest("INVALID_ROLE_IDS", "role_ids contains invalid id")
+			return nil, ErrBadRequest(CodeParamsError, "role_ids contains invalid id")
 		}
 	}
 	if input.ProjectIDs != nil {
 		if len(projectIDs) == 0 {
-			return nil, ErrBadRequest("MISSING_PROJECT_IDS", "至少绑定一个项目")
+			return nil, ErrBadRequest(CodeParamsError, "至少绑定一个项目")
 		}
 		allExist, err := s.projectRepo.ExistAll(ctx, projectIDs)
 		if err != nil || !allExist {
-			return nil, ErrBadRequest("INVALID_PROJECT_IDS", "project_ids contains invalid id")
+			return nil, ErrBadRequest(CodeParamsError, "project_ids contains invalid id")
 		}
 	}
 
@@ -302,7 +302,7 @@ func (s *UserService) Update(ctx context.Context, actorID, userID uint, input Up
 		return s.auditRepo.WriteLogTx(tx, actorID, "user.update", "user", target.ID, before, after)
 	})
 	if err != nil {
-		return nil, ErrInternal("TX_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	updated, _ := s.userRepo.FindByID(ctx, target.ID)
 	return updated, nil
@@ -320,7 +320,7 @@ func (s *UserService) Delete(ctx context.Context, actorID, userID uint) error {
 	}
 	hasAdmin, err := s.userRepo.HasRoleName(ctx, target.ID, model.GlobalRoleAdmin)
 	if err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if hasAdmin {
 		return ErrAdminCannotBeDeleted
@@ -349,10 +349,10 @@ func (s *UserService) ResetPassword(ctx context.Context, actorID, userID uint, n
 	}
 	hash, err := pkgauth.HashPassword(newPassword)
 	if err != nil {
-		return ErrInternal("HASH_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if err := s.userRepo.Updates(ctx, target.ID, map[string]any{"password_hash": hash}); err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	return nil
 }
@@ -373,7 +373,7 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	}
 	hash, err := pkgauth.HashPassword(newPassword)
 	if err != nil {
-		return ErrInternal("HASH_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	return s.userRepo.Updates(ctx, target.ID, map[string]any{"password_hash": hash})
 }
@@ -389,10 +389,10 @@ func (s *UserService) ToggleActive(ctx context.Context, actorID, userID uint, ac
 	if !active {
 		hasAdmin, err := s.userRepo.HasRoleName(ctx, target.ID, model.GlobalRoleAdmin)
 		if err != nil {
-			return ErrInternal("DB_ERROR", err)
+			return ErrInternal(CodeInternal, err)
 		}
 		if hasAdmin || strings.EqualFold(target.Role, model.GlobalRoleAdmin) {
-			return ErrBadRequest("ADMIN_PROTECTED", "admin 用户不可被禁用")
+			return ErrBadRequest(CodeParamsError, "admin 用户不可被禁用")
 		}
 	}
 	return s.userRepo.Updates(ctx, target.ID, map[string]any{"active": active})
@@ -402,11 +402,11 @@ func (s *UserService) ToggleActive(ctx context.Context, actorID, userID uint, ac
 func (s *UserService) AssignRoles(ctx context.Context, actorID, userID uint, roleIDs []uint) error {
 	roleIDs = uniqueUint(roleIDs)
 	if len(roleIDs) == 0 {
-		return ErrBadRequest("MISSING_ROLE_IDS", "role_ids is required")
+		return ErrBadRequest(CodeParamsError, "role_ids is required")
 	}
 	roles, err := s.roleRepo.FindByIDs(ctx, roleIDs)
 	if err != nil || len(roles) != len(roleIDs) {
-		return ErrBadRequest("INVALID_ROLE_IDS", "role_ids contains invalid id")
+		return ErrBadRequest(CodeParamsError, "role_ids contains invalid id")
 	}
 	return s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.userRepo.ReplaceRolesTx(tx, userID, roleIDs); err != nil {
@@ -420,11 +420,11 @@ func (s *UserService) AssignRoles(ctx context.Context, actorID, userID uint, rol
 func (s *UserService) AssignProjects(ctx context.Context, actorID, userID uint, projectIDs []uint) error {
 	projectIDs = uniqueUint(projectIDs)
 	if len(projectIDs) == 0 {
-		return ErrBadRequest("MISSING_PROJECT_IDS", "project_ids is required")
+		return ErrBadRequest(CodeParamsError, "project_ids is required")
 	}
 	allExist, err := s.projectRepo.ExistAll(ctx, projectIDs)
 	if err != nil || !allExist {
-		return ErrBadRequest("INVALID_PROJECT_IDS", "project_ids contains invalid id")
+		return ErrBadRequest(CodeParamsError, "project_ids contains invalid id")
 	}
 	return s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.userRepo.ReplaceProjectsTx(tx, userID, projectIDs); err != nil {

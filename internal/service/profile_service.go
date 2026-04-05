@@ -37,18 +37,18 @@ func (s *ProfileService) Update(ctx context.Context, actor model.User, input Upd
 	if input.Name != nil {
 		name := strings.TrimSpace(*input.Name)
 		if !isValidPersonName(name) {
-			return nil, ErrBadRequest("INVALID_NAME", "name is invalid")
+			return nil, ErrBadRequest(CodeParamsError, "name is invalid")
 		}
 		updates["name"] = name
 	}
 	if input.Email != nil {
-		return nil, ErrBadRequest("EMAIL_READONLY", "email cannot be modified")
+		return nil, ErrBadRequest(CodeParamsError, "email cannot be modified")
 	}
 	if input.Phone != nil {
 		phone := strings.TrimSpace(*input.Phone)
 		if phone != "" {
 			if !isValidPhone(phone) {
-				return nil, ErrBadRequest("INVALID_PHONE", "phone is invalid")
+				return nil, ErrBadRequest(CodeParamsError, "phone is invalid")
 			}
 			if exists, _ := s.userRepo.ExistsByPhone(ctx, phone, actor.ID); exists {
 				return nil, ErrPhoneExists
@@ -60,7 +60,7 @@ func (s *ProfileService) Update(ctx context.Context, actor model.User, input Upd
 		updates["avatar"] = strings.TrimSpace(*input.Avatar)
 	}
 	if len(updates) == 0 {
-		return nil, ErrBadRequest("NO_FIELDS", "no valid fields to update")
+		return nil, ErrBadRequest(CodeParamsError, "no valid fields to update")
 	}
 
 	before := actor
@@ -75,7 +75,7 @@ func (s *ProfileService) Update(ctx context.Context, actor model.User, input Upd
 		return s.auditRepo.WriteLogTx(tx, actor.ID, "profile.update", "user", actor.ID, before, after)
 	})
 	if err != nil {
-		return nil, ErrInternal("TX_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	updated, _ := s.userRepo.FindByID(ctx, actor.ID)
 	return updated, nil

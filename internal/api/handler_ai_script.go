@@ -275,7 +275,7 @@ func (a *API) getAIScriptTraces(c *gin.Context) {
 func (a *API) getAIScriptLatestValidation(c *gin.Context) {
 	scriptVersionIDStr := c.Query("script_version_id")
 	if scriptVersionIDStr == "" {
-		response.HandleError(c, service.ErrBadRequest("MISSING_SCRIPT_VERSION_ID", "script_version_id is required"))
+		response.HandleError(c, service.ErrBadRequest(service.CodeParamsError, "script_version_id is required"))
 		return
 	}
 	scriptVersionID, _ := strconv.ParseUint(scriptVersionIDStr, 10, 64)
@@ -565,7 +565,7 @@ func (a *API) getValidationHistory(c *gin.Context) {
 	scriptIDStr := c.Param("scriptID")
 	scriptID, _ := strconv.ParseUint(scriptIDStr, 10, 64)
 	if scriptID == 0 {
-		response.HandleError(c, service.ErrBadRequest("INVALID_SCRIPT_ID", "无效的脚本 ID"))
+		response.HandleError(c, service.ErrBadRequest(service.CodeParamsError, "无效的脚本 ID"))
 		return
 	}
 

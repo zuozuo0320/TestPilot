@@ -19,6 +19,7 @@ executor/screenshots/
 executor/auth_states/*.json
 executor/generated_scripts/
 runtime-logs/
+logs/
 
 # 测试智编自动生成的脚本项目（非系统架构代码）
 executor/pw_projects/

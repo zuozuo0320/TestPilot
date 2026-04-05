@@ -14,6 +14,7 @@ import (
 
 	"testpilot/internal/dto/response"
 	"testpilot/internal/model"
+	"testpilot/internal/service"
 )
 
 // createProject 创建项目（admin/manager 可操作）
@@ -191,18 +192,18 @@ func (a *API) uploadProjectAvatar(c *gin.Context) {
 	}
 	file, header, err := c.Request.FormFile("avatar")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "avatar file is required")
+		response.Error(c, http.StatusBadRequest, service.CodeParamsError, "avatar file is required")
 		return
 	}
 	defer file.Close()
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".gif" && ext != ".webp" {
-		response.Error(c, http.StatusBadRequest, "unsupported image format")
+		response.Error(c, http.StatusBadRequest, service.CodeParamsError, "unsupported image format")
 		return
 	}
 	if header.Size > 2*1024*1024 {
-		response.Error(c, http.StatusBadRequest, "file too large (max 2MB)")
+		response.Error(c, http.StatusBadRequest, service.CodeParamsError, "file too large (max 2MB)")
 		return
 	}
 
@@ -211,12 +212,12 @@ func (a *API) uploadProjectAvatar(c *gin.Context) {
 	filename := fmt.Sprintf("project_%d_%d%s", projectID, time.Now().UnixMilli(), ext)
 	dst, err := os.Create(filepath.Join(dir, filename))
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "failed to save file")
+		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "failed to save file")
 		return
 	}
 	defer dst.Close()
 	if _, err := io.Copy(dst, file); err != nil {
-		response.Error(c, http.StatusInternalServerError, "failed to save file")
+		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "failed to save file")
 		return
 	}
 

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"testpilot/internal/dto/response"
+	"testpilot/internal/service"
 )
 
 func (a *API) exportTestCasesXlsx(c *gin.Context) {
@@ -25,7 +26,7 @@ func (a *API) exportTestCasesXlsx(c *gin.Context) {
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
 
 	if err := a.xlsxSvc.ExportToXlsx(c.Request.Context(), projectID, c.Writer); err != nil {
-		response.Error(c, 500, "export failed: "+err.Error())
+		response.Error(c, 500, service.CodeInternal, "export failed: "+err.Error())
 		return
 	}
 }
@@ -42,7 +43,7 @@ func (a *API) importTestCasesXlsx(c *gin.Context) {
 
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
-		response.Error(c, 400, "file is required")
+		response.Error(c, 400, service.CodeParamsError, "file is required")
 		return
 	}
 	defer file.Close()

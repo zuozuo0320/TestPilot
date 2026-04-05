@@ -42,17 +42,17 @@ type ModuleTreeData struct {
 func (s *ModuleService) GetTree(ctx context.Context, projectID uint) (*ModuleTreeData, error) {
 	modules, err := s.moduleRepo.ListByProject(projectID)
 	if err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	counts, err := s.moduleRepo.CountCasesByModuleIDs(projectID)
 	if err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 计算未规划用例数（module_id = 0）
 	unplannedCount, err := s.testCaseRepo.CountByModule(ctx, 0)
 	if err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// Build node map
@@ -79,7 +79,6 @@ func (s *ModuleService) GetTree(ctx context.Context, projectID uint) (*ModuleTre
 			roots = append(roots, node)
 		}
 	}
-	}
 	return &ModuleTreeData{
 		Tree:           roots,
 		Counts:         counts,
@@ -90,17 +89,17 @@ func (s *ModuleService) GetTree(ctx context.Context, projectID uint) (*ModuleTre
 // Create 创建模块
 func (s *ModuleService) Create(ctx context.Context, projectID uint, parentID uint, name string) (*model.Module, error) {
 	if name == "" {
-		return nil, ErrBadRequest("MISSING_NAME", "module name is required")
+		return nil, ErrBadRequest(CodeParamsError, "module name is required")
 	}
 
 	// Check depth limit (max 5 levels)
 	if parentID != 0 {
 		depth, err := s.moduleRepo.GetDepth(parentID)
 		if err != nil {
-			return nil, ErrInternal("DB_ERROR", err)
+			return nil, ErrInternal(CodeInternal, err)
 		}
 		if depth >= 5 {
-			return nil, ErrBadRequest("MAX_DEPTH", "module tree max depth is 5")
+			return nil, ErrBadRequest(CodeParamsError, "module tree max depth is 5")
 		}
 	}
 
@@ -110,7 +109,7 @@ func (s *ModuleService) Create(ctx context.Context, projectID uint, parentID uin
 		Name:      name,
 	}
 	if err := s.moduleRepo.Create(m); err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return m, nil
 }
@@ -118,34 +117,34 @@ func (s *ModuleService) Create(ctx context.Context, projectID uint, parentID uin
 // Rename 重命名模块
 func (s *ModuleService) Rename(ctx context.Context, id uint, name string) (*model.Module, error) {
 	if name == "" {
-		return nil, ErrBadRequest("MISSING_NAME", "module name is required")
+		return nil, ErrBadRequest(CodeParamsError, "module name is required")
 	}
 	m, err := s.moduleRepo.GetByID(id)
 	if err != nil {
-		return nil, ErrNotFound("MODULE_NOT_FOUND", "module not found")
+		return nil, ErrNotFound(CodeNotFound, "module not found")
 	}
 
 	// 1. 获取旧全路径（用于级联更新用例）
 	oldPath, err := s.moduleRepo.GetFullPath(id)
 	if err != nil {
-		return nil, ErrInternal("PATH_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 2. 更新名称
 	m.Name = name
 	if err := s.moduleRepo.Update(m); err != nil {
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	// 3. 获取新全路径并级联更新用例
 	newPath, err := s.moduleRepo.GetFullPath(id)
 	if err != nil {
-		return nil, ErrInternal("PATH_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	if oldPath != newPath {
 		if err := s.testCaseRepo.UpdateModulePathsByPrefix(ctx, m.ProjectID, oldPath, newPath); err != nil {
-			return nil, ErrInternal("CASCADE_ERROR", err)
+			return nil, ErrInternal(CodeInternal, err)
 		}
 	}
 
@@ -156,40 +155,40 @@ func (s *ModuleService) Rename(ctx context.Context, id uint, name string) (*mode
 func (s *ModuleService) Move(ctx context.Context, id uint, newParentID uint, sortOrder int) error {
 	m, err := s.moduleRepo.GetByID(id)
 	if err != nil {
-		return ErrNotFound("MODULE_NOT_FOUND", "module not found")
+		return ErrNotFound(CodeNotFound, "module not found")
 	}
 
 	// 1. 获取旧路径
 	oldPath, err := s.moduleRepo.GetFullPath(id)
 	if err != nil {
-		return ErrInternal("PATH_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	// 2. 深度校验
 	if newParentID != 0 {
 		depth, err := s.moduleRepo.GetDepth(newParentID)
 		if err != nil {
-			return ErrInternal("DB_ERROR", err)
+			return ErrInternal(CodeInternal, err)
 		}
 		if depth >= 5 {
-			return ErrBadRequest("MAX_DEPTH", "module tree max depth is 5")
+			return ErrBadRequest(CodeParamsError, "module tree max depth is 5")
 		}
 	}
 
 	// 3. 执行移动
 	if err := s.moduleRepo.MoveModule(id, newParentID, sortOrder); err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	// 4. 获取新路径并级联更新
 	newPath, err := s.moduleRepo.GetFullPath(id)
 	if err != nil {
-		return ErrInternal("PATH_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 
 	if oldPath != newPath {
 		if err := s.testCaseRepo.UpdateModulePathsByPrefix(ctx, m.ProjectID, oldPath, newPath); err != nil {
-			return ErrInternal("CASCADE_ERROR", err)
+			return ErrInternal(CodeInternal, err)
 		}
 	}
 	return nil
@@ -200,19 +199,19 @@ func (s *ModuleService) Delete(ctx context.Context, id uint) error {
 	// 校验子模块
 	children, err := s.moduleRepo.CountChildren(id)
 	if err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if children > 0 {
-		return ErrBadRequest("HAS_CHILDREN", "cannot delete module with sub-modules")
+		return ErrBadRequest(CodeParamsError, "cannot delete module with sub-modules")
 	}
 
 	// 校验用例
 	count, err := s.testCaseRepo.CountByModule(ctx, id)
 	if err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if count > 0 {
-		return ErrBadRequest("HAS_CASES", "cannot delete module with test cases")
+		return ErrBadRequest(CodeParamsError, "cannot delete module with test cases")
 	}
 
 	return s.moduleRepo.Delete(id)

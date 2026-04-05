@@ -29,7 +29,7 @@ func NewAttachmentService(repo *repository.AttachmentRepo, uploadDir string) *At
 // Upload 上传附件
 func (s *AttachmentService) Upload(testCaseID uint, userID uint, fileName string, fileSize int64, mimeType string, reader io.Reader) (*model.CaseAttachment, error) {
 	if fileSize > MaxAttachmentSize {
-		return nil, ErrBadRequest("FILE_TOO_LARGE", "file size exceeds 10MB limit")
+		return nil, ErrBadRequest(CodeParamsError, "file size exceeds 10MB limit")
 	}
 
 	// Generate unique file path
@@ -39,13 +39,13 @@ func (s *AttachmentService) Upload(testCaseID uint, userID uint, fileName string
 
 	dst, err := os.Create(fullPath)
 	if err != nil {
-		return nil, ErrInternal("FILE_CREATE_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	defer dst.Close()
 
 	if _, err := io.Copy(dst, reader); err != nil {
 		os.Remove(fullPath)
-		return nil, ErrInternal("FILE_WRITE_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	attachment := &model.CaseAttachment{
@@ -58,7 +58,7 @@ func (s *AttachmentService) Upload(testCaseID uint, userID uint, fileName string
 	}
 	if err := s.attachRepo.Create(attachment); err != nil {
 		os.Remove(fullPath)
-		return nil, ErrInternal("DB_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return attachment, nil
 }
@@ -72,7 +72,7 @@ func (s *AttachmentService) ListByCaseID(testCaseID uint) ([]model.CaseAttachmen
 func (s *AttachmentService) Delete(id uint) error {
 	att, err := s.attachRepo.GetByID(id)
 	if err != nil {
-		return ErrNotFound("ATTACHMENT_NOT_FOUND", "attachment not found")
+		return ErrNotFound(CodeNotFound, "attachment not found")
 	}
 	// Remove file
 	fullPath := filepath.Join(s.uploadDir, att.FilePath)
@@ -85,7 +85,7 @@ func (s *AttachmentService) Delete(id uint) error {
 func (s *AttachmentService) GetFilePath(id uint) (string, string, error) {
 	att, err := s.attachRepo.GetByID(id)
 	if err != nil {
-		return "", "", ErrNotFound("ATTACHMENT_NOT_FOUND", "attachment not found")
+		return "", "", ErrNotFound(CodeNotFound, "attachment not found")
 	}
 	return filepath.Join(s.uploadDir, att.FilePath), att.FileName, nil
 }

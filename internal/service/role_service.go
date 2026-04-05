@@ -35,7 +35,7 @@ func (s *RoleService) List(ctx context.Context) ([]model.Role, error) {
 func (s *RoleService) Create(ctx context.Context, actorID uint, name, displayName, description string) (*model.Role, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return nil, ErrBadRequest("MISSING_NAME", "name is required")
+		return nil, ErrBadRequest(CodeParamsError, "name is required")
 	}
 	entity := model.Role{
 		Name:        name,
@@ -50,9 +50,9 @@ func (s *RoleService) Create(ctx context.Context, actorID uint, name, displayNam
 	})
 	if err != nil {
 		if isDuplicateError(err) {
-			return nil, ErrConflict("ROLE_EXISTS", "role already exists")
+			return nil, ErrConflict(CodeConflict, "role already exists")
 		}
-		return nil, ErrInternal("TX_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	return &entity, nil
 }
@@ -69,11 +69,11 @@ func (s *RoleService) Update(ctx context.Context, actorID, roleID uint, name, di
 	// 预置角色禁止修改 name
 	if name != nil {
 		if model.IsPresetSystemRole(before.Name) {
-			return nil, ErrBadRequest("PRESET_NAME_IMMUTABLE", "预置角色的标识名不可修改")
+			return nil, ErrBadRequest(CodeParamsError, "预置角色的标识名不可修改")
 		}
 		n := strings.TrimSpace(*name)
 		if n == "" {
-			return nil, ErrBadRequest("INVALID_NAME", "name is invalid")
+			return nil, ErrBadRequest(CodeParamsError, "name is invalid")
 		}
 		updates["name"] = n
 	}
@@ -87,7 +87,7 @@ func (s *RoleService) Update(ctx context.Context, actorID, roleID uint, name, di
 	}
 
 	if len(updates) == 0 {
-		return nil, ErrBadRequest("NO_FIELDS", "no valid fields to update")
+		return nil, ErrBadRequest(CodeParamsError, "no valid fields to update")
 	}
 
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
@@ -102,9 +102,9 @@ func (s *RoleService) Update(ctx context.Context, actorID, roleID uint, name, di
 	})
 	if err != nil {
 		if isDuplicateError(err) {
-			return nil, ErrConflict("ROLE_EXISTS", "role already exists")
+			return nil, ErrConflict(CodeConflict, "role already exists")
 		}
-		return nil, ErrInternal("TX_ERROR", err)
+		return nil, ErrInternal(CodeInternal, err)
 	}
 	updated, _ := s.roleRepo.FindByID(ctx, roleID)
 	return updated, nil
@@ -124,10 +124,10 @@ func (s *RoleService) Delete(ctx context.Context, actorID, roleID uint) error {
 	// 检查关联用户数
 	used, err := s.roleRepo.CountUsers(ctx, roleID)
 	if err != nil {
-		return ErrInternal("DB_ERROR", err)
+		return ErrInternal(CodeInternal, err)
 	}
 	if used > 0 {
-		return ErrConflict("ROLE_IN_USE", fmt.Sprintf("该角色已关联 %d 个用户，请先解除关联后再删除", used))
+		return ErrConflict(CodeConflict, fmt.Sprintf("该角色已关联 %d 个用户，请先解除关联后再删除", used))
 	}
 	return s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.roleRepo.DeleteTx(tx, role); err != nil {
