@@ -61,7 +61,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		UserService:        service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr),
 		RoleService:        service.NewRoleService(roleRepo, auditRepo, txMgr),
 		ProjectService:     service.NewProjectService(projectRepo, userRepo, auditRepo, txMgr),
-		TestCaseService:    service.NewTestCaseService(testCaseRepo, caseHistoryRepo),
+		TestCaseService:    service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo),
 		ProfileService:     service.NewProfileService(userRepo, auditRepo, txMgr),
 		ExecutionService:   service.NewExecutionService(executionRepo, txMgr, mockExecutor, nil, logger),
 		DefectService:      service.NewDefectService(defectRepo, executionRepo),
@@ -256,14 +256,13 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	router, _ := setupTestRouter(t)
 
 	createPayload := map[string]any{
-		"title":         "Login success case",
-		"level":         "P0",
-		"review_result": "未评审",
-		"exec_result":   "未执行",
-		"module_path":   "/登录",
-		"tags":          "smoke,auth",
-		"steps":         "open page -> input -> submit",
-		"priority":      "high",
+		"title":       "Login success case",
+		"level":       "P0",
+		"exec_result": "未执行",
+		"module_path": "/登录",
+		"tags":        "smoke,auth",
+		"steps":       "open page -> input -> submit",
+		"priority":    "high",
 	}
 	createBody, _ := json.Marshal(createPayload)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/testcases", bytes.NewReader(createBody))
@@ -294,15 +293,19 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 
 	listRawData, listTotal, listPage, listPageSize := getPageResultData(t, listResp.Body.Bytes())
 	var listItems []struct {
-		ID            uint   `json:"id"`
-		Title         string `json:"title"`
-		Level         string `json:"level"`
-		ReviewResult  string `json:"review_result"`
-		ExecResult    string `json:"exec_result"`
-		ModulePath    string `json:"module_path"`
-		Tags          string `json:"tags"`
-		CreatedByName string `json:"created_by_name"`
-		UpdatedByName string `json:"updated_by_name"`
+		ID                 uint   `json:"id"`
+		Title              string `json:"title"`
+		Level              string `json:"level"`
+		ReviewResult       string `json:"review_result"`
+		ExecResult         string `json:"exec_result"`
+		ModulePath         string `json:"module_path"`
+		Tags               string `json:"tags"`
+		CreatedByName      string `json:"created_by_name"`
+		UpdatedByName      string `json:"updated_by_name"`
+		InReview           bool   `json:"in_review"`
+		CurrentReviewID    uint   `json:"current_review_id"`
+		CurrentReviewName  string `json:"current_review_name"`
+		RelatedReviewCount int64  `json:"related_review_count"`
 	}
 	if err := json.Unmarshal(listRawData, &listItems); err != nil {
 		t.Fatalf("parse list items failed: %v", err)
@@ -339,6 +342,18 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	}
 	if listItems[0].UpdatedByName == "" {
 		t.Fatalf("expected updated_by_name field")
+	}
+	if listItems[0].InReview {
+		t.Fatalf("expected in_review default false")
+	}
+	if listItems[0].CurrentReviewID != 0 {
+		t.Fatalf("expected current_review_id default zero")
+	}
+	if listItems[0].CurrentReviewName != "" {
+		t.Fatalf("expected current_review_name default empty")
+	}
+	if listItems[0].RelatedReviewCount != 0 {
+		t.Fatalf("expected related_review_count default zero")
 	}
 
 	listSortReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/testcases?page=1&pageSize=10&sortBy=id&sortOrder=asc", nil)
@@ -383,13 +398,12 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	}
 
 	updatePayload := map[string]any{
-		"title":         "Login success case updated",
-		"level":         "P1",
-		"review_result": "已通过",
-		"exec_result":   "成功",
-		"module_path":   "/登录/主流程",
-		"tags":          "smoke",
-		"priority":      "medium",
+		"title":       "Login success case updated",
+		"level":       "P1",
+		"exec_result": "成功",
+		"module_path": "/登录/主流程",
+		"tags":        "smoke",
+		"priority":    "medium",
 	}
 	updateBody, _ := json.Marshal(updatePayload)
 	updateReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/projects/1/testcases/%d", created.ID), bytes.NewReader(updateBody))
@@ -412,7 +426,7 @@ func TestTestCaseCRUDAndListPaging(t *testing.T) {
 	if updated.Level != "P1" {
 		t.Fatalf("unexpected updated level: %s", updated.Level)
 	}
-	if updated.ReviewResult != "已通过" {
+	if updated.ReviewResult != "未评审" {
 		t.Fatalf("unexpected updated review_result: %s", updated.ReviewResult)
 	}
 	if updated.ExecResult != "成功" {
@@ -623,5 +637,25 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 	}
 	if auditCount == 0 {
 		t.Fatalf("expected audit logs > 0")
+	}
+}
+
+func TestLegacyTestCaseReviewRoutesRemoved(t *testing.T) {
+	router, _ := setupTestRouter(t)
+
+	legacyPaths := []string{
+		"/api/v1/projects/1/testcase/1/submit-review",
+		"/api/v1/projects/1/testcase/1/approve-review",
+		"/api/v1/projects/1/testcase/1/reject-review",
+	}
+
+	for _, path := range legacyPaths {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("X-User-ID", "1")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for removed legacy route %s, got %d, body=%s", path, resp.Code, resp.Body.String())
+		}
 	}
 }

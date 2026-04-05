@@ -1,4 +1,4 @@
-// handler_testcase.go — 用例管理 Handler（含批量操作、克隆、历史、关联）
+// handler_testcase.go 鈥?鐢ㄤ緥绠＄悊 Handler锛堝惈鎵归噺鎿嶄綔銆佸厠闅嗐€佸巻鍙层€佸叧鑱旓級
 package api
 
 import (
@@ -29,7 +29,6 @@ func (a *API) createTestCase(c *gin.Context) {
 	tc, err := a.testCaseSvc.Create(c.Request.Context(), projectID, user.ID, service.CreateTestCaseInput{
 		Title:        strings.TrimSpace(req.Title),
 		Level:        req.Level,
-		ReviewResult: req.ReviewResult,
 		ExecResult:   req.ExecResult,
 		ModuleID:     req.ModuleID,
 		ModulePath:   req.ModulePath,
@@ -120,7 +119,6 @@ func (a *API) updateTestCase(c *gin.Context) {
 	updated, err := a.testCaseSvc.Update(c.Request.Context(), projectID, tcID, user.ID, service.UpdateTestCaseInput{
 		Title:        req.Title,
 		Level:        req.Level,
-		ReviewResult: req.ReviewResult,
 		ExecResult:   req.ExecResult,
 		ModuleID:     req.ModuleID,
 		ModulePath:   req.ModulePath,
@@ -157,7 +155,7 @@ func (a *API) deleteTestCase(c *gin.Context) {
 	response.OK(c, gin.H{"deleted": true})
 }
 
-// ========== 批量操作 ==========
+// ========== 鎵归噺鎿嶄綔 ==========
 
 func (a *API) batchDeleteTestCases(c *gin.Context) {
 	user := currentUser(c)
@@ -222,7 +220,7 @@ func (a *API) batchMoveTestCases(c *gin.Context) {
 	response.OK(c, gin.H{"affected": affected})
 }
 
-// ========== 用例克隆 ==========
+// ========== 鐢ㄤ緥鍏嬮殕 ==========
 
 func (a *API) cloneTestCase(c *gin.Context) {
 	user := currentUser(c)
@@ -245,7 +243,7 @@ func (a *API) cloneTestCase(c *gin.Context) {
 	response.Created(c, cloned)
 }
 
-// ========== 编辑历史 ==========
+// ========== 缂栬緫鍘嗗彶 ==========
 
 func (a *API) listCaseHistory(c *gin.Context) {
 	user := currentUser(c)
@@ -270,7 +268,7 @@ func (a *API) listCaseHistory(c *gin.Context) {
 	response.Page(c, items, total, page, pageSize)
 }
 
-// ========== 用例关联 ==========
+// ========== 鐢ㄤ緥鍏宠仈 ==========
 
 func (a *API) listCaseRelations(c *gin.Context) {
 	user := currentUser(c)
@@ -344,31 +342,9 @@ func (a *API) deleteCaseRelation(c *gin.Context) {
 	response.OK(c, gin.H{"deleted": true})
 }
 
-// ========== 状态流转 (提审/废弃/恢复) ==========
+// ========== 状态流转(废弃/恢复) ==========
 
-// submitReview 提交评审
-func (a *API) submitReview(c *gin.Context) {
-	user := currentUser(c)
-	projectID, ok := parseUintParam(c, "projectID")
-	if !ok {
-		return
-	}
-	if !a.requireProjectAccess(c, user, projectID) {
-		return
-	}
-	tcID, ok := parseUintParam(c, "testcaseID")
-	if !ok {
-		return
-	}
-
-	if err := a.testCaseSvc.SubmitReview(c.Request.Context(), projectID, tcID, user.ID); err != nil {
-		response.HandleError(c, err)
-		return
-	}
-	response.OK(c, "submitted")
-}
-
-// discardTestCase 废弃用例
+// discardTestCase 搴熷純鐢ㄤ緥
 func (a *API) discardTestCase(c *gin.Context) {
 	user := currentUser(c)
 	projectID, ok := parseUintParam(c, "projectID")
@@ -378,7 +354,7 @@ func (a *API) discardTestCase(c *gin.Context) {
 	if !a.requireProjectAccess(c, user, projectID) {
 		return
 	}
-	// 权限：仅限项目管理员或系统管理员
+	// 鏉冮檺锛氫粎闄愰」鐩鐞嗗憳鎴栫郴缁熺鐞嗗憳
 	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
 		return
 	}
@@ -394,7 +370,7 @@ func (a *API) discardTestCase(c *gin.Context) {
 	response.OK(c, "discarded")
 }
 
-// recoverTestCase 恢复用例
+// recoverTestCase 鎭㈠鐢ㄤ緥
 func (a *API) recoverTestCase(c *gin.Context) {
 	user := currentUser(c)
 	projectID, ok := parseUintParam(c, "projectID")
@@ -404,7 +380,7 @@ func (a *API) recoverTestCase(c *gin.Context) {
 	if !a.requireProjectAccess(c, user, projectID) {
 		return
 	}
-	// 权限：仅限项目管理员或系统管理员
+	// 鏉冮檺锛氫粎闄愰」鐩鐞嗗憳鎴栫郴缁熺鐞嗗憳
 	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager) {
 		return
 	}
@@ -418,54 +394,4 @@ func (a *API) recoverTestCase(c *gin.Context) {
 		return
 	}
 	response.OK(c, "recovered")
-}
-
-// approveReview 评审通过
-func (a *API) approveReview(c *gin.Context) {
-	user := currentUser(c)
-	projectID, ok := parseUintParam(c, "projectID")
-	if !ok {
-		return
-	}
-	if !a.requireProjectAccess(c, user, projectID) {
-		return
-	}
-	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager, model.GlobalRoleReviewer) {
-		return
-	}
-	tcID, ok := parseUintParam(c, "testcaseID")
-	if !ok {
-		return
-	}
-
-	if err := a.testCaseSvc.ApproveReview(c.Request.Context(), projectID, tcID, user.ID); err != nil {
-		response.HandleError(c, err)
-		return
-	}
-	response.OK(c, "approved")
-}
-
-// rejectReview 评审驳回
-func (a *API) rejectReview(c *gin.Context) {
-	user := currentUser(c)
-	projectID, ok := parseUintParam(c, "projectID")
-	if !ok {
-		return
-	}
-	if !a.requireProjectAccess(c, user, projectID) {
-		return
-	}
-	if !requireRole(c, user, model.GlobalRoleAdmin, model.GlobalRoleManager, model.GlobalRoleReviewer) {
-		return
-	}
-	tcID, ok := parseUintParam(c, "testcaseID")
-	if !ok {
-		return
-	}
-
-	if err := a.testCaseSvc.RejectReview(c.Request.Context(), projectID, tcID, user.ID); err != nil {
-		response.HandleError(c, err)
-		return
-	}
-	response.OK(c, "rejected")
 }

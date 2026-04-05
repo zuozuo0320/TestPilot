@@ -1,4 +1,4 @@
-// testcase_service.go — 测试用例业务逻辑
+// testcase_service.go 鈥?娴嬭瘯鐢ㄤ緥涓氬姟閫昏緫
 package service
 
 import (
@@ -11,14 +11,14 @@ import (
 	"testpilot/internal/repository"
 )
 
-// TestCaseService 用例管理服务
+// TestCaseService 鐢ㄤ緥绠＄悊鏈嶅姟
 type TestCaseService struct {
 	testCaseRepo    repository.TestCaseRepository
 	caseHistoryRepo *repository.CaseHistoryRepo
 	auditRepo       repository.AuditRepository
 }
 
-// NewTestCaseService 创建用例服务
+// NewTestCaseService 鍒涘缓鐢ㄤ緥鏈嶅姟
 func NewTestCaseService(repo repository.TestCaseRepository, historyRepo *repository.CaseHistoryRepo, auditRepo repository.AuditRepository) *TestCaseService {
 	return &TestCaseService{
 		testCaseRepo:    repo,
@@ -27,11 +27,10 @@ func NewTestCaseService(repo repository.TestCaseRepository, historyRepo *reposit
 	}
 }
 
-// CreateTestCaseInput 创建用例输入
+// CreateTestCaseInput 鍒涘缓鐢ㄤ緥杈撳叆
 type CreateTestCaseInput struct {
 	Title        string
 	Level        string
-	ReviewResult string
 	ExecResult   string
 	ModuleID     uint
 	ModulePath   string
@@ -42,46 +41,49 @@ type CreateTestCaseInput struct {
 	Priority     string
 }
 
-// Create 创建用例
+// Create 鍒涘缓鐢ㄤ緥
 func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, input CreateTestCaseInput) (*model.TestCase, error) {
 	if strings.TrimSpace(input.Title) == "" {
 		return nil, ErrBadRequest(CodeParamsError, "title is required")
 	}
+
 	priority := strings.ToLower(strings.TrimSpace(input.Priority))
 	if priority == "" {
 		priority = "medium"
 	}
+
 	level := strings.ToUpper(strings.TrimSpace(input.Level))
 	if level == "" {
 		level = "P1"
 	}
-	reviewResult := strings.TrimSpace(input.ReviewResult)
-	if reviewResult == "" {
-		reviewResult = "未评审"
-	}
+
 	execResult := strings.TrimSpace(input.ExecResult)
 	if execResult == "" {
 		execResult = "未执行"
 	}
+
 	modulePath := strings.TrimSpace(input.ModulePath)
 	if modulePath == "" {
 		modulePath = "/未分类"
 	}
 
 	entity := model.TestCase{
-		ProjectID: projectID, Title: strings.TrimSpace(input.Title),
-		Status:       model.TestCaseStatusDraft, // 初始为草稿
-		Version:      "V1",                      // 初始为 V1
+		ProjectID:    projectID,
+		Title:        strings.TrimSpace(input.Title),
+		Status:       model.TestCaseStatusDraft,
+		Version:      "V1",
 		Level:        level,
-		ReviewResult: reviewResult,
+		ReviewResult: model.CaseReviewResultNotReviewed,
 		ExecResult:   execResult,
-		ModuleID:     input.ModuleID, ModulePath: modulePath,
-		Tags: strings.TrimSpace(input.Tags),
+		ModuleID:     input.ModuleID,
+		ModulePath:   modulePath,
+		Tags:         strings.TrimSpace(input.Tags),
 		Precondition: input.Precondition,
 		Steps:        strings.TrimSpace(input.Steps),
 		Remark:       input.Remark,
 		Priority:     priority,
-		CreatedBy:    userID, UpdatedBy: userID,
+		CreatedBy:    userID,
+		UpdatedBy:    userID,
 	}
 	if err := s.testCaseRepo.Create(ctx, &entity); err != nil {
 		if isDuplicateError(err) {
@@ -92,16 +94,15 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 	return &entity, nil
 }
 
-// ListPaged 分页查询用例
+// ListPaged 鍒嗛〉鏌ヨ鐢ㄤ緥
 func (s *TestCaseService) ListPaged(ctx context.Context, projectID uint, filter repository.TestCaseFilter) ([]repository.TestCaseListItem, int64, error) {
 	return s.testCaseRepo.ListPaged(ctx, projectID, filter)
 }
 
-// UpdateTestCaseInput 更新用例输入
+// UpdateTestCaseInput 鏇存柊鐢ㄤ緥杈撳叆
 type UpdateTestCaseInput struct {
 	Title        *string
 	Level        *string
-	ReviewResult *string
 	ExecResult   *string
 	ModuleID     *uint
 	ModulePath   *string
@@ -112,115 +113,96 @@ type UpdateTestCaseInput struct {
 	Priority     *string
 }
 
-// Update 更新用例
+// Update 鏇存柊鐢ㄤ緥
 func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, userID uint, input UpdateTestCaseInput) (*model.TestCase, error) {
 	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	if err != nil {
 		return nil, ErrTestCaseNotFound
 	}
 
-	// 实质变更检测：如果状态是 active，修改核心字段会触发升版并回到 draft
 	isSubstantialChange := false
-
 	updates := map[string]any{}
+
 	if input.Title != nil {
-		t := strings.TrimSpace(*input.Title)
-		if t == "" {
+		title := strings.TrimSpace(*input.Title)
+		if title == "" {
 			return nil, ErrBadRequest(CodeParamsError, "title is required")
 		}
-		if t != entity.Title {
-			updates["title"] = t
+		if title != entity.Title {
+			updates["title"] = title
 			isSubstantialChange = true
 		}
 	}
 	if input.Level != nil {
-		l := strings.ToUpper(strings.TrimSpace(*input.Level))
-		if l == "" {
-			l = "P1"
+		level := strings.ToUpper(strings.TrimSpace(*input.Level))
+		if level == "" {
+			level = "P1"
 		}
-		if l != entity.Level {
-			updates["level"] = l
+		if level != entity.Level {
+			updates["level"] = level
 			isSubstantialChange = true
 		}
-	}
-	if input.ReviewResult != nil {
-		rr := strings.TrimSpace(*input.ReviewResult)
-		if rr == "" {
-			rr = "未评审"
-		}
-		updates["review_result"] = rr
 	}
 	if input.ExecResult != nil {
-		er := strings.TrimSpace(*input.ExecResult)
-		if er == "" {
-			er = "未执行"
+		execResult := strings.TrimSpace(*input.ExecResult)
+		if execResult == "" {
+			execResult = "未执行"
 		}
-		updates["exec_result"] = er
+		updates["exec_result"] = execResult
 	}
 	if input.ModulePath != nil {
-		mp := strings.TrimSpace(*input.ModulePath)
-		if mp == "" {
-			mp = "/未分类"
+		modulePath := strings.TrimSpace(*input.ModulePath)
+		if modulePath == "" {
+			modulePath = "/未分类"
 		}
-		updates["module_path"] = mp
+		updates["module_path"] = modulePath
 	}
 	if input.Tags != nil {
-		ts := strings.TrimSpace(*input.Tags)
-		if ts != entity.Tags {
-			updates["tags"] = ts
-			// 标签变更通常不视为核心实质变更，但为了严谨性可根据需求决定。
-			// 这里遵循 PRD：目录移动、标签调整、排序变化不属于实质变更。
+		tags := strings.TrimSpace(*input.Tags)
+		if tags != entity.Tags {
+			updates["tags"] = tags
 		}
 	}
-	if input.Precondition != nil {
-		if *input.Precondition != entity.Precondition {
-			updates["precondition"] = *input.Precondition
-			isSubstantialChange = true
-		}
+	if input.Precondition != nil && *input.Precondition != entity.Precondition {
+		updates["precondition"] = *input.Precondition
+		isSubstantialChange = true
 	}
 	if input.Steps != nil {
-		s := strings.TrimSpace(*input.Steps)
-		if s != entity.Steps {
-			updates["steps"] = s
+		steps := strings.TrimSpace(*input.Steps)
+		if steps != entity.Steps {
+			updates["steps"] = steps
 			isSubstantialChange = true
 		}
 	}
-	if input.Remark != nil {
-		if *input.Remark != entity.Remark {
-			updates["remark"] = *input.Remark
-			isSubstantialChange = true
-		}
+	if input.Remark != nil && *input.Remark != entity.Remark {
+		updates["remark"] = *input.Remark
 	}
 	if input.ModuleID != nil {
 		updates["module_id"] = *input.ModuleID
 	}
 	if input.Priority != nil {
-		p := strings.ToLower(strings.TrimSpace(*input.Priority))
-		if p == "" {
-			p = "medium"
+		priority := strings.ToLower(strings.TrimSpace(*input.Priority))
+		if priority == "" {
+			priority = "medium"
 		}
-		if p != entity.Priority {
-			updates["priority"] = p
+		if priority != entity.Priority {
+			updates["priority"] = priority
 			isSubstantialChange = true
 		}
 	}
 
-	// 状态流转规则逻辑
 	if entity.Status == model.TestCaseStatusActive && isSubstantialChange {
-		// 已生效用例发生实质变更：保存快照，版本 +1，状态重置为草稿
 		_ = s.saveHistorySnapshot(ctx, entity, userID, "version_bump")
-
 		updates["status"] = model.TestCaseStatusDraft
 		updates["version"] = nextVersion(entity.Version)
-		updates["review_result"] = "未评审"
+		updates["review_result"] = model.CaseReviewResultNotReviewed
 		updates["exec_result"] = "未执行"
 	} else if entity.Status == model.TestCaseStatusPending && isSubstantialChange {
-		// 待评审状态禁止直接编辑核心内容
 		return nil, ErrBadRequest(CodeParamsError, "pending case cannot be edited, please retract first")
 	} else if entity.Status == model.TestCaseStatusDiscarded {
-		// 已废弃状态禁止编辑
 		return nil, ErrBadRequest(CodeParamsError, "discarded case is read-only")
 	}
+
 	if len(updates) == 0 {
 		return nil, ErrBadRequest(CodeParamsError, "no fields to update")
 	}
@@ -234,7 +216,7 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 	return updated, nil
 }
 
-// Delete 删除用例
+// Delete 鍒犻櫎鐢ㄤ緥
 func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint) error {
 	rows, err := s.testCaseRepo.Delete(ctx, testCaseID, projectID)
 	if err != nil {
@@ -246,7 +228,7 @@ func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint
 	return nil
 }
 
-// BatchDelete 批量删除用例
+// BatchDelete 鎵归噺鍒犻櫎鐢ㄤ緥
 func (s *TestCaseService) BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error) {
 	if len(ids) == 0 {
 		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
@@ -254,7 +236,7 @@ func (s *TestCaseService) BatchDelete(ctx context.Context, projectID uint, ids [
 	return s.testCaseRepo.BatchDelete(ctx, projectID, ids)
 }
 
-// BatchUpdateLevel 批量修改等级
+// BatchUpdateLevel 鎵归噺淇敼绛夌骇
 func (s *TestCaseService) BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
@@ -266,7 +248,7 @@ func (s *TestCaseService) BatchUpdateLevel(ctx context.Context, projectID uint, 
 	return s.testCaseRepo.BatchUpdateLevel(ctx, projectID, ids, l)
 }
 
-// BatchMove 批量移动用例到另一目录
+// BatchMove 鎵归噺绉诲姩鐢ㄤ緥鍒板彟涓€鐩綍
 func (s *TestCaseService) BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error) {
 	if len(ids) == 0 {
 		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
@@ -274,39 +256,18 @@ func (s *TestCaseService) BatchMove(ctx context.Context, projectID uint, ids []u
 	return s.testCaseRepo.BatchMove(ctx, projectID, ids, moduleID, modulePath)
 }
 
-// CloneCase 复制用例
+// CloneCase 澶嶅埗鐢ㄤ緥
 func (s *TestCaseService) CloneCase(ctx context.Context, projectID, sourceID, userID uint) (*model.TestCase, error) {
 	entity, err := s.testCaseRepo.CloneCase(ctx, projectID, sourceID, userID)
 	if err != nil {
 		return nil, err
 	}
-	// 审计
+	// 瀹¤
 	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "clone", "testcase", entity.ID, "source:"+strconv.Itoa(int(sourceID)), "cloned")
 	return entity, nil
 }
 
-// SubmitReview 提交评审 (Draft -> Pending)
-func (s *TestCaseService) SubmitReview(ctx context.Context, projectID, testCaseID, userID uint) error {
-	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
-	if err != nil {
-		return ErrTestCaseNotFound
-	}
-	if entity.Status != model.TestCaseStatusDraft {
-		return ErrBadRequest(CodeParamsError, "only draft can be submitted for review")
-	}
-	updates := map[string]any{
-		"status":        model.TestCaseStatusPending,
-		"review_result": "待评审",
-	}
-	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
-		return err
-	}
-	// 审计
-	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "submit_review", "testcase", testCaseID, "draft", "pending")
-	return nil
-}
-
-// Discard 废弃用例 (Active -> Discarded)
+// Discard 搴熷純鐢ㄤ緥 (Active -> Discarded)
 func (s *TestCaseService) Discard(ctx context.Context, projectID, testCaseID, userID uint) error {
 	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	if err != nil {
@@ -321,52 +282,12 @@ func (s *TestCaseService) Discard(ctx context.Context, projectID, testCaseID, us
 	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
 		return err
 	}
-	// 审计
+	// 瀹¤
 	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "discard", "testcase", testCaseID, "active", "discarded")
 	return nil
 }
 
-// ApproveReview 评审通过 (Pending -> Active)
-func (s *TestCaseService) ApproveReview(ctx context.Context, projectID, testCaseID, userID uint) error {
-	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
-	if err != nil {
-		return ErrTestCaseNotFound
-	}
-	if entity.Status != model.TestCaseStatusPending {
-		return ErrBadRequest(CodeParamsError, "only pending case can be approved")
-	}
-	updates := map[string]any{
-		"status":        model.TestCaseStatusActive,
-		"review_result": "已通过",
-	}
-	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
-		return err
-	}
-	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "approve_review", "testcase", testCaseID, "pending", "active")
-	return nil
-}
-
-// RejectReview 评审驳回 (Pending -> Draft)
-func (s *TestCaseService) RejectReview(ctx context.Context, projectID, testCaseID, userID uint) error {
-	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
-	if err != nil {
-		return ErrTestCaseNotFound
-	}
-	if entity.Status != model.TestCaseStatusPending {
-		return ErrBadRequest(CodeParamsError, "only pending case can be rejected")
-	}
-	updates := map[string]any{
-		"status":        model.TestCaseStatusDraft,
-		"review_result": "已驳回",
-	}
-	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
-		return err
-	}
-	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "reject_review", "testcase", testCaseID, "pending", "draft")
-	return nil
-}
-
-// Recover 恢复用例 (Discarded -> Draft)
+// Recover 鎭㈠鐢ㄤ緥 (Discarded -> Draft)
 func (s *TestCaseService) Recover(ctx context.Context, projectID, testCaseID, userID uint) error {
 	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	if err != nil {
@@ -377,18 +298,18 @@ func (s *TestCaseService) Recover(ctx context.Context, projectID, testCaseID, us
 	}
 	updates := map[string]any{
 		"status":        model.TestCaseStatusDraft,
-		"review_result": "未评审",
+		"review_result": model.CaseReviewResultNotReviewed,
 		"exec_result":   "未执行",
 	}
 	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
 		return err
 	}
-	// 审计
+	// 瀹¤
 	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "recover", "testcase", testCaseID, "discarded", "draft")
 	return nil
 }
 
-// saveHistorySnapshot 保存用例快照（用于版本回溯）
+// saveHistorySnapshot 淇濆瓨鐢ㄤ緥蹇収锛堢敤浜庣増鏈洖婧級
 func (s *TestCaseService) saveHistorySnapshot(ctx context.Context, entity *model.TestCase, userID uint, action string) error {
 	history := model.CaseHistory{
 		TestCaseID: entity.ID,
@@ -401,7 +322,7 @@ func (s *TestCaseService) saveHistorySnapshot(ctx context.Context, entity *model
 	return s.caseHistoryRepo.Create(s.testCaseRepo.DB(ctx), &history)
 }
 
-// nextVersion 版本号递增辅助函数 (e.g. V1 -> V2)
+// nextVersion 鐗堟湰鍙烽€掑杈呭姪鍑芥暟 (e.g. V1 -> V2)
 func nextVersion(current string) string {
 	if !strings.HasPrefix(current, "V") {
 		return "V1"

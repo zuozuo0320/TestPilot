@@ -14,76 +14,76 @@ import (
 
 // Dependencies 外部依赖注入（服务层）
 type Dependencies struct {
-	Logger             *slog.Logger
-	AuthService        *service.AuthService
-	UserService        *service.UserService
-	RoleService        *service.RoleService
-	ProjectService     *service.ProjectService
-	TestCaseService    *service.TestCaseService
-	ProfileService     *service.ProfileService
-	ExecutionService   *service.ExecutionService
-	DefectService      *service.DefectService
-	RequirementService *service.RequirementService
-	ScriptService      *service.ScriptService
-	OverviewService    *service.OverviewService
-	AuditService       *service.AuditService
-	ModuleService      *service.ModuleService
-	AttachmentService  *service.AttachmentService
-	CaseHistoryRepo    *repository.CaseHistoryRepo
-	CaseRelationRepo   *repository.CaseRelationRepo
-	XlsxService            *service.XlsxService
-	AIScriptService        *service.AIScriptService
-	CaseReviewService      *service.CaseReviewService
+	Logger                  *slog.Logger
+	AuthService             *service.AuthService
+	UserService             *service.UserService
+	RoleService             *service.RoleService
+	ProjectService          *service.ProjectService
+	TestCaseService         *service.TestCaseService
+	ProfileService          *service.ProfileService
+	ExecutionService        *service.ExecutionService
+	DefectService           *service.DefectService
+	RequirementService      *service.RequirementService
+	ScriptService           *service.ScriptService
+	OverviewService         *service.OverviewService
+	AuditService            *service.AuditService
+	ModuleService           *service.ModuleService
+	AttachmentService       *service.AttachmentService
+	CaseHistoryRepo         *repository.CaseHistoryRepo
+	CaseRelationRepo        *repository.CaseRelationRepo
+	XlsxService             *service.XlsxService
+	AIScriptService         *service.AIScriptService
+	CaseReviewService       *service.CaseReviewService
 	CaseReviewSubmitService *service.CaseReviewSubmitService
 }
 
 // API 核心结构体
 type API struct {
-	logger           *slog.Logger
-	allowedOrigins   []string
-	authSvc          *service.AuthService
-	userSvc          *service.UserService
-	roleSvc          *service.RoleService
-	projectSvc       *service.ProjectService
-	testCaseSvc      *service.TestCaseService
-	profileSvc       *service.ProfileService
-	executionSvc     *service.ExecutionService
-	defectSvc        *service.DefectService
-	requirementSvc   *service.RequirementService
-	scriptSvc        *service.ScriptService
-	overviewSvc      *service.OverviewService
-	auditSvc         *service.AuditService
-	moduleSvc        *service.ModuleService
-	attachmentSvc    *service.AttachmentService
-	caseHistoryRepo  *repository.CaseHistoryRepo
-	caseRelationRepo *repository.CaseRelationRepo
-	xlsxSvc              *service.XlsxService
-	aiScriptSvc          *service.AIScriptService
-	caseReviewSvc        *service.CaseReviewService
-	caseReviewSubmitSvc  *service.CaseReviewSubmitService
+	logger              *slog.Logger
+	allowedOrigins      []string
+	authSvc             *service.AuthService
+	userSvc             *service.UserService
+	roleSvc             *service.RoleService
+	projectSvc          *service.ProjectService
+	testCaseSvc         *service.TestCaseService
+	profileSvc          *service.ProfileService
+	executionSvc        *service.ExecutionService
+	defectSvc           *service.DefectService
+	requirementSvc      *service.RequirementService
+	scriptSvc           *service.ScriptService
+	overviewSvc         *service.OverviewService
+	auditSvc            *service.AuditService
+	moduleSvc           *service.ModuleService
+	attachmentSvc       *service.AttachmentService
+	caseHistoryRepo     *repository.CaseHistoryRepo
+	caseRelationRepo    *repository.CaseRelationRepo
+	xlsxSvc             *service.XlsxService
+	aiScriptSvc         *service.AIScriptService
+	caseReviewSvc       *service.CaseReviewService
+	caseReviewSubmitSvc *service.CaseReviewSubmitService
 }
 
 // NewRouter 创建路由引擎并注册所有路由
 func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	a := &API{
-		logger:           deps.Logger,
-		allowedOrigins:   parseAllowedOrigins(corsOrigins),
-		authSvc:          deps.AuthService,
-		userSvc:          deps.UserService,
-		roleSvc:          deps.RoleService,
-		projectSvc:       deps.ProjectService,
-		testCaseSvc:      deps.TestCaseService,
-		profileSvc:       deps.ProfileService,
-		executionSvc:     deps.ExecutionService,
-		defectSvc:        deps.DefectService,
-		requirementSvc:   deps.RequirementService,
-		scriptSvc:        deps.ScriptService,
-		overviewSvc:      deps.OverviewService,
-		auditSvc:         deps.AuditService,
-		moduleSvc:        deps.ModuleService,
-		attachmentSvc:    deps.AttachmentService,
-		caseHistoryRepo:  deps.CaseHistoryRepo,
-		caseRelationRepo: deps.CaseRelationRepo,
+		logger:              deps.Logger,
+		allowedOrigins:      parseAllowedOrigins(corsOrigins),
+		authSvc:             deps.AuthService,
+		userSvc:             deps.UserService,
+		roleSvc:             deps.RoleService,
+		projectSvc:          deps.ProjectService,
+		testCaseSvc:         deps.TestCaseService,
+		profileSvc:          deps.ProfileService,
+		executionSvc:        deps.ExecutionService,
+		defectSvc:           deps.DefectService,
+		requirementSvc:      deps.RequirementService,
+		scriptSvc:           deps.ScriptService,
+		overviewSvc:         deps.OverviewService,
+		auditSvc:            deps.AuditService,
+		moduleSvc:           deps.ModuleService,
+		attachmentSvc:       deps.AttachmentService,
+		caseHistoryRepo:     deps.CaseHistoryRepo,
+		caseRelationRepo:    deps.CaseRelationRepo,
 		xlsxSvc:             deps.XlsxService,
 		aiScriptSvc:         deps.AIScriptService,
 		caseReviewSvc:       deps.CaseReviewService,
@@ -161,11 +161,8 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.DELETE("/projects/:projectID/testcases/:testcaseID", a.deleteTestCase)
 	// Single testcase operations (Use singular "testcase" to avoid Gin POST conflict with static "testcases" batch routes)
 	auth.POST("/projects/:projectID/testcase/:testcaseID/clone", a.cloneTestCase)
-	auth.POST("/projects/:projectID/testcase/:testcaseID/submit-review", a.submitReview)
 	auth.POST("/projects/:projectID/testcase/:testcaseID/discard", a.discardTestCase)
 	auth.POST("/projects/:projectID/testcase/:testcaseID/recover", a.recoverTestCase)
-	auth.POST("/projects/:projectID/testcase/:testcaseID/approve-review", a.approveReview)
-	auth.POST("/projects/:projectID/testcase/:testcaseID/reject-review", a.rejectReview)
 	auth.GET("/projects/:projectID/testcases/:testcaseID/history", a.listCaseHistory)
 	auth.GET("/projects/:projectID/testcases/:testcaseID/relations", a.listCaseRelations)
 	auth.POST("/projects/:projectID/testcases/:testcaseID/relations", a.createCaseRelation)

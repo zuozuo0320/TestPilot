@@ -95,7 +95,6 @@ type createRequirementRequest struct {
 type createTestCaseRequest struct {
 	Title        string `json:"title" binding:"required,min=1,max=200"`
 	Level        string `json:"level" binding:"omitempty,oneof=P0 P1 P2 P3"`
-	ReviewResult string `json:"review_result"`
 	ExecResult   string `json:"exec_result"`
 	ModuleID     uint   `json:"module_id"`
 	ModulePath   string `json:"module_path" binding:"omitempty,max=255"`
@@ -110,7 +109,6 @@ type createTestCaseRequest struct {
 type updateTestCaseRequest struct {
 	Title        *string `json:"title" binding:"omitempty,min=1,max=200"`
 	Level        *string `json:"level" binding:"omitempty,oneof=P0 P1 P2 P3"`
-	ReviewResult *string `json:"review_result"`
 	ExecResult   *string `json:"exec_result"`
 	ModuleID     *uint   `json:"module_id"`
 	ModulePath   *string `json:"module_path" binding:"omitempty,max=255"`

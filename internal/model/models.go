@@ -86,7 +86,7 @@ type User struct {
 	Avatar       string         `json:"avatar" gorm:"size:500"`
 	PasswordHash string         `json:"-" gorm:"column:password_hash;size:255;not null;default:''"`
 	Role         string         `json:"role" gorm:"size:20;not null;default:readonly;index"` // 缓存主角色，兼容 JWT/旧逻辑
-	RoleNames    []string       `json:"role_names" gorm:"-"`                                  // 虚拟字段：成员管理等场景回填多角色显示名
+	RoleNames    []string       `json:"role_names" gorm:"-"`                                 // 虚拟字段：成员管理等场景回填多角色显示名
 	Active       bool           `json:"active" gorm:"not null;default:true"`
 	LastLoginAt  *time.Time     `json:"last_login_at" gorm:"index"`
 	DeletedAt    gorm.DeletedAt `json:"deleted_at" gorm:"index"`
@@ -143,7 +143,7 @@ type Project struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 
 	// 虚拟字段（不入库，API 返回时填充）
-	MemberCount   int64 `json:"member_count" gorm:"-"` // 虚拟字段：SQL 子查询填充
+	MemberCount   int64 `json:"member_count" gorm:"-"`   // 虚拟字段：SQL 子查询填充
 	TestCaseCount int64 `json:"testcase_count" gorm:"-"` // 虚拟字段：SQL 子查询填充
 }
 
@@ -171,8 +171,8 @@ type TestCase struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
 	ProjectID    uint      `json:"project_id" gorm:"not null;index;uniqueIndex:idx_project_testcase_title"`
 	Title        string    `json:"title" gorm:"size:200;not null;uniqueIndex:idx_project_testcase_title"`
-	Status       string    `json:"status" gorm:"size:20;not null;default:draft;index"`   // 草稿(draft)/待评审(pending)/已生效(active)/已废弃(discarded)
-	Version      string    `json:"version" gorm:"size:20;not null;default:V1"`           // 版本号，如 V1, V2...
+	Status       string    `json:"status" gorm:"size:20;not null;default:draft;index"` // 草稿(draft)/待评审(pending)/已生效(active)/已废弃(discarded)
+	Version      string    `json:"version" gorm:"size:20;not null;default:V1"`         // 版本号，如 V1, V2...
 	Level        string    `json:"level" gorm:"size:10;default:P1"`
 	ReviewResult string    `json:"review_result" gorm:"size:30;default:未评审"`
 	ExecResult   string    `json:"exec_result" gorm:"size:30;default:未执行"`
@@ -187,6 +187,12 @@ type TestCase struct {
 	UpdatedBy    uint      `json:"updated_by" gorm:"not null;default:0;index"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+
+	// 虚拟字段：用例评审模块关联摘要
+	InReview           bool   `json:"in_review" gorm:"-"`
+	CurrentReviewID    uint   `json:"current_review_id" gorm:"-"`
+	CurrentReviewName  string `json:"current_review_name" gorm:"-"`
+	RelatedReviewCount int64  `json:"related_review_count" gorm:"-"`
 }
 
 // Module 用例目录树节点
@@ -316,9 +322,9 @@ type CaseReview struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 
 	// 虚拟字段（不入库，API 返回时填充）
-	CreatedByName string   `json:"created_by_name,omitempty" gorm:"-"`
-	ReviewerIDList []uint  `json:"reviewer_ids,omitempty" gorm:"-"`
-	ReviewerNames []string `json:"reviewer_names,omitempty" gorm:"-"`
+	CreatedByName  string   `json:"created_by_name,omitempty" gorm:"-"`
+	ReviewerIDList []uint   `json:"reviewer_ids,omitempty" gorm:"-"`
+	ReviewerNames  []string `json:"reviewer_names,omitempty" gorm:"-"`
 }
 
 // ParseDefaultReviewerIDs 解析 JSON 格式的默认评审人 ID 列表

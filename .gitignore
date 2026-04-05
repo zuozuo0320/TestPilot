@@ -29,3 +29,10 @@ executor/pw_projects/
 
 # 一次性迁移脚本
 scripts/
+
+# Go 编译缓存 (Docker 构建泄漏)
+.gocache/
+
+# 构建产物
+server.exe
+tmp_server.exe
