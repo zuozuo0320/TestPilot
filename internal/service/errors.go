@@ -90,6 +90,9 @@ const (
 	CodePresetRoleProtected  = 110008
 	CodeRoleInUse            = 110009
 	CodeTestCaseNotFound     = 110010
+	CodeProjectOwnerInvalid  = 110011
+	CodeProjectOwnerLocked   = 110012
+	CodeProjectOwnerByMember = 110013
 
 	// 12: 用例评审模块
 	CodeReviewNotFound      = 120101
@@ -127,5 +130,3 @@ var (
 	ErrOldPasswordWrong     = ErrBadRequest(CodeOldPasswordWrong, "旧密码不正确")
 	ErrEmailImmutable       = ErrBadRequest(CodeEmailImmutable, "邮箱不可修改")
 )
-
-

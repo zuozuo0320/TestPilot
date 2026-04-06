@@ -3,6 +3,8 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,6 +13,49 @@ import (
 
 	"testpilot/internal/model"
 )
+
+const projectSelectColumns = `
+	projects.id,
+	projects.name,
+	projects.description,
+	projects.avatar,
+	projects.owner_id,
+	projects.status,
+	COALESCE(owner_user.name, '') AS owner_name,
+	COALESCE(owner_user.avatar, '') AS owner_avatar,
+	projects.archived_at,
+	projects.created_at,
+	projects.updated_at,
+	(SELECT COUNT(*) FROM project_members WHERE project_members.project_id = projects.id) AS member_count,
+	(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id) AS testcase_count,
+	(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id AND test_cases.exec_result <> '未执行') AS executed_testcase_count,
+	(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id AND test_cases.exec_result = '成功') AS passed_testcase_count,
+	(
+		SELECT CASE
+			WHEN COUNT(*) = 0 THEN NULL
+			ELSE ROUND(SUM(CASE WHEN rr.status = 'passed' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1)
+		END
+		FROM run_results rr
+		WHERE rr.run_id = (
+			SELECT r.id
+			FROM runs r
+			WHERE r.project_id = projects.id
+			ORDER BY r.id DESC
+			LIMIT 1
+		)
+	) AS latest_run_pass_rate,
+	(
+		SELECT COUNT(*)
+		FROM run_results rr
+		WHERE rr.run_id = (
+			SELECT r.id
+			FROM runs r
+			WHERE r.project_id = projects.id
+			ORDER BY r.id DESC
+			LIMIT 1
+		)
+	) AS latest_run_result_count
+`
 
 // ProjectRepository 项目数据访问接口
 type ProjectRepository interface {
@@ -28,8 +73,12 @@ type ProjectRepository interface {
 	ListByUserIDIncludeArchived(ctx context.Context, userID uint) ([]model.Project, error)
 	// Create 创建项目
 	Create(ctx context.Context, project *model.Project) error
+	// CreateTx 在事务中创建项目
+	CreateTx(ctx context.Context, tx *gorm.DB, project *model.Project) error
 	// Updates 更新项目字段
 	Updates(ctx context.Context, id uint, fields map[string]any) error
+	// UpdatesTx 在事务中更新项目字段
+	UpdatesTx(ctx context.Context, tx *gorm.DB, id uint, fields map[string]any) error
 	// ExistAll 检查项目 ID 列表是否全部存在
 	ExistAll(ctx context.Context, ids []uint) (bool, error)
 	// ExistsByName 检查项目名是否已存在（排除指定 ID）
@@ -49,12 +98,16 @@ type ProjectRepository interface {
 	IsMember(ctx context.Context, projectID, userID uint) (bool, error)
 	// AddMember 添加或更新项目成员
 	AddMember(ctx context.Context, member *model.ProjectMember) error
+	// AddMemberTx 在事务中添加或更新项目成员
+	AddMemberTx(ctx context.Context, tx *gorm.DB, member *model.ProjectMember) error
 	// RemoveMember 移除项目成员
 	RemoveMember(ctx context.Context, projectID, userID uint) error
 	// ListMembers 获取项目成员列表
 	ListMembers(ctx context.Context, projectID uint) ([]model.ProjectMember, error)
 	// DeleteAllMembers 删除项目所有成员记录
 	DeleteAllMembers(ctx context.Context, projectID uint) error
+	// DemoteOtherOwnersTx 将指定负责人成员之外的 owner 统一降级为 member
+	DemoteOtherOwnersTx(ctx context.Context, tx *gorm.DB, projectID, keepUserID uint) error
 }
 
 // projectRepo ProjectRepository 的 GORM 实现
@@ -69,10 +122,21 @@ func NewProjectRepo(db *gorm.DB) ProjectRepository {
 
 // FindByID 根据 ID 查找项目
 func (r *projectRepo) FindByID(ctx context.Context, id uint) (*model.Project, error) {
-	var project model.Project
-	if err := r.db.WithContext(ctx).First(&project, id).Error; err != nil {
-		return nil, err
+	var row projectRow
+	tx := r.db.WithContext(ctx).Raw(fmt.Sprintf(`
+		SELECT %s
+		FROM projects
+		LEFT JOIN users owner_user ON owner_user.id = projects.owner_id
+		WHERE projects.id = ?
+		LIMIT 1
+	`, projectSelectColumns), id).Scan(&row)
+	if tx.Error != nil {
+		return nil, tx.Error
 	}
+	if tx.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	project := row.toModel()
 	return &project, nil
 }
 
@@ -98,45 +162,63 @@ func (r *projectRepo) Exists(ctx context.Context, id uint) (bool, error) {
 
 // projectRow 局部扫描结构体（无 gorm:"-" 标签限制），用于 Raw().Scan() 接收虚拟字段
 type projectRow struct {
-	ID            uint       `gorm:"column:id"`
-	Name          string     `gorm:"column:name"`
-	Description   string     `gorm:"column:description"`
-	Avatar        string     `gorm:"column:avatar"`
-	Status        string     `gorm:"column:status"`
-	ArchivedAt    *time.Time `gorm:"column:archived_at"`
-	CreatedAt     time.Time  `gorm:"column:created_at"`
-	UpdatedAt     time.Time  `gorm:"column:updated_at"`
-	MemberCount   int64      `gorm:"column:member_count"`
-	TestCaseCount int64      `gorm:"column:testcase_count"`
+	ID                    uint            `gorm:"column:id"`
+	Name                  string          `gorm:"column:name"`
+	Description           string          `gorm:"column:description"`
+	Avatar                string          `gorm:"column:avatar"`
+	OwnerID               uint            `gorm:"column:owner_id"`
+	OwnerName             string          `gorm:"column:owner_name"`
+	OwnerAvatar           string          `gorm:"column:owner_avatar"`
+	Status                string          `gorm:"column:status"`
+	ArchivedAt            *time.Time      `gorm:"column:archived_at"`
+	CreatedAt             time.Time       `gorm:"column:created_at"`
+	UpdatedAt             time.Time       `gorm:"column:updated_at"`
+	MemberCount           int64           `gorm:"column:member_count"`
+	TestCaseCount         int64           `gorm:"column:testcase_count"`
+	ExecutedTestCaseCount int64           `gorm:"column:executed_testcase_count"`
+	PassedTestCaseCount   int64           `gorm:"column:passed_testcase_count"`
+	LatestRunPassRate     sql.NullFloat64 `gorm:"column:latest_run_pass_rate"`
+	LatestRunResultCount  int64           `gorm:"column:latest_run_result_count"`
 }
 
 // toModel 将扫描行转换为 model.Project
 func (pr projectRow) toModel() model.Project {
+	var latestRunPassRate *float64
+	if pr.LatestRunPassRate.Valid {
+		value := pr.LatestRunPassRate.Float64
+		latestRunPassRate = &value
+	}
 	return model.Project{
-		ID:            pr.ID,
-		Name:          pr.Name,
-		Description:   pr.Description,
-		Avatar:        pr.Avatar,
-		Status:        pr.Status,
-		ArchivedAt:    pr.ArchivedAt,
-		CreatedAt:     pr.CreatedAt,
-		UpdatedAt:     pr.UpdatedAt,
-		MemberCount:   pr.MemberCount,
-		TestCaseCount: pr.TestCaseCount,
+		ID:                    pr.ID,
+		Name:                  pr.Name,
+		Description:           pr.Description,
+		Avatar:                pr.Avatar,
+		OwnerID:               pr.OwnerID,
+		OwnerName:             pr.OwnerName,
+		OwnerAvatar:           pr.OwnerAvatar,
+		Status:                pr.Status,
+		ArchivedAt:            pr.ArchivedAt,
+		CreatedAt:             pr.CreatedAt,
+		UpdatedAt:             pr.UpdatedAt,
+		MemberCount:           pr.MemberCount,
+		TestCaseCount:         pr.TestCaseCount,
+		TestCaseTotalCount:    pr.TestCaseCount,
+		ExecutedTestCaseCount: pr.ExecutedTestCaseCount,
+		PassedTestCaseCount:   pr.PassedTestCaseCount,
+		LatestRunPassRate:     latestRunPassRate,
+		LatestRunResultCount:  pr.LatestRunResultCount,
 	}
 }
 
 // List 获取全部项目列表，按活跃排前、归档排后，包含成员数和用例数统计
 func (r *projectRepo) List(ctx context.Context) ([]model.Project, error) {
 	var rows []projectRow
-	err := r.db.WithContext(ctx).Raw(`
-		SELECT projects.id, projects.name, projects.description, projects.avatar, projects.status,
-			projects.archived_at, projects.created_at, projects.updated_at,
-			(SELECT COUNT(*) FROM project_members WHERE project_members.project_id = projects.id) AS member_count,
-			(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id) AS testcase_count
+	err := r.db.WithContext(ctx).Raw(fmt.Sprintf(`
+		SELECT %s
 		FROM projects
+		LEFT JOIN users owner_user ON owner_user.id = projects.owner_id
 		ORDER BY CASE WHEN projects.status = 'archived' THEN 1 ELSE 0 END ASC, projects.updated_at DESC
-	`).Scan(&rows).Error
+	`, projectSelectColumns)).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -150,16 +232,14 @@ func (r *projectRepo) List(ctx context.Context) ([]model.Project, error) {
 // ListByUserID 获取用户参与的项目列表（排除已归档项目），含统计数据
 func (r *projectRepo) ListByUserID(ctx context.Context, userID uint) ([]model.Project, error) {
 	var rows []projectRow
-	err := r.db.WithContext(ctx).Raw(`
-		SELECT projects.id, projects.name, projects.description, projects.avatar, projects.status,
-			projects.archived_at, projects.created_at, projects.updated_at,
-			(SELECT COUNT(*) FROM project_members WHERE project_members.project_id = projects.id) AS member_count,
-			(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id) AS testcase_count
+	err := r.db.WithContext(ctx).Raw(fmt.Sprintf(`
+		SELECT %s
 		FROM projects
 		JOIN project_members pm ON pm.project_id = projects.id
+		LEFT JOIN users owner_user ON owner_user.id = projects.owner_id
 		WHERE pm.user_id = ? AND projects.status = ?
 		ORDER BY projects.updated_at DESC
-	`, userID, model.ProjectStatusActive).Scan(&rows).Error
+	`, projectSelectColumns), userID, model.ProjectStatusActive).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -173,16 +253,14 @@ func (r *projectRepo) ListByUserID(ctx context.Context, userID uint) ([]model.Pr
 // ListByUserIDIncludeArchived 获取用户参与的项目列表（包含归档），含统计数据
 func (r *projectRepo) ListByUserIDIncludeArchived(ctx context.Context, userID uint) ([]model.Project, error) {
 	var rows []projectRow
-	err := r.db.WithContext(ctx).Raw(`
-		SELECT projects.id, projects.name, projects.description, projects.avatar, projects.status,
-			projects.archived_at, projects.created_at, projects.updated_at,
-			(SELECT COUNT(*) FROM project_members WHERE project_members.project_id = projects.id) AS member_count,
-			(SELECT COUNT(*) FROM test_cases WHERE test_cases.project_id = projects.id) AS testcase_count
+	err := r.db.WithContext(ctx).Raw(fmt.Sprintf(`
+		SELECT %s
 		FROM projects
 		JOIN project_members pm ON pm.project_id = projects.id
+		LEFT JOIN users owner_user ON owner_user.id = projects.owner_id
 		WHERE pm.user_id = ?
 		ORDER BY CASE WHEN projects.status = 'archived' THEN 1 ELSE 0 END ASC, projects.updated_at DESC
-	`, userID).Scan(&rows).Error
+	`, projectSelectColumns), userID).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -198,9 +276,19 @@ func (r *projectRepo) Create(ctx context.Context, project *model.Project) error 
 	return r.db.WithContext(ctx).Create(project).Error
 }
 
+// CreateTx 在事务中创建项目
+func (r *projectRepo) CreateTx(ctx context.Context, tx *gorm.DB, project *model.Project) error {
+	return tx.WithContext(ctx).Create(project).Error
+}
+
 // Updates 更新项目字段
 func (r *projectRepo) Updates(ctx context.Context, id uint, fields map[string]any) error {
 	return r.db.WithContext(ctx).Model(&model.Project{}).Where("id = ?", id).Updates(fields).Error
+}
+
+// UpdatesTx 在事务中更新项目字段
+func (r *projectRepo) UpdatesTx(ctx context.Context, tx *gorm.DB, id uint, fields map[string]any) error {
+	return tx.WithContext(ctx).Model(&model.Project{}).Where("id = ?", id).Updates(fields).Error
 }
 
 // ExistAll 检查项目 ID 列表是否全部存在
@@ -274,6 +362,14 @@ func (r *projectRepo) AddMember(ctx context.Context, member *model.ProjectMember
 	}).Create(member).Error
 }
 
+// AddMemberTx 在事务中添加或更新项目成员（upsert on project_id+user_id）
+func (r *projectRepo) AddMemberTx(ctx context.Context, tx *gorm.DB, member *model.ProjectMember) error {
+	return tx.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "project_id"}, {Name: "user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"role", "updated_at"}),
+	}).Create(member).Error
+}
+
 // RemoveMember 移除项目成员
 func (r *projectRepo) RemoveMember(ctx context.Context, projectID, userID uint) error {
 	return r.db.WithContext(ctx).
@@ -301,6 +397,14 @@ func (r *projectRepo) ListMembers(ctx context.Context, projectID uint) ([]model.
 // DeleteAllMembers 删除项目所有成员记录（用于删除空项目时级联清理）
 func (r *projectRepo) DeleteAllMembers(ctx context.Context, projectID uint) error {
 	return r.db.WithContext(ctx).Where("project_id = ?", projectID).Delete(&model.ProjectMember{}).Error
+}
+
+// DemoteOtherOwnersTx 将指定负责人成员之外的 owner 统一降级为 member
+func (r *projectRepo) DemoteOtherOwnersTx(ctx context.Context, tx *gorm.DB, projectID, keepUserID uint) error {
+	return tx.WithContext(ctx).
+		Model(&model.ProjectMember{}).
+		Where("project_id = ? AND user_id <> ? AND role = ?", projectID, keepUserID, model.MemberRoleOwner).
+		Update("role", model.MemberRoleMember).Error
 }
 
 // ---- 工具函数 ----

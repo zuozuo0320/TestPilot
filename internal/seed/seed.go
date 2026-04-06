@@ -107,9 +107,15 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 		}
 	}
 
-	project := model.Project{Name: model.SeedProjectName, Description: "包含示例用例与基础模块，帮助你快速熟悉平台", Status: model.ProjectStatusActive}
+	project := model.Project{
+		Name:        model.SeedProjectName,
+		Description: "包含示例用例与基础模块，帮助你快速熟悉平台",
+		OwnerID:     users[0].ID,
+		Status:      model.ProjectStatusActive,
+	}
 	if err := db.Where(model.Project{Name: project.Name}).Assign(model.Project{
 		Description: project.Description,
+		OwnerID:     project.OwnerID,
 		Status:      model.ProjectStatusActive,
 	}).FirstOrCreate(&project).Error; err != nil {
 		return fmt.Errorf("seed project failed: %w", err)
@@ -129,7 +135,7 @@ func Seed(db *gorm.DB, logger *slog.Logger) error {
 
 	members := []model.ProjectMember{
 		{ProjectID: project.ID, UserID: users[0].ID, Role: model.MemberRoleOwner},
-		{ProjectID: project.ID, UserID: users[1].ID, Role: model.MemberRoleOwner},
+		{ProjectID: project.ID, UserID: users[1].ID, Role: model.MemberRoleMember},
 		{ProjectID: project.ID, UserID: users[2].ID, Role: model.MemberRoleMember},
 	}
 	for _, m := range members {

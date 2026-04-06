@@ -52,6 +52,7 @@ type updateProjectRequest struct {
 	Name        *string `json:"name" binding:"omitempty,min=2,max=120"`
 	Description *string `json:"description" binding:"omitempty,max=500"`
 	Avatar      *string `json:"avatar" binding:"omitempty,max=500"`
+	OwnerID     *uint   `json:"owner_id" binding:"omitempty,min=1"`
 }
 
 // updateProfileRequest 个人资料更新请求
@@ -77,6 +78,7 @@ type createProjectRequest struct {
 	Name        string `json:"name" binding:"required,min=2,max=120"`
 	Description string `json:"description" binding:"max=500"`
 	Avatar      string `json:"avatar" binding:"max=500"`
+	OwnerID     *uint  `json:"owner_id" binding:"omitempty,min=1"`
 }
 
 // addMemberRequest 添加项目成员请求

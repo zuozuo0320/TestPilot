@@ -24,6 +24,22 @@ const (
 	ProjectStatusActive   = "active"
 	ProjectStatusArchived = "archived"
 
+	// ---- 项目质量状态 ----
+	ProjectQualityStatusStable   = "stable"
+	ProjectQualityStatusDegraded = "degraded"
+	ProjectQualityStatusFailing  = "failing"
+	ProjectQualityStatusUnknown  = "unknown"
+
+	// ---- 项目质量状态原因 ----
+	ProjectQualityReasonNoTestCases              = "no_testcases"
+	ProjectQualityReasonNoExecutionData          = "no_execution_data"
+	ProjectQualityReasonLatestRunPassRateGE95    = "latest_run_pass_rate_ge_95"
+	ProjectQualityReasonLatestRunPassRate80To95  = "latest_run_pass_rate_between_80_95"
+	ProjectQualityReasonLatestRunPassRateBelow80 = "latest_run_pass_rate_lt_80"
+	ProjectQualityReasonCasePassRateGE95         = "case_exec_pass_rate_ge_95"
+	ProjectQualityReasonCasePassRate80To95       = "case_exec_pass_rate_between_80_95"
+	ProjectQualityReasonCasePassRateBelow80      = "case_exec_pass_rate_lt_80"
+
 	// ---- 测试用例状态 ----
 	TestCaseStatusDraft     = "draft"     // 草稿
 	TestCaseStatusPending   = "pending"   // 待评审
@@ -137,14 +153,25 @@ type Project struct {
 	Name        string     `json:"name" gorm:"size:120;uniqueIndex;not null"`
 	Description string     `json:"description" gorm:"size:500"`
 	Avatar      string     `json:"avatar" gorm:"size:500"`
+	OwnerID     uint       `json:"owner_id" gorm:"not null;default:0;index"`
 	Status      string     `json:"status" gorm:"size:20;not null;default:active;index"`
 	ArchivedAt  *time.Time `json:"archived_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 
 	// 虚拟字段（不入库，API 返回时填充）
-	MemberCount   int64 `json:"member_count" gorm:"-"`   // 虚拟字段：SQL 子查询填充
-	TestCaseCount int64 `json:"testcase_count" gorm:"-"` // 虚拟字段：SQL 子查询填充
+	MemberCount           int64    `json:"member_count" gorm:"-"`            // 虚拟字段：SQL 子查询填充
+	TestCaseCount         int64    `json:"testcase_count" gorm:"-"`          // 虚拟字段：SQL 子查询填充
+	TestCaseTotalCount    int64    `json:"testcase_total_count" gorm:"-"`    // 虚拟字段：兼容项目列表真实摘要口径
+	ExecutedTestCaseCount int64    `json:"executed_testcase_count" gorm:"-"` // 虚拟字段：SQL 子查询填充
+	TestProgress          float64  `json:"test_progress" gorm:"-"`           // 虚拟字段：service 层计算
+	QualityStatus         string   `json:"quality_status" gorm:"-"`          // 虚拟字段：service 层计算
+	QualityReason         string   `json:"quality_reason" gorm:"-"`          // 虚拟字段：service 层计算
+	LatestRunPassRate     *float64 `json:"latest_run_pass_rate" gorm:"-"`    // 虚拟字段：SQL 子查询填充
+	LatestRunResultCount  int64    `json:"-" gorm:"-"`                       // 虚拟字段：仅供 service 判定质量状态
+	PassedTestCaseCount   int64    `json:"-" gorm:"-"`                       // 虚拟字段：仅供 service 回退计算质量状态
+	OwnerName             string   `json:"owner_name" gorm:"-"`
+	OwnerAvatar           string   `json:"owner_avatar" gorm:"-"`
 }
 
 type ProjectMember struct {

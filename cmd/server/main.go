@@ -144,7 +144,7 @@ func main() {
 	authSvc := service.NewAuthService(userRepo, jwtCfg)
 	userSvc := service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr)
 	roleSvc := service.NewRoleService(roleRepo, auditRepo, txMgr)
-	projectSvc := service.NewProjectService(projectRepo, userRepo, auditRepo, txMgr)
+	projectSvc := service.NewProjectService(logger, projectRepo, userRepo, auditRepo, txMgr)
 	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo)
 	profileSvc := service.NewProfileService(userRepo, auditRepo, txMgr)
 	executionSvc := service.NewExecutionService(executionRepo, txMgr, mockExecutor, redisClient, logger)
@@ -162,26 +162,26 @@ func main() {
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{
-		Logger:             logger,
-		AuthService:        authSvc,
-		UserService:        userSvc,
-		RoleService:        roleSvc,
-		ProjectService:     projectSvc,
-		TestCaseService:    testCaseSvc,
-		ProfileService:     profileSvc,
-		ExecutionService:   executionSvc,
-		DefectService:      defectSvc,
-		RequirementService: requirementSvc,
-		ScriptService:      scriptSvc,
-		OverviewService:    overviewSvc,
-		AuditService:       auditSvc,
-		ModuleService:      moduleSvc,
-		AttachmentService:  attachmentSvc,
-		CaseHistoryRepo:    caseHistoryRepo,
-		CaseRelationRepo:   caseRelationRepo,
-		XlsxService:        xlsxSvc,
-		AIScriptService:        aiScriptSvc,
-		CaseReviewService:      caseReviewSvc,
+		Logger:                  logger,
+		AuthService:             authSvc,
+		UserService:             userSvc,
+		RoleService:             roleSvc,
+		ProjectService:          projectSvc,
+		TestCaseService:         testCaseSvc,
+		ProfileService:          profileSvc,
+		ExecutionService:        executionSvc,
+		DefectService:           defectSvc,
+		RequirementService:      requirementSvc,
+		ScriptService:           scriptSvc,
+		OverviewService:         overviewSvc,
+		AuditService:            auditSvc,
+		ModuleService:           moduleSvc,
+		AttachmentService:       attachmentSvc,
+		CaseHistoryRepo:         caseHistoryRepo,
+		CaseRelationRepo:        caseRelationRepo,
+		XlsxService:             xlsxSvc,
+		AIScriptService:         aiScriptSvc,
+		CaseReviewService:       caseReviewSvc,
 		CaseReviewSubmitService: caseReviewSubmitSvc,
 	}, cfg.CORSAllowOrigins)
 

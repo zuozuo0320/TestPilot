@@ -32,6 +32,10 @@ type ExecutionRepository interface {
 	ResolveScripts(ctx context.Context, projectID uint, mode string, scriptID uint, scriptIDs []uint) ([]model.Script, error)
 	// CountRuns 统计项目执行次数
 	CountRuns(ctx context.Context, projectID uint) (int64, error)
+	// ListLinkedTestCaseIDsByScriptIDs 获取脚本关联的用例 ID 列表
+	ListLinkedTestCaseIDsByScriptIDs(ctx context.Context, projectID uint, scriptIDs []uint) (map[uint][]uint, error)
+	// UpdateTestCaseExecResultsTx 在事务中批量回写用例执行结果
+	UpdateTestCaseExecResultsTx(tx *gorm.DB, projectID uint, ids []uint, execResult string) error
 }
 
 // executionRepo ExecutionRepository 的 GORM 实现
@@ -102,6 +106,40 @@ func (r *executionRepo) CountRuns(ctx context.Context, projectID uint) (int64, e
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Run{}).Where("project_id = ?", projectID).Count(&count).Error
 	return count, err
+}
+
+func (r *executionRepo) ListLinkedTestCaseIDsByScriptIDs(ctx context.Context, projectID uint, scriptIDs []uint) (map[uint][]uint, error) {
+	result := make(map[uint][]uint)
+	if len(scriptIDs) == 0 {
+		return result, nil
+	}
+	type row struct {
+		ScriptID   uint `gorm:"column:script_id"`
+		TestCaseID uint `gorm:"column:test_case_id"`
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).
+		Table("test_case_scripts AS tcs").
+		Select("tcs.script_id, tcs.test_case_id").
+		Joins("JOIN test_cases tc ON tc.id = tcs.test_case_id").
+		Where("tc.project_id = ? AND tcs.script_id IN ?", projectID, scriptIDs).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range rows {
+		result[item.ScriptID] = append(result[item.ScriptID], item.TestCaseID)
+	}
+	return result, nil
+}
+
+func (r *executionRepo) UpdateTestCaseExecResultsTx(tx *gorm.DB, projectID uint, ids []uint, execResult string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return tx.Model(&model.TestCase{}).
+		Where("project_id = ? AND id IN ?", projectID, ids).
+		Update("exec_result", execResult).Error
 }
 
 func (r *executionRepo) ResolveScripts(ctx context.Context, projectID uint, mode string, scriptID uint, scriptIDs []uint) ([]model.Script, error) {

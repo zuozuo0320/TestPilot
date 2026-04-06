@@ -210,11 +210,12 @@ func (s *CaseReviewService) DeleteReview(ctx context.Context, projectID, reviewI
 		return ErrNotFound(CodeReviewNotFound, "评审计划不存在")
 	}
 
-	// 仅 not_started 或无记录时允许删除
-	if review.Status != model.ReviewPlanStatusNotStarted {
+	// 已关闭(closed) 或 未开始(not_started) 的计划可以直接删除
+	// 进行中(in_progress) / 已完成(completed) 且有评审记录时需先关闭
+	if review.Status != model.ReviewPlanStatusNotStarted && review.Status != model.ReviewPlanStatusClosed {
 		hasRecords, _ := s.recordRepo.HasRecordsByReviewID(ctx, reviewID)
 		if hasRecords {
-			return ErrBadRequest(CodeReviewStatusInvalid, "已有评审记录的计划不可删除，请使用关闭操作")
+			return ErrBadRequest(CodeReviewStatusInvalid, "进行中或已完成的计划有评审记录，请先关闭后再删除")
 		}
 	}
 
@@ -231,6 +232,7 @@ func (s *CaseReviewService) DeleteReview(ctx context.Context, projectID, reviewI
 	}
 	return err
 }
+
 
 // CloseReview 关闭评审计划
 func (s *CaseReviewService) CloseReview(ctx context.Context, projectID, reviewID, userID uint) error {
@@ -382,6 +384,9 @@ func (s *CaseReviewService) LinkItems(ctx context.Context, projectID, reviewID, 
 			rIDs := reviewerMap[entry.TestCaseID]
 			if len(rIDs) == 0 {
 				rIDs = defaultReviewerIDs
+			}
+			if len(rIDs) == 0 {
+				return ErrBadRequest(CodeReviewEmptyReviewer, "请先为评审计划配置默认评审人或为本次用例指定评审人")
 			}
 			if err := s.linkItemsInternal(ctx, tx, reviewID, projectID, userID, rIDs, []uint{entry.TestCaseID}, input.AutoSubmit); err != nil {
 				return err

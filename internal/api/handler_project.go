@@ -27,7 +27,12 @@ func (a *API) createProject(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	project, err := a.projectSvc.Create(c.Request.Context(), user.ID, req.Name, req.Description, req.Avatar)
+	project, err := a.projectSvc.Create(c.Request.Context(), user.ID, service.CreateProjectInput{
+		Name:        req.Name,
+		Description: req.Description,
+		Avatar:      req.Avatar,
+		OwnerID:     req.OwnerID,
+	})
 	if err != nil {
 		response.HandleError(c, err)
 		return
@@ -49,7 +54,12 @@ func (a *API) updateProject(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	updated, err := a.projectSvc.Update(c.Request.Context(), user.ID, projectID, req.Name, req.Description, req.Avatar)
+	updated, err := a.projectSvc.Update(c.Request.Context(), user.ID, projectID, service.UpdateProjectInput{
+		Name:        req.Name,
+		Description: req.Description,
+		Avatar:      req.Avatar,
+		OwnerID:     req.OwnerID,
+	})
 	if err != nil {
 		response.HandleError(c, err)
 		return
@@ -223,7 +233,9 @@ func (a *API) uploadProjectAvatar(c *gin.Context) {
 
 	avatarURL := "/" + dir + "/" + filename
 	avatarPtr := &avatarURL
-	if _, err := a.projectSvc.Update(c.Request.Context(), user.ID, projectID, nil, nil, avatarPtr); err != nil {
+	if _, err := a.projectSvc.Update(c.Request.Context(), user.ID, projectID, service.UpdateProjectInput{
+		Avatar: avatarPtr,
+	}); err != nil {
 		response.HandleError(c, err)
 		return
 	}

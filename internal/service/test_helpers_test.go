@@ -99,7 +99,7 @@ func seedRoles(t *testing.T, db *gorm.DB) []model.Role {
 // seedProject 种入项目
 func seedProject(t *testing.T, db *gorm.DB) model.Project {
 	t.Helper()
-	project := model.Project{ID: 1, Name: "Demo", Description: "demo"}
+	project := model.Project{ID: 1, Name: "Demo", Description: "demo", OwnerID: 1}
 	if err := db.Create(&project).Error; err != nil {
 		t.Fatalf("seed project: %v", err)
 	}

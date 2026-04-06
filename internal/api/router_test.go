@@ -60,7 +60,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		AuthService:        service.NewAuthService(userRepo, jwtCfg),
 		UserService:        service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr),
 		RoleService:        service.NewRoleService(roleRepo, auditRepo, txMgr),
-		ProjectService:     service.NewProjectService(projectRepo, userRepo, auditRepo, txMgr),
+		ProjectService:     service.NewProjectService(logger, projectRepo, userRepo, auditRepo, txMgr),
 		TestCaseService:    service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo),
 		ProfileService:     service.NewProfileService(userRepo, auditRepo, txMgr),
 		ExecutionService:   service.NewExecutionService(executionRepo, txMgr, mockExecutor, nil, logger),
@@ -146,7 +146,7 @@ func seedTestData(t *testing.T, db *gorm.DB) {
 		t.Fatalf("seed user projects failed: %v", err)
 	}
 
-	project := model.Project{ID: 1, Name: "Demo", Description: "demo"}
+	project := model.Project{ID: 1, Name: "Demo", Description: "demo", OwnerID: 1}
 	if err := db.Create(&project).Error; err != nil {
 		t.Fatalf("seed project failed: %v", err)
 	}
@@ -192,8 +192,230 @@ func TestLogin(t *testing.T) {
 	}
 }
 
-func TestRunAndDefectFlow(t *testing.T) {
+func TestProjectListReturnsOwnerSummary(t *testing.T) {
 	router, _ := setupTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	req.Header.Set("X-User-ID", "1")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+
+	data := getResultData(t, resp.Body.Bytes())
+	var projects []model.Project
+	if err := json.Unmarshal(data, &projects); err != nil {
+		t.Fatalf("parse projects failed: %v", err)
+	}
+	if len(projects) == 0 {
+		t.Fatalf("expected at least one project")
+	}
+	if projects[0].OwnerID != 1 {
+		t.Fatalf("expected owner_id=1, got %d", projects[0].OwnerID)
+	}
+	if projects[0].OwnerName != "Admin" {
+		t.Fatalf("expected owner_name=Admin, got %q", projects[0].OwnerName)
+	}
+}
+
+func TestProjectListReturnsQualitySummary(t *testing.T) {
+	router, db := setupTestRouter(t)
+
+	testcases := []model.TestCase{
+		{
+			ProjectID:    1,
+			Title:        "case-executed",
+			Status:       model.TestCaseStatusDraft,
+			Version:      "V1",
+			ReviewResult: model.CaseReviewResultNotReviewed,
+			ExecResult:   "成功",
+			ModulePath:   "/",
+			Priority:     "medium",
+			CreatedBy:    1,
+			UpdatedBy:    1,
+		},
+		{
+			ProjectID:    1,
+			Title:        "case-pending",
+			Status:       model.TestCaseStatusDraft,
+			Version:      "V1",
+			ReviewResult: model.CaseReviewResultNotReviewed,
+			ExecResult:   "未执行",
+			ModulePath:   "/",
+			Priority:     "medium",
+			CreatedBy:    1,
+			UpdatedBy:    1,
+		},
+	}
+	if err := db.Create(&testcases).Error; err != nil {
+		t.Fatalf("seed testcases failed: %v", err)
+	}
+
+	run := model.Run{ProjectID: 1, TriggeredBy: 1, Mode: "one", Status: "completed"}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatalf("seed run failed: %v", err)
+	}
+	results := []model.RunResult{
+		{RunID: run.ID, ProjectID: 1, ScriptID: 1, Status: "passed"},
+		{RunID: run.ID, ProjectID: 1, ScriptID: 1, Status: "failed"},
+	}
+	if err := db.Create(&results).Error; err != nil {
+		t.Fatalf("seed run results failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	req.Header.Set("X-User-ID", "1")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+
+	data := getResultData(t, resp.Body.Bytes())
+	var projects []model.Project
+	if err := json.Unmarshal(data, &projects); err != nil {
+		t.Fatalf("parse projects failed: %v", err)
+	}
+	if len(projects) == 0 {
+		t.Fatalf("expected at least one project")
+	}
+
+	project := projects[0]
+	if project.TestCaseTotalCount != 2 {
+		t.Fatalf("expected testcase_total_count=2, got %d", project.TestCaseTotalCount)
+	}
+	if project.ExecutedTestCaseCount != 1 {
+		t.Fatalf("expected executed_testcase_count=1, got %d", project.ExecutedTestCaseCount)
+	}
+	if project.TestProgress != 50 {
+		t.Fatalf("expected test_progress=50, got %v", project.TestProgress)
+	}
+	if project.QualityStatus != model.ProjectQualityStatusFailing {
+		t.Fatalf("expected quality_status=%s, got %s", model.ProjectQualityStatusFailing, project.QualityStatus)
+	}
+	if project.QualityReason != model.ProjectQualityReasonLatestRunPassRateBelow80 {
+		t.Fatalf("expected quality_reason=%s, got %s", model.ProjectQualityReasonLatestRunPassRateBelow80, project.QualityReason)
+	}
+	if project.LatestRunPassRate == nil || *project.LatestRunPassRate != 50 {
+		t.Fatalf("expected latest_run_pass_rate=50, got %+v", project.LatestRunPassRate)
+	}
+}
+
+func TestProjectListFallsBackToCaseExecQualityWithoutRun(t *testing.T) {
+	router, db := setupTestRouter(t)
+
+	testcases := []model.TestCase{
+		{
+			ProjectID:    1,
+			Title:        "case-passed",
+			Status:       model.TestCaseStatusDraft,
+			Version:      "V1",
+			ReviewResult: model.CaseReviewResultNotReviewed,
+			ExecResult:   "成功",
+			ModulePath:   "/",
+			Priority:     "medium",
+			CreatedBy:    1,
+			UpdatedBy:    1,
+		},
+		{
+			ProjectID:    1,
+			Title:        "case-failed",
+			Status:       model.TestCaseStatusDraft,
+			Version:      "V1",
+			ReviewResult: model.CaseReviewResultNotReviewed,
+			ExecResult:   "失败",
+			ModulePath:   "/",
+			Priority:     "medium",
+			CreatedBy:    1,
+			UpdatedBy:    1,
+		},
+	}
+	if err := db.Create(&testcases).Error; err != nil {
+		t.Fatalf("seed testcases failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	req.Header.Set("X-User-ID", "1")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+
+	data := getResultData(t, resp.Body.Bytes())
+	var projects []model.Project
+	if err := json.Unmarshal(data, &projects); err != nil {
+		t.Fatalf("parse projects failed: %v", err)
+	}
+	if len(projects) == 0 {
+		t.Fatalf("expected at least one project")
+	}
+
+	project := projects[0]
+	if project.ExecutedTestCaseCount != 2 {
+		t.Fatalf("expected executed_testcase_count=2, got %d", project.ExecutedTestCaseCount)
+	}
+	if project.QualityStatus != model.ProjectQualityStatusFailing {
+		t.Fatalf("expected quality_status=%s, got %s", model.ProjectQualityStatusFailing, project.QualityStatus)
+	}
+	if project.QualityReason != model.ProjectQualityReasonCasePassRateBelow80 {
+		t.Fatalf("expected quality_reason=%s, got %s", model.ProjectQualityReasonCasePassRateBelow80, project.QualityReason)
+	}
+	if project.LatestRunPassRate != nil {
+		t.Fatalf("expected latest_run_pass_rate=nil, got %+v", project.LatestRunPassRate)
+	}
+}
+
+func TestRemoveProjectOwnerRejected(t *testing.T) {
+	router, _ := setupTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/1/members/1", nil)
+	req.Header.Set("X-User-ID", "1")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+
+	var envelope struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("parse error envelope failed: %v", err)
+	}
+	if envelope.Code != service.CodeProjectOwnerLocked {
+		t.Fatalf("expected code %d, got %d", service.CodeProjectOwnerLocked, envelope.Code)
+	}
+}
+
+func TestRunAndDefectFlow(t *testing.T) {
+	router, db := setupTestRouter(t)
+
+	testCase := model.TestCase{
+		ID:           1,
+		ProjectID:    1,
+		Title:        "Linked case",
+		Status:       model.TestCaseStatusDraft,
+		Version:      "V1",
+		ReviewResult: model.CaseReviewResultNotReviewed,
+		ExecResult:   "未执行",
+		ModulePath:   "/",
+		Priority:     "medium",
+		CreatedBy:    2,
+		UpdatedBy:    2,
+	}
+	if err := db.Create(&testCase).Error; err != nil {
+		t.Fatalf("seed testcase failed: %v", err)
+	}
+	if err := db.Create(&model.TestCaseScript{TestCaseID: testCase.ID, ScriptID: 1}).Error; err != nil {
+		t.Fatalf("seed testcase-script link failed: %v", err)
+	}
 
 	runReqBody := map[string]any{
 		"mode":      "one",
@@ -219,6 +441,17 @@ func TestRunAndDefectFlow(t *testing.T) {
 	}
 	if len(runResp.Results) != 1 {
 		t.Fatalf("expected 1 run result, got %d", len(runResp.Results))
+	}
+	var linkedCase model.TestCase
+	if err := db.First(&linkedCase, testCase.ID).Error; err != nil {
+		t.Fatalf("load linked testcase failed: %v", err)
+	}
+	expectedExecResult := "失败"
+	if runResp.Results[0].Status == "passed" {
+		expectedExecResult = "成功"
+	}
+	if linkedCase.ExecResult != expectedExecResult {
+		t.Fatalf("expected testcase exec_result=%s, got %s", expectedExecResult, linkedCase.ExecResult)
 	}
 
 	defectReqBody := map[string]any{
@@ -468,7 +701,7 @@ func TestIAM_UserRoleProjectAndProfileFlow(t *testing.T) {
 		t.Fatalf("expected create user without project 400, got %d, body=%s", invalidResp.Code, invalidResp.Body.String())
 	}
 
-	project2 := model.Project{ID: 2, Name: "Demo-2", Description: "demo2"}
+	project2 := model.Project{ID: 2, Name: "Demo-2", Description: "demo2", OwnerID: 2}
 	if err := db.Create(&project2).Error; err != nil {
 		t.Fatalf("seed project2 failed: %v", err)
 	}

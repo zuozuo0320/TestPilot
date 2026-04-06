@@ -50,10 +50,15 @@ func (s *ExecutionService) CreateRun(ctx context.Context, projectID, userID uint
 	if err != nil {
 		return nil, ErrBadRequest(CodeParamsError, err.Error())
 	}
+	linkedCaseIDsByScriptID, err := s.executionRepo.ListLinkedTestCaseIDsByScriptIDs(ctx, projectID, collectScriptIDs(scripts))
+	if err != nil {
+		return nil, ErrInternal(CodeInternal, err)
+	}
 
 	run := model.Run{ProjectID: projectID, TriggeredBy: userID, Mode: mode, Status: "running"}
 	results := make([]model.RunResult, 0, len(scripts))
 	overallStatus := "passed"
+	testCaseExecResults := make(map[uint]string)
 
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.executionRepo.CreateRunTx(tx, &run); err != nil {
@@ -72,6 +77,12 @@ func (s *ExecutionService) CreateRun(ctx context.Context, projectID, userID uint
 				return err
 			}
 			results = append(results, result)
+			for _, testCaseID := range linkedCaseIDsByScriptID[script.ID] {
+				testCaseExecResults[testCaseID] = mergeExecResult(testCaseExecResults[testCaseID], mapRunStatusToCaseExecResult(execResult.Status))
+			}
+		}
+		if err := s.persistTestCaseExecResults(tx, projectID, testCaseExecResults); err != nil {
+			return err
 		}
 		run.Status = overallStatus
 		return s.executionRepo.SaveRunTx(tx, &run)
@@ -82,6 +93,56 @@ func (s *ExecutionService) CreateRun(ctx context.Context, projectID, userID uint
 
 	s.cacheRunStatus(ctx, run.ID, overallStatus)
 	return &RunOutput{Run: run, Results: results}, nil
+}
+
+func collectScriptIDs(scripts []model.Script) []uint {
+	ids := make([]uint, 0, len(scripts))
+	for _, script := range scripts {
+		ids = append(ids, script.ID)
+	}
+	return ids
+}
+
+func mapRunStatusToCaseExecResult(status string) string {
+	switch status {
+	case "passed":
+		return "成功"
+	case "blocked":
+		return "阻塞"
+	default:
+		return "失败"
+	}
+}
+
+func mergeExecResult(current string, next string) string {
+	if current == "" {
+		return next
+	}
+	priority := map[string]int{
+		"失败": 2,
+		"阻塞": 1,
+		"成功": 0,
+	}
+	if priority[next] > priority[current] {
+		return next
+	}
+	return current
+}
+
+func (s *ExecutionService) persistTestCaseExecResults(tx *gorm.DB, projectID uint, caseResults map[uint]string) error {
+	if len(caseResults) == 0 {
+		return nil
+	}
+	groupedIDs := make(map[string][]uint)
+	for testCaseID, execResult := range caseResults {
+		groupedIDs[execResult] = append(groupedIDs[execResult], testCaseID)
+	}
+	for execResult, ids := range groupedIDs {
+		if err := s.executionRepo.UpdateTestCaseExecResultsTx(tx, projectID, ids, execResult); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ListResults 获取执行结果列表
