@@ -431,6 +431,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&UserProject{},
 		&AuditLog{},
 
+		&Project{},
 		&ProjectMember{},
 		&Requirement{},
 		&TestCase{},
