@@ -206,6 +206,7 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 	if len(updates) == 0 {
 		return nil, ErrBadRequest(CodeParamsError, "no fields to update")
 	}
+	updates["updated_by"] = userID
 	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
 		if isDuplicateError(err) {
 			return nil, ErrConflict(CodeConflict, "testcase already exists")

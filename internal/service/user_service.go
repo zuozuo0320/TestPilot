@@ -105,7 +105,7 @@ func (s *UserService) GetProjectIDs(ctx context.Context, userID uint) ([]uint, e
 }
 
 // Create 创建用户
-// 管理员创建用户时需指定初始密码，默认绑定「快速开始」项目
+// 管理员创建用户时需指定初始密码，并显式传入项目绑定关系
 func (s *UserService) Create(ctx context.Context, actorID uint, input CreateUserInput) (*model.User, error) {
 	// 基础校验
 	if input.Name == "" || input.Email == "" {

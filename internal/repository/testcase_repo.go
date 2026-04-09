@@ -51,8 +51,10 @@ type TestCaseListItem struct {
 	Priority           string `json:"priority"`
 	CreatedBy          uint   `json:"created_by"`
 	CreatedByName      string `json:"created_by_name"`
+	CreatedByAvatar    string `json:"created_by_avatar"`
 	UpdatedBy          uint   `json:"updated_by"`
 	UpdatedByName      string `json:"updated_by_name"`
+	UpdatedByAvatar    string `json:"updated_by_avatar"`
 	CreatedAt          string `json:"created_at"`
 	UpdatedAt          string `json:"updated_at"`
 	InReview           bool   `json:"in_review"`
@@ -195,7 +197,9 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 		"test_cases.created_at",
 		"test_cases.updated_at",
 		"cu.name AS created_by_name",
+		"COALESCE(cu.avatar, '') AS created_by_avatar",
 		"uu.name AS updated_by_name",
+		"COALESCE(uu.avatar, '') AS updated_by_avatar",
 		`CASE WHEN EXISTS (
 			SELECT 1
 			FROM case_review_items cri

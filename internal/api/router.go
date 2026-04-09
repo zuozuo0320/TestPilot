@@ -124,6 +124,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.PUT("/users/:userID/toggle-active", a.toggleActive)
 	auth.POST("/users/:userID/roles", a.assignUserRoles)
 	auth.POST("/users/:userID/projects", a.assignUserProjects)
+	auth.POST("/users/:userID/avatar", a.uploadUserAvatar)
 	auth.GET("/users/me/profile", a.getProfile)
 	auth.PUT("/users/me/profile", a.updateProfile)
 	auth.PUT("/users/me/password", a.changePassword)

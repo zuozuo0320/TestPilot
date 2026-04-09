@@ -61,6 +61,8 @@ docker compose ps   # STATUS 列应显示 healthy
 
 > MySQL 默认账号 `testpilot / testpilot`，数据库 `testpilot`，端口 `3306`
 > Redis 无密码，端口 `6379`
+>
+> 默认启动会自动初始化基础账号、角色、角色绑定，以及空的默认初始项目 `AiSight Demo`；但不会自动插入 `TC-LOGIN-SUCCESS`、`TC-ORDER-CREATE` 这类示例用例。
 
 ### Step 2 — 启动 Python Executor（端口 8100）
 
@@ -128,6 +130,28 @@ npm run dev          # 启动 Vite 开发服务器
 | MySQL | localhost:3306 | Docker 容器 | 基础数据库 |
 | Redis | localhost:6379 | Docker 容器 | 缓存与队列依赖 |
 
+### 可选：手动注入演示数据
+
+如果你需要演示项目、示例用例或联调样例数据，可以在容器启动后手动执行：
+
+```powershell
+docker compose exec app /app/testpilot seed-demo
+```
+
+如果你希望一次性补齐“基础账号 + 演示数据”，也可以执行：
+
+```powershell
+docker compose exec app /app/testpilot seed
+```
+
+如果你需要清理默认项目中的历史演示数据，让 `AiSight Demo` 回到空项目状态，可以执行：
+
+```powershell
+docker compose exec app /app/testpilot cleanup-demo
+```
+
+> 注意：如果本地 `mysql_data` 卷里已经保留了历史 demo 数据，仅修改配置不会自动清空旧数据。可以执行上面的 `cleanup-demo` 做定向清理；该命令会保留默认初始项目 `AiSight Demo`，只清空其演示内容。如果你希望整库回到全新状态，再执行 `docker compose down -v` 重建卷。
+
 ### 验证服务是否正常
 
 ```powershell
@@ -155,6 +179,8 @@ curl http://localhost:8100/health
 
 ### 默认账号
 
+以下账号属于基础引导数据，默认会自动创建，便于新环境直接登录；系统同时会自动创建空的默认初始项目 `AiSight Demo`，但默认不会自动创建演示用例和演示脚本。
+
 | 邮箱 | 密码 | 角色 |
 |------|------|------|
 | admin@testpilot.local | TestPilot@2026 | 管理员 |
@@ -172,6 +198,8 @@ curl http://localhost:8100/health
 | `APP_PORT` | 服务端口 | `8080` |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | MySQL | `127.0.0.1:3306` / `testpilot` |
 | `REDIS_ADDR` | Redis | `127.0.0.1:6379` |
+| `AUTO_SEED` | 是否自动初始化基础账号/角色 | `true`（建议保持开启） |
+| `AUTO_SEED_DEMO` | 是否自动初始化演示项目/示例用例 | `false` |
 | `JWT_SECRET` | JWT 密钥 | dev 默认值 |
 | `EXECUTOR_URL` | Executor 地址 | `http://127.0.0.1:8100` |
 | `EXECUTOR_API_KEY` | Executor 鉴权密钥 | dev 默认值 |

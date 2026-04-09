@@ -349,9 +349,10 @@ type CaseReview struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 
 	// 虚拟字段（不入库，API 返回时填充）
-	CreatedByName  string   `json:"created_by_name,omitempty" gorm:"-"`
-	ReviewerIDList []uint   `json:"reviewer_ids,omitempty" gorm:"-"`
-	ReviewerNames  []string `json:"reviewer_names,omitempty" gorm:"-"`
+	CreatedByName   string   `json:"created_by_name,omitempty" gorm:"-"`
+	CreatedByAvatar string   `json:"created_by_avatar,omitempty" gorm:"-"`
+	ReviewerIDList  []uint   `json:"reviewer_ids,omitempty" gorm:"-"`
+	ReviewerNames   []string `json:"reviewer_names,omitempty" gorm:"-"`
 }
 
 // ParseDefaultReviewerIDs 解析 JSON 格式的默认评审人 ID 列表

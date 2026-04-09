@@ -18,6 +18,7 @@ type CaseReviewService struct {
 	reviewRepo   repository.CaseReviewRepository
 	recordRepo   repository.CaseReviewRecordRepository
 	testCaseRepo repository.TestCaseRepository
+	userRepo     repository.UserRepository
 	txMgr        *repository.TxManager
 	logger       *slog.Logger
 }
@@ -27,6 +28,7 @@ func NewCaseReviewService(
 	reviewRepo repository.CaseReviewRepository,
 	recordRepo repository.CaseReviewRecordRepository,
 	testCaseRepo repository.TestCaseRepository,
+	userRepo repository.UserRepository,
 	txMgr *repository.TxManager,
 	logger *slog.Logger,
 ) *CaseReviewService {
@@ -34,6 +36,7 @@ func NewCaseReviewService(
 		reviewRepo:   reviewRepo,
 		recordRepo:   recordRepo,
 		testCaseRepo: testCaseRepo,
+		userRepo:     userRepo,
 		txMgr:        txMgr,
 		logger:       logger,
 	}
@@ -67,7 +70,7 @@ type UpdateReviewInput struct {
 
 // LinkItemsInput 关联用例输入
 type LinkItemsInput struct {
-	Items []LinkItemEntry
+	Items      []LinkItemEntry
 	AutoSubmit bool
 }
 
@@ -79,8 +82,8 @@ type LinkItemEntry struct {
 
 // CopyReviewInput 复制评审计划输入
 type CopyReviewInput struct {
-	Name          string
-	IncludeCases  bool
+	Name           string
+	IncludeCases   bool
 	ResetReviewers bool
 }
 
@@ -146,12 +149,18 @@ func (s *CaseReviewService) GetReview(ctx context.Context, projectID, reviewID u
 	if err != nil {
 		return nil, ErrNotFound(CodeReviewNotFound, "评审计划不存在")
 	}
+	s.fillReviewCreatorFields(ctx, review)
 	return review, nil
 }
 
 // ListReviews 列表查询
 func (s *CaseReviewService) ListReviews(ctx context.Context, projectID, currentUserID uint, f repository.CaseReviewFilter) ([]model.CaseReview, int64, error) {
-	return s.reviewRepo.ListReviews(ctx, projectID, currentUserID, f)
+	reviews, total, err := s.reviewRepo.ListReviews(ctx, projectID, currentUserID, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	s.batchFillReviewCreatorFields(ctx, reviews)
+	return reviews, total, nil
 }
 
 // UpdateReview 更新评审计划基本信息
@@ -232,7 +241,6 @@ func (s *CaseReviewService) DeleteReview(ctx context.Context, projectID, reviewI
 	}
 	return err
 }
-
 
 // CloseReview 关闭评审计划
 func (s *CaseReviewService) CloseReview(ctx context.Context, projectID, reviewID, userID uint) error {
@@ -635,6 +643,7 @@ func (s *CaseReviewService) validateItemOwnership(ctx context.Context, tx *gorm.
 func (s *CaseReviewService) ValidateItemOwnership(ctx context.Context, reviewID, projectID, itemID uint) error {
 	return s.validateItemOwnership(ctx, nil, reviewID, projectID, []uint{itemID})
 }
+
 // writebackTestCase 统一回写 test_cases 主表
 func (s *CaseReviewService) writebackTestCase(ctx context.Context, tx *gorm.DB, testcaseID, projectID uint, status, reviewResult string) error {
 	return tx.WithContext(ctx).
@@ -644,4 +653,63 @@ func (s *CaseReviewService) writebackTestCase(ctx context.Context, tx *gorm.DB, 
 			"status":        status,
 			"review_result": reviewResult,
 		}).Error
+}
+
+// fillReviewCreatorFields 回填单个评审计划的创建人姓名与头像。
+// 评审列表和详情页都需要统一展示创建人信息，因此在 service 层集中补齐。
+func (s *CaseReviewService) fillReviewCreatorFields(ctx context.Context, review *model.CaseReview) {
+	if review == nil || review.CreatedBy == 0 {
+		return
+	}
+
+	user, err := s.userRepo.FindByID(ctx, review.CreatedBy)
+	if err != nil || user == nil {
+		return
+	}
+
+	review.CreatedByName = user.Name
+	review.CreatedByAvatar = user.Avatar
+}
+
+// batchFillReviewCreatorFields 批量回填评审计划创建人信息。
+// 使用批量查用户避免列表页出现 N+1 查询。
+func (s *CaseReviewService) batchFillReviewCreatorFields(ctx context.Context, reviews []model.CaseReview) {
+	if len(reviews) == 0 {
+		return
+	}
+
+	userIDs := make([]uint, 0, len(reviews))
+	seen := make(map[uint]struct{}, len(reviews))
+	for _, review := range reviews {
+		if review.CreatedBy == 0 {
+			continue
+		}
+		if _, exists := seen[review.CreatedBy]; exists {
+			continue
+		}
+		seen[review.CreatedBy] = struct{}{}
+		userIDs = append(userIDs, review.CreatedBy)
+	}
+	if len(userIDs) == 0 {
+		return
+	}
+
+	users, err := s.userRepo.FindByIDs(ctx, userIDs)
+	if err != nil {
+		return
+	}
+
+	userMap := make(map[uint]model.User, len(users))
+	for _, user := range users {
+		userMap[user.ID] = user
+	}
+
+	for i := range reviews {
+		user, ok := userMap[reviews[i].CreatedBy]
+		if !ok {
+			continue
+		}
+		reviews[i].CreatedByName = user.Name
+		reviews[i].CreatedByAvatar = user.Avatar
+	}
 }

@@ -45,6 +45,42 @@ func main() {
 	// 子命令
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "cleanup-demo":
+			db, err := connectDB()
+			if err != nil {
+				logger.Error("db connect failed", "error", err)
+				os.Exit(1)
+			}
+			if err := seed.CleanupDemoData(db, logger); err != nil {
+				logger.Error("cleanup demo failed", "error", err)
+				os.Exit(1)
+			}
+			logger.Info("cleanup demo done")
+			return
+		case "seed-bootstrap":
+			db, err := connectDB()
+			if err != nil {
+				logger.Error("db connect failed", "error", err)
+				os.Exit(1)
+			}
+			if err := seed.SeedBootstrap(db, logger); err != nil {
+				logger.Error("bootstrap seed failed", "error", err)
+				os.Exit(1)
+			}
+			logger.Info("bootstrap seed done")
+			return
+		case "seed-demo":
+			db, err := connectDB()
+			if err != nil {
+				logger.Error("db connect failed", "error", err)
+				os.Exit(1)
+			}
+			if err := seed.SeedDemo(db, logger); err != nil {
+				logger.Error("demo seed failed", "error", err)
+				os.Exit(1)
+			}
+			logger.Info("demo seed done")
+			return
 		case "migrate":
 			db, err := connectDB()
 			if err != nil {
@@ -106,8 +142,14 @@ func main() {
 		}
 	}
 	if cfg.AutoSeed {
-		if err := seed.Seed(db, logger); err != nil {
-			logger.Error("auto seed failed", "error", err)
+		if err := seed.SeedBootstrap(db, logger); err != nil {
+			logger.Error("auto bootstrap seed failed", "error", err)
+			os.Exit(1)
+		}
+	}
+	if cfg.AutoSeedDemo {
+		if err := seed.SeedDemo(db, logger); err != nil {
+			logger.Error("auto demo seed failed", "error", err)
 			os.Exit(1)
 		}
 	}
@@ -157,7 +199,7 @@ func main() {
 	attachmentSvc := service.NewAttachmentService(attachmentRepo, "./uploads")
 	xlsxSvc := service.NewXlsxService(testCaseRepo)
 	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
-	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, txMgr, logger)
+	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, userRepo, txMgr, logger)
 	caseReviewSubmitSvc := service.NewCaseReviewSubmitService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, txMgr, logger)
 
 	// 3. API 层

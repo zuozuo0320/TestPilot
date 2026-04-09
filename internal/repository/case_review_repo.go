@@ -98,22 +98,31 @@ func (r *caseReviewRepo) CreateReview(ctx context.Context, tx *gorm.DB, review *
 
 func (r *caseReviewRepo) GetReviewByID(ctx context.Context, id, projectID uint) (*model.CaseReview, error) {
 	var cr model.CaseReview
-	err := r.db.WithContext(ctx).Where("id = ? AND project_id = ?", id, projectID).First(&cr).Error
+	err := r.db.WithContext(ctx).
+		Table("case_reviews").
+		Select("case_reviews.*, COALESCE(users.name, '') AS created_by_name, COALESCE(users.avatar, '') AS created_by_avatar").
+		Joins("LEFT JOIN users ON users.id = case_reviews.created_by").
+		Where("case_reviews.id = ? AND case_reviews.project_id = ?", id, projectID).
+		Limit(1).
+		Scan(&cr).Error
 	if err != nil {
 		return nil, err
+	}
+	if cr.ID == 0 {
+		return nil, gorm.ErrRecordNotFound
 	}
 	return &cr, nil
 }
 
 func (r *caseReviewRepo) ListReviews(ctx context.Context, projectID, currentUserID uint, f CaseReviewFilter) ([]model.CaseReview, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.CaseReview{}).Where("project_id = ?", projectID)
+	baseQuery := r.db.WithContext(ctx).Model(&model.CaseReview{}).Where("project_id = ?", projectID)
 
 	// 视图过滤
 	switch f.View {
 	case "created":
-		q = q.Where("created_by = ?", currentUserID)
+		baseQuery = baseQuery.Where("created_by = ?", currentUserID)
 	case "assigned":
-		q = q.Where("id IN (?)",
+		baseQuery = baseQuery.Where("id IN (?)",
 			r.db.Model(&model.CaseReviewItemReviewer{}).
 				Select("DISTINCT review_id").
 				Where("project_id = ? AND reviewer_id = ?", projectID, currentUserID),
@@ -123,25 +132,25 @@ func (r *caseReviewRepo) ListReviews(ctx context.Context, projectID, currentUser
 	if f.Keyword != "" {
 		like := "%" + f.Keyword + "%"
 		if idKey, err := strconv.Atoi(f.Keyword); err == nil && idKey > 0 {
-			q = q.Where("id = ? OR name LIKE ?", idKey, like)
+			baseQuery = baseQuery.Where("id = ? OR name LIKE ?", idKey, like)
 		} else {
-			q = q.Where("name LIKE ?", like)
+			baseQuery = baseQuery.Where("name LIKE ?", like)
 		}
 	}
 	if f.Status != "" {
-		q = q.Where("status = ?", f.Status)
+		baseQuery = baseQuery.Where("status = ?", f.Status)
 	}
 	if f.ReviewMode != "" {
-		q = q.Where("review_mode = ?", f.ReviewMode)
+		baseQuery = baseQuery.Where("review_mode = ?", f.ReviewMode)
 	}
 	if f.ModuleID != nil {
-		q = q.Where("module_id = ?", *f.ModuleID)
+		baseQuery = baseQuery.Where("module_id = ?", *f.ModuleID)
 	}
 	if f.CreatedBy != nil {
-		q = q.Where("created_by = ?", *f.CreatedBy)
+		baseQuery = baseQuery.Where("created_by = ?", *f.CreatedBy)
 	}
 	if f.ReviewerID != nil {
-		q = q.Where("id IN (?)",
+		baseQuery = baseQuery.Where("id IN (?)",
 			r.db.Model(&model.CaseReviewItemReviewer{}).
 				Select("DISTINCT review_id").
 				Where("project_id = ? AND reviewer_id = ?", projectID, *f.ReviewerID),
@@ -149,7 +158,7 @@ func (r *caseReviewRepo) ListReviews(ctx context.Context, projectID, currentUser
 	}
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := baseQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -162,7 +171,14 @@ func (r *caseReviewRepo) ListReviews(ctx context.Context, projectID, currentUser
 	}
 
 	var reviews []model.CaseReview
-	err := q.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&reviews).Error
+	err := baseQuery.
+		Table("case_reviews").
+		Select("case_reviews.*, COALESCE(users.name, '') AS created_by_name, COALESCE(users.avatar, '') AS created_by_avatar").
+		Joins("LEFT JOIN users ON users.id = case_reviews.created_by").
+		Order("case_reviews.created_at DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Scan(&reviews).Error
 	return reviews, total, err
 }
 

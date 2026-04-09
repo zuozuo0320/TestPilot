@@ -2,8 +2,13 @@
 package api
 
 import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -265,4 +270,57 @@ func (a *API) assignUserProjects(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"assigned": true})
+}
+
+// uploadUserAvatar 管理员为指定用户上传头像
+func (a *API) uploadUserAvatar(c *gin.Context) {
+	actor := currentUser(c)
+	if !requireRole(c, actor, model.GlobalRoleAdmin) {
+		return
+	}
+	userID, ok := parseUintParam(c, "userID")
+	if !ok {
+		return
+	}
+
+	file, header, err := c.Request.FormFile("avatar")
+	if err != nil {
+		response.Error(c, 400, service.CodeParamsError, "avatar file is required")
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".gif" && ext != ".webp" {
+		response.Error(c, 400, service.CodeParamsError, "unsupported image format")
+		return
+	}
+	if header.Size > 2*1024*1024 {
+		response.Error(c, 400, service.CodeParamsError, "file too large (max 2MB)")
+		return
+	}
+
+	dir := "uploads/avatars"
+	os.MkdirAll(dir, 0o755)
+	filename := fmt.Sprintf("%d_%d%s", userID, time.Now().UnixMilli(), ext)
+	dst, err := os.Create(filepath.Join(dir, filename))
+	if err != nil {
+		response.Error(c, 500, service.CodeInternal, "failed to save file")
+		return
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, file); err != nil {
+		response.Error(c, 500, service.CodeInternal, "failed to save file")
+		return
+	}
+
+	avatarURL := "/" + dir + "/" + filename
+	_, updateErr := a.userSvc.Update(c.Request.Context(), actor.ID, userID, service.UpdateUserInput{
+		Avatar: &avatarURL,
+	})
+	if updateErr != nil {
+		response.HandleError(c, updateErr)
+		return
+	}
+	response.OK(c, gin.H{"avatar": avatarURL})
 }

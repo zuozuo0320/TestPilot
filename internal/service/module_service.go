@@ -9,14 +9,14 @@ import (
 
 // ModuleService 目录管理服务
 type ModuleService struct {
-	moduleRepo *repository.ModuleRepo
+	moduleRepo   *repository.ModuleRepo
 	testCaseRepo repository.TestCaseRepository
 }
 
 // NewModuleService 创建目录服务
 func NewModuleService(repo *repository.ModuleRepo, tcRepo repository.TestCaseRepository) *ModuleService {
 	return &ModuleService{
-		moduleRepo: repo,
+		moduleRepo:   repo,
 		testCaseRepo: tcRepo,
 	}
 }
@@ -79,6 +79,13 @@ func (s *ModuleService) GetTree(ctx context.Context, projectID uint) (*ModuleTre
 			roots = append(roots, node)
 		}
 	}
+
+	// 中文注释：父目录的展示计数需要包含全部子目录用例，因此在树构建完成后
+	// 递归回填聚合数量，避免出现“父目录点击为空、子目录有数据”的错觉。
+	for _, root := range roots {
+		accumulateModuleCaseCount(root, counts)
+	}
+
 	return &ModuleTreeData{
 		Tree:           roots,
 		Counts:         counts,
@@ -112,6 +119,25 @@ func (s *ModuleService) Create(ctx context.Context, projectID uint, parentID uin
 		return nil, ErrInternal(CodeInternal, err)
 	}
 	return m, nil
+}
+
+// accumulateModuleCaseCount 递归汇总目录及其全部子目录的用例数量。
+// 返回值是当前节点最终应展示的累计数量，同时会回写到节点本身和 counts 映射中。
+func accumulateModuleCaseCount(node *ModuleTreeNode, counts map[uint]int64) int64 {
+	if node == nil {
+		return 0
+	}
+
+	total := node.CaseCount
+	for _, child := range node.Children {
+		total += accumulateModuleCaseCount(child, counts)
+	}
+
+	node.CaseCount = total
+	if counts != nil {
+		counts[node.ID] = total
+	}
+	return total
 }
 
 // Rename 重命名模块

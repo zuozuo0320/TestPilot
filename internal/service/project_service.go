@@ -318,10 +318,6 @@ func (s *ProjectService) Archive(ctx context.Context, actorID, projectID uint) e
 	if err != nil {
 		return ErrProjectNotFound
 	}
-	// 种子项目不可归档
-	if model.IsSeedProject(project.Name) {
-		return ErrSeedProjectProtected
-	}
 	if model.IsArchivedProject(project.Status) {
 		return ErrProjectArchived
 	}
@@ -341,15 +337,11 @@ func (s *ProjectService) Restore(ctx context.Context, actorID, projectID uint) e
 }
 
 // Delete 删除项目
-// 前提：已归档 + 无用例 + 无缺陷 + 非种子项目
+// 前提：已归档 + 无用例 + 无缺陷
 func (s *ProjectService) Delete(ctx context.Context, actorID, projectID uint) error {
 	project, err := s.projectRepo.FindByID(ctx, projectID)
 	if err != nil {
 		return ErrProjectNotFound
-	}
-	// 种子项目不可删除
-	if model.IsSeedProject(project.Name) {
-		return ErrSeedProjectProtected
 	}
 	// 必须已归档
 	if !model.IsArchivedProject(project.Status) {
