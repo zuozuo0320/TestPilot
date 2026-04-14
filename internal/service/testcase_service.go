@@ -11,23 +11,25 @@ import (
 	"testpilot/internal/repository"
 )
 
-// TestCaseService 鐢ㄤ緥绠＄悊鏈嶅姟
+// TestCaseService 用例管理服务
 type TestCaseService struct {
 	testCaseRepo    repository.TestCaseRepository
 	caseHistoryRepo *repository.CaseHistoryRepo
 	auditRepo       repository.AuditRepository
+	tagRepo         repository.TagRepository
 }
 
-// NewTestCaseService 鍒涘缓鐢ㄤ緥鏈嶅姟
-func NewTestCaseService(repo repository.TestCaseRepository, historyRepo *repository.CaseHistoryRepo, auditRepo repository.AuditRepository) *TestCaseService {
+// NewTestCaseService 创建用例服务
+func NewTestCaseService(repo repository.TestCaseRepository, historyRepo *repository.CaseHistoryRepo, auditRepo repository.AuditRepository, tagRepo repository.TagRepository) *TestCaseService {
 	return &TestCaseService{
 		testCaseRepo:    repo,
 		caseHistoryRepo: historyRepo,
 		auditRepo:       auditRepo,
+		tagRepo:         tagRepo,
 	}
 }
 
-// CreateTestCaseInput 鍒涘缓鐢ㄤ緥杈撳叆
+// CreateTestCaseInput 创建用例输入
 type CreateTestCaseInput struct {
 	Title        string
 	Level        string
@@ -35,6 +37,7 @@ type CreateTestCaseInput struct {
 	ModuleID     uint
 	ModulePath   string
 	Tags         string
+	TagIDs       []uint
 	Precondition string
 	Steps        string
 	Remark       string
@@ -91,15 +94,44 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 		}
 		return nil, ErrInternal(CodeInternal, err)
 	}
+	// 写入标签关联
+	if len(input.TagIDs) > 0 && s.tagRepo != nil {
+		if len(input.TagIDs) > 10 {
+			return nil, ErrBadRequest(CodeParamsError, "每个用例最多绑定 10 个标签")
+		}
+		if err := s.tagRepo.ReplaceTestCaseTags(ctx, nil, entity.ID, input.TagIDs); err != nil {
+			return nil, ErrInternal(CodeInternal, err)
+		}
+	}
 	return &entity, nil
 }
 
 // ListPaged 鍒嗛〉鏌ヨ鐢ㄤ緥
+// ListPaged 分页查询用例
 func (s *TestCaseService) ListPaged(ctx context.Context, projectID uint, filter repository.TestCaseFilter) ([]repository.TestCaseListItem, int64, error) {
-	return s.testCaseRepo.ListPaged(ctx, projectID, filter)
+	items, total, err := s.testCaseRepo.ListPaged(ctx, projectID, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	// 批量填充 tag_list
+	if len(items) > 0 && s.tagRepo != nil {
+		ids := make([]uint, len(items))
+		for i, item := range items {
+			ids[i] = item.ID
+		}
+		tagMap, tagErr := s.tagRepo.ListByTestCaseIDs(ctx, ids)
+		if tagErr == nil {
+			for i := range items {
+				if tags, ok := tagMap[items[i].ID]; ok {
+					items[i].TagList = tags
+				}
+			}
+		}
+	}
+	return items, total, nil
 }
 
-// UpdateTestCaseInput 鏇存柊鐢ㄤ緥杈撳叆
+// UpdateTestCaseInput 更新用例输入
 type UpdateTestCaseInput struct {
 	Title        *string
 	Level        *string
@@ -107,6 +139,7 @@ type UpdateTestCaseInput struct {
 	ModuleID     *uint
 	ModulePath   *string
 	Tags         *string
+	TagIDs       []uint
 	Precondition *string
 	Steps        *string
 	Remark       *string
@@ -213,11 +246,20 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 		}
 		return nil, ErrInternal(CodeInternal, err)
 	}
+	// 更新标签关联（tag_ids 传入时全量覆盖，含空数组 [] 表示清除）
+	if input.TagIDs != nil && s.tagRepo != nil {
+		if len(input.TagIDs) > 10 {
+			return nil, ErrBadRequest(CodeParamsError, "每个用例最多绑定 10 个标签")
+		}
+		if err := s.tagRepo.ReplaceTestCaseTags(ctx, nil, testCaseID, input.TagIDs); err != nil {
+			return nil, ErrInternal(CodeInternal, err)
+		}
+	}
 	updated, _ := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	return updated, nil
 }
 
-// Delete 鍒犻櫎鐢ㄤ緥
+// Delete 删除用例
 func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint) error {
 	rows, err := s.testCaseRepo.Delete(ctx, testCaseID, projectID)
 	if err != nil {
@@ -226,15 +268,27 @@ func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint
 	if rows == 0 {
 		return ErrTestCaseNotFound
 	}
+	// 清理标签关联
+	if s.tagRepo != nil {
+		_ = s.tagRepo.DeleteRelsByTestCaseID(ctx, nil, testCaseID)
+	}
 	return nil
 }
 
-// BatchDelete 鎵归噺鍒犻櫎鐢ㄤ緥
+// BatchDelete 批量删除用例
 func (s *TestCaseService) BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error) {
 	if len(ids) == 0 {
 		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
 	}
-	return s.testCaseRepo.BatchDelete(ctx, projectID, ids)
+	affected, err := s.testCaseRepo.BatchDelete(ctx, projectID, ids)
+	if err != nil {
+		return affected, err
+	}
+	// 清理标签关联
+	if s.tagRepo != nil && len(ids) > 0 {
+		_ = s.tagRepo.DeleteRelsByTestCaseIDs(ctx, nil, ids)
+	}
+	return affected, nil
 }
 
 // BatchUpdateLevel 鎵归噺淇敼绛夌骇
@@ -262,6 +316,10 @@ func (s *TestCaseService) CloneCase(ctx context.Context, projectID, sourceID, us
 	entity, err := s.testCaseRepo.CloneCase(ctx, projectID, sourceID, userID)
 	if err != nil {
 		return nil, err
+	}
+	// 复制标签关联
+	if s.tagRepo != nil {
+		_ = s.tagRepo.CopyTestCaseTags(ctx, nil, sourceID, entity.ID)
 	}
 	// 瀹¤
 	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "clone", "testcase", entity.ID, "source:"+strconv.Itoa(int(sourceID)), "cloned")

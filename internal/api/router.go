@@ -35,6 +35,7 @@ type Dependencies struct {
 	AIScriptService         *service.AIScriptService
 	CaseReviewService       *service.CaseReviewService
 	CaseReviewSubmitService *service.CaseReviewSubmitService
+	TagService              *service.TagService
 }
 
 // API 核心结构体
@@ -61,6 +62,7 @@ type API struct {
 	aiScriptSvc         *service.AIScriptService
 	caseReviewSvc       *service.CaseReviewService
 	caseReviewSubmitSvc *service.CaseReviewSubmitService
+	tagSvc              *service.TagService
 }
 
 // NewRouter 创建路由引擎并注册所有路由
@@ -88,6 +90,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		aiScriptSvc:         deps.AIScriptService,
 		caseReviewSvc:       deps.CaseReviewService,
 		caseReviewSubmitSvc: deps.CaseReviewSubmitService,
+		tagSvc:              deps.TagService,
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -240,6 +243,14 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	caseReview.POST("/:reviewID/items/batch-resubmit", a.batchResubmitItems)
 	caseReview.POST("/:reviewID/items/:itemID/review", a.submitItemReview)
 	caseReview.GET("/:reviewID/items/:itemID/records", a.listItemRecords)
+
+	// ---- 标签管理 ----
+	tags := auth.Group("/projects/:projectID/tags")
+	tags.GET("", a.listTags)
+	tags.GET("/options", a.listTagOptions)
+	tags.POST("", a.createTag)
+	tags.PUT("/:tagID", a.updateTag)
+	tags.DELETE("/:tagID", a.deleteTag)
 
 	return r
 }

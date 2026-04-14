@@ -218,7 +218,7 @@ func (r *caseReviewRepo) ListItems(ctx context.Context, reviewID, projectID uint
 	if f.Keyword != "" {
 		like := "%" + f.Keyword + "%"
 		if idKey, err := strconv.Atoi(f.Keyword); err == nil && idKey > 0 {
-			q = q.Where("testcase_id = ? OR title_snapshot LIKE ?", idKey, like)
+			q = q.Where("test_case_id = ? OR title_snapshot LIKE ?", idKey, like)
 		} else {
 			q = q.Where("title_snapshot LIKE ?", like)
 		}
@@ -278,7 +278,7 @@ func (r *caseReviewRepo) HasActiveReviewForCase(ctx context.Context, projectID, 
 	q := r.db.WithContext(ctx).
 		Model(&model.CaseReviewItem{}).
 		Joins("JOIN case_reviews ON case_reviews.id = case_review_items.review_id").
-		Where("case_review_items.project_id = ? AND case_review_items.testcase_id = ?", projectID, testcaseID).
+		Where("case_review_items.project_id = ? AND case_review_items.test_case_id = ?", projectID, testcaseID).
 		Where("case_reviews.status IN ?", []string{model.ReviewPlanStatusNotStarted, model.ReviewPlanStatusInProgress})
 	if excludeReviewID > 0 {
 		q = q.Where("case_review_items.review_id != ?", excludeReviewID)

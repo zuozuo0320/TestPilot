@@ -17,7 +17,8 @@ type TestCaseFilter struct {
 	Level         string // 级别筛选
 	ReviewResult  string // 评审结果筛选
 	ExecResult    string // 执行结果筛选
-	Tags          string // 标签筛选
+	Tags          string // 标签筛选（旧，兼容）
+	TagIDs        []uint // 结构化标签筛选
 	ModuleID      *uint  // 目录模块筛选
 	ModulePath    string // 目录路径筛选（支持子目录前缀匹配）
 	CreatedByID   *uint  // 创建人筛选
@@ -61,6 +62,7 @@ type TestCaseListItem struct {
 	CurrentReviewID    uint   `json:"current_review_id"`
 	CurrentReviewName  string `json:"current_review_name"`
 	RelatedReviewCount int64  `json:"related_review_count"`
+	TagList            []TagBrief `json:"tag_list" gorm:"-"`
 }
 
 // TestCaseRepository 用例数据访问接口
@@ -123,6 +125,9 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 	}
 	if f.Tags != "" {
 		baseQuery = baseQuery.Where("tags LIKE ?", "%"+f.Tags+"%")
+	}
+	if len(f.TagIDs) > 0 {
+		baseQuery = baseQuery.Where("test_cases.id IN (SELECT test_case_id FROM test_case_tags WHERE tag_id IN ?)", f.TagIDs)
 	}
 	if f.ModuleID != nil {
 		baseQuery = baseQuery.Where("module_id = ?", *f.ModuleID)

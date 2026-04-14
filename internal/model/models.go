@@ -466,6 +466,10 @@ func AutoMigrate(db *gorm.DB) error {
 		&CaseReviewItem{},
 		&CaseReviewItemReviewer{},
 		&CaseReviewRecord{},
+
+		// 标签管理模块
+		&Tag{},
+		&TestCaseTag{},
 	)
 }
 
@@ -503,6 +507,30 @@ func IsSeedProject(name string) bool {
 // IsArchivedProject 判断项目是否已归档
 func IsArchivedProject(status string) bool {
 	return status == ProjectStatusArchived
+}
+
+// Tag 标签实体
+type Tag struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	ProjectID   uint      `json:"project_id" gorm:"not null;uniqueIndex:uk_project_tag_name;index"`
+	Name        string    `json:"name" gorm:"size:50;not null;uniqueIndex:uk_project_tag_name"`
+	Color       string    `json:"color" gorm:"size:7;not null;default:#3B82F6"`
+	Description string    `json:"description" gorm:"size:200;default:''"`
+	CreatedBy   uint      `json:"created_by" gorm:"not null;default:0"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+
+	// 虚拟字段（只读，Scan 可填充，不参与写入和迁移）
+	CaseCount       int64  `json:"case_count" gorm:"->;-:migration"`
+	CreatedByName   string `json:"created_by_name" gorm:"->;-:migration"`
+	CreatedByAvatar string `json:"created_by_avatar" gorm:"->;-:migration"`
+}
+
+// TestCaseTag 用例-标签关联
+type TestCaseTag struct {
+	TestCaseID uint      `json:"testcase_id" gorm:"primaryKey"`
+	TagID      uint      `json:"tag_id" gorm:"primaryKey;index"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 func IsValidMemberRole(role string) bool {

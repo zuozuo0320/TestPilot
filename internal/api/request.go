@@ -101,6 +101,7 @@ type createTestCaseRequest struct {
 	ModuleID     uint   `json:"module_id"`
 	ModulePath   string `json:"module_path" binding:"omitempty,max=255"`
 	Tags         string `json:"tags" binding:"omitempty,max=500"`
+	TagIDs       []uint `json:"tag_ids" binding:"omitempty,max=10"`
 	Precondition string `json:"precondition"`
 	Steps        string `json:"steps"`
 	Remark       string `json:"remark"`
@@ -115,6 +116,7 @@ type updateTestCaseRequest struct {
 	ModuleID     *uint   `json:"module_id"`
 	ModulePath   *string `json:"module_path" binding:"omitempty,max=255"`
 	Tags         *string `json:"tags" binding:"omitempty,max=500"`
+	TagIDs       []uint  `json:"tag_ids" binding:"omitempty,max=10"`
 	Precondition *string `json:"precondition"`
 	Steps        *string `json:"steps"`
 	Remark       *string `json:"remark"`
@@ -176,4 +178,18 @@ type loginRequest struct {
 // refreshTokenRequest 刷新 Token 请求
 type refreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+// createTagRequest 创建标签请求
+type createTagRequest struct {
+	Name        string `json:"name" binding:"required,min=2,max=50"`
+	Color       string `json:"color" binding:"required,len=7"`
+	Description string `json:"description" binding:"omitempty,max=200"`
+}
+
+// updateTagRequest 更新标签请求（字段可选）
+type updateTagRequest struct {
+	Name        *string `json:"name" binding:"omitempty,min=2,max=50"`
+	Color       *string `json:"color" binding:"omitempty,len=7"`
+	Description *string `json:"description" binding:"omitempty,max=200"`
 }

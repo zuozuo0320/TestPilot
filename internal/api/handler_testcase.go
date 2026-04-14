@@ -33,6 +33,7 @@ func (a *API) createTestCase(c *gin.Context) {
 		ModuleID:     req.ModuleID,
 		ModulePath:   req.ModulePath,
 		Tags:         req.Tags,
+		TagIDs:       req.TagIDs,
 		Precondition: req.Precondition,
 		Steps:        req.Steps,
 		Remark:       req.Remark,
@@ -91,6 +92,14 @@ func (a *API) listTestCases(c *gin.Context) {
 			filter.UpdatedByID = &updatedBy
 		}
 	}
+	// Optional tag_ids filter (comma-separated, ignore invalid)
+	if tagIDsStr := c.Query("tag_ids"); tagIDsStr != "" {
+		for _, s := range strings.Split(tagIDsStr, ",") {
+			if v, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64); err == nil && v > 0 {
+				filter.TagIDs = append(filter.TagIDs, uint(v))
+			}
+		}
+	}
 	items, total, err := a.testCaseSvc.ListPaged(c.Request.Context(), projectID, filter)
 	if err != nil {
 		response.HandleError(c, err)
@@ -123,6 +132,7 @@ func (a *API) updateTestCase(c *gin.Context) {
 		ModuleID:     req.ModuleID,
 		ModulePath:   req.ModulePath,
 		Tags:         req.Tags,
+		TagIDs:       req.TagIDs,
 		Precondition: req.Precondition,
 		Steps:        req.Steps,
 		Remark:       req.Remark,

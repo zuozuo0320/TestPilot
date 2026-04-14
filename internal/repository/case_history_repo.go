@@ -33,10 +33,10 @@ func (r *CaseHistoryRepo) CreateBatch(records []model.CaseHistory) error {
 // ListByCaseID returns paginated history for a test case.
 func (r *CaseHistoryRepo) ListByCaseID(testCaseID uint, page, pageSize int) ([]model.CaseHistory, int64, error) {
 	var total int64
-	r.db.Model(&model.CaseHistory{}).Where("testcase_id = ?", testCaseID).Count(&total)
+	r.db.Model(&model.CaseHistory{}).Where("test_case_id = ?", testCaseID).Count(&total)
 
 	var items []model.CaseHistory
-	err := r.db.Where("testcase_id = ?", testCaseID).
+	err := r.db.Where("test_case_id = ?", testCaseID).
 		Order("id DESC").
 		Offset((page - 1) * pageSize).
 		Limit(pageSize).

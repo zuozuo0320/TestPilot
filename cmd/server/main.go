@@ -179,6 +179,7 @@ func main() {
 	aiScriptRepo := repository.NewAIScriptRepo(db)
 	caseReviewRepo := repository.NewCaseReviewRepo(db)
 	caseReviewRecordRepo := repository.NewCaseReviewRecordRepo(db)
+	tagRepo := repository.NewTagRepo(db)
 
 	// 2. Service 层
 	mockExecutor := execution.NewMockExecutor(logger, cfg.RunFailRate)
@@ -187,7 +188,7 @@ func main() {
 	userSvc := service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr)
 	roleSvc := service.NewRoleService(roleRepo, auditRepo, txMgr)
 	projectSvc := service.NewProjectService(logger, projectRepo, userRepo, auditRepo, txMgr)
-	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo)
+	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo, tagRepo)
 	profileSvc := service.NewProfileService(userRepo, auditRepo, txMgr)
 	executionSvc := service.NewExecutionService(executionRepo, txMgr, mockExecutor, redisClient, logger)
 	defectSvc := service.NewDefectService(defectRepo, executionRepo)
@@ -201,6 +202,7 @@ func main() {
 	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
 	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, userRepo, txMgr, logger)
 	caseReviewSubmitSvc := service.NewCaseReviewSubmitService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, txMgr, logger)
+	tagSvc := service.NewTagService(tagRepo, auditRepo, txMgr, logger)
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{
@@ -225,6 +227,7 @@ func main() {
 		AIScriptService:         aiScriptSvc,
 		CaseReviewService:       caseReviewSvc,
 		CaseReviewSubmitService: caseReviewSubmitSvc,
+		TagService:              tagSvc,
 	}, cfg.CORSAllowOrigins)
 
 	server := &http.Server{
