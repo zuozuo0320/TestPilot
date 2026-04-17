@@ -36,7 +36,7 @@ func TestAuthService_LoginWrongPassword(t *testing.T) {
 	bizErr, ok := err.(*BizError)
 	require.True(t, ok)
 	assert.Equal(t, 401, bizErr.Status)
-	assert.Equal(t, "INVALID_CREDENTIALS", bizErr.Code)
+	assert.Equal(t, CodeUnauthorized, bizErr.Code)
 }
 
 func TestAuthService_LoginEmailNotFound(t *testing.T) {
@@ -69,8 +69,8 @@ func TestAuthService_LoginFrozenUser(t *testing.T) {
 	bizErr, ok := err.(*BizError)
 	require.True(t, ok)
 	assert.Equal(t, 403, bizErr.Status)
-	// 登录接口已经统一收敛到 USER_DISABLED，测试预期也要跟随当前业务语义更新。
-	assert.Equal(t, "USER_DISABLED", bizErr.Code)
+	// 登录接口对被禁用用户统一返回 CodeUserDisabled。
+	assert.Equal(t, CodeUserDisabled, bizErr.Code)
 }
 
 func TestAuthService_LoginEmptyFields(t *testing.T) {

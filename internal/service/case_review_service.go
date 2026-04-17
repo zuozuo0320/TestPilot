@@ -15,12 +15,13 @@ import (
 
 // CaseReviewService 评审计划管理服务
 type CaseReviewService struct {
-	reviewRepo   repository.CaseReviewRepository
-	recordRepo   repository.CaseReviewRecordRepository
-	testCaseRepo repository.TestCaseRepository
-	userRepo     repository.UserRepository
-	txMgr        *repository.TxManager
-	logger       *slog.Logger
+	reviewRepo     repository.CaseReviewRepository
+	recordRepo     repository.CaseReviewRecordRepository
+	testCaseRepo   repository.TestCaseRepository
+	userRepo       repository.UserRepository
+	attachmentRepo repository.CaseReviewAttachmentRepository
+	txMgr          *repository.TxManager
+	logger         *slog.Logger
 }
 
 // NewCaseReviewService 创建评审管理服务
@@ -29,16 +30,18 @@ func NewCaseReviewService(
 	recordRepo repository.CaseReviewRecordRepository,
 	testCaseRepo repository.TestCaseRepository,
 	userRepo repository.UserRepository,
+	attachmentRepo repository.CaseReviewAttachmentRepository,
 	txMgr *repository.TxManager,
 	logger *slog.Logger,
 ) *CaseReviewService {
 	return &CaseReviewService{
-		reviewRepo:   reviewRepo,
-		recordRepo:   recordRepo,
-		testCaseRepo: testCaseRepo,
-		userRepo:     userRepo,
-		txMgr:        txMgr,
-		logger:       logger,
+		reviewRepo:     reviewRepo,
+		recordRepo:     recordRepo,
+		testCaseRepo:   testCaseRepo,
+		userRepo:       userRepo,
+		attachmentRepo: attachmentRepo,
+		txMgr:          txMgr,
+		logger:         logger,
 	}
 }
 
@@ -232,6 +235,11 @@ func (s *CaseReviewService) DeleteReview(ctx context.Context, projectID, reviewI
 		s.reviewRepo.DeleteReviewersByReviewID(ctx, tx, reviewID)
 		s.reviewRepo.DeleteItemsByReviewID(ctx, tx, reviewID)
 		s.recordRepo.DeleteByReviewID(ctx, tx, reviewID)
+		if s.attachmentRepo != nil {
+			if delErr := s.attachmentRepo.DeleteByReviewID(ctx, tx, reviewID); delErr != nil {
+				return delErr
+			}
+		}
 		return s.reviewRepo.DeleteReview(ctx, tx, reviewID, projectID)
 	})
 	if err != nil {
@@ -430,6 +438,11 @@ func (s *CaseReviewService) UnlinkItems(ctx context.Context, projectID, reviewID
 
 	return s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		s.reviewRepo.DeleteReviewersByItemIDs(ctx, tx, itemIDs)
+		if s.attachmentRepo != nil {
+			if err := s.attachmentRepo.DeleteByItemIDs(ctx, tx, itemIDs); err != nil {
+				return err
+			}
+		}
 		if err := s.reviewRepo.DeleteItems(ctx, tx, reviewID, itemIDs); err != nil {
 			return err
 		}

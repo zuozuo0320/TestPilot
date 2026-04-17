@@ -68,13 +68,13 @@ func (r *roleRepo) FindByIDs(ctx context.Context, ids []uint) ([]model.Role, err
 func (r *roleRepo) List(ctx context.Context) ([]model.Role, error) {
 	// 定义局部扫描结构体（无 gorm 标签限制）
 	type roleRow struct {
-		ID          uint       `gorm:"column:id"`
-		Name        string     `gorm:"column:name"`
-		DisplayName string     `gorm:"column:display_name"`
-		Description string     `gorm:"column:description"`
-		UserCount   int64      `gorm:"column:user_count"`
-		CreatedAt   time.Time  `gorm:"column:created_at"`
-		UpdatedAt   time.Time  `gorm:"column:updated_at"`
+		ID          uint      `gorm:"column:id"`
+		Name        string    `gorm:"column:name"`
+		DisplayName string    `gorm:"column:display_name"`
+		Description string    `gorm:"column:description"`
+		UserCount   int64     `gorm:"column:user_count"`
+		CreatedAt   time.Time `gorm:"column:created_at"`
+		UpdatedAt   time.Time `gorm:"column:updated_at"`
 	}
 	var rows []roleRow
 	err := r.db.WithContext(ctx).Raw(`

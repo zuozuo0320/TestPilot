@@ -12,9 +12,9 @@ import (
 // Result 统一响应结构
 // Code 字段为 6 位数字业务错误码（如 200000=成功, 100101=评审计划不存在）
 type Result struct {
-	Code      int    `json:"code"`                // 6 位业务错误码
-	Message   string `json:"message"`             // 提示消息
-	Data      any    `json:"data,omitempty"`      // 业务数据
+	Code      int    `json:"code"`                 // 6 位业务错误码
+	Message   string `json:"message"`              // 提示消息
+	Data      any    `json:"data,omitempty"`       // 业务数据
 	RequestID string `json:"request_id,omitempty"` // 请求追踪 ID
 }
 
@@ -83,4 +83,3 @@ func HandleError(c *gin.Context, err error) {
 		RequestID: c.GetString("request_id"),
 	})
 }
-

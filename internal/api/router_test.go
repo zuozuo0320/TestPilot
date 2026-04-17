@@ -45,6 +45,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 	testCaseRepo := repository.NewTestCaseRepo(db)
 	caseHistoryRepo := repository.NewCaseHistoryRepo(db)
 	auditRepo := repository.NewAuditRepo(db)
+	tagRepo := repository.NewTagRepo(db)
 	executionRepo := repository.NewExecutionRepo(db)
 	defectRepo := repository.NewDefectRepo(db)
 	requirementRepo := repository.NewRequirementRepo(db)
@@ -61,7 +62,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		UserService:        service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr),
 		RoleService:        service.NewRoleService(roleRepo, auditRepo, txMgr),
 		ProjectService:     service.NewProjectService(logger, projectRepo, userRepo, auditRepo, txMgr),
-		TestCaseService:    service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo),
+		TestCaseService:    service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo, tagRepo),
 		ProfileService:     service.NewProfileService(userRepo, auditRepo, txMgr),
 		ExecutionService:   service.NewExecutionService(executionRepo, txMgr, mockExecutor, nil, logger),
 		DefectService:      service.NewDefectService(defectRepo, executionRepo),

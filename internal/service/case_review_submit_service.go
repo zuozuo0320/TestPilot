@@ -20,13 +20,13 @@ type SubmitReviewInput struct {
 
 // SubmitReviewOutput 单条评审提交输出
 type SubmitReviewOutput struct {
-	ItemID             uint   `json:"item_id"`
-	ReviewStatus       string `json:"review_status"`
-	FinalResult        string `json:"final_result"`
-	CurrentRoundNo     int    `json:"current_round_no"`
-	TestCaseStatus     string `json:"testcase_status"`
+	ItemID               uint   `json:"item_id"`
+	ReviewStatus         string `json:"review_status"`
+	FinalResult          string `json:"final_result"`
+	CurrentRoundNo       int    `json:"current_round_no"`
+	TestCaseStatus       string `json:"testcase_status"`
 	TestCaseReviewResult string `json:"testcase_review_result"`
-	NextPendingItemID  *uint  `json:"next_pending_item_id"`
+	NextPendingItemID    *uint  `json:"next_pending_item_id"`
 }
 
 // BatchReviewInput 批量评审输入
@@ -68,7 +68,6 @@ func NewCaseReviewSubmitService(
 		logger:       logger,
 	}
 }
-
 
 // SubmitReview 单条评审提交（核心事务）
 func (s *CaseReviewSubmitService) SubmitReview(ctx context.Context, projectID, reviewID, itemID, userID uint, input SubmitReviewInput) (*SubmitReviewOutput, error) {
@@ -136,7 +135,6 @@ func (s *CaseReviewSubmitService) SubmitReview(ctx context.Context, projectID, r
 			return err
 		}
 		s.logger.Info("aggregated item result", "item_id", itemID, "result", aggregatedResult, "status", reviewStatus)
-
 
 		// 填充记录的聚合结果快照
 		record.AggregateResultAfterSubmit = aggregatedResult

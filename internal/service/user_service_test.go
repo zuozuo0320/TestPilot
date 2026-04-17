@@ -65,7 +65,7 @@ func TestUserService_CreateAdminAssignBlocked(t *testing.T) {
 	bizErr, ok := err.(*BizError)
 	require.True(t, ok)
 	assert.Equal(t, 400, bizErr.Status)
-	assert.Equal(t, "ADMIN_ASSIGN_BLOCKED", bizErr.Code)
+	assert.Equal(t, CodeParamsError, bizErr.Code)
 }
 
 func TestUserService_CreateMissingFields(t *testing.T) {

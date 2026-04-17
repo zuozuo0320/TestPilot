@@ -35,10 +35,10 @@ func NewOverviewService(
 
 // OverviewResult 概览结果
 type OverviewResult struct {
-	ProjectName  string  `json:"project_name"`
-	Counts       Counts  `json:"counts"`
-	LatestRun    any     `json:"latest_run"`
-	QualityGate  any     `json:"quality_gate"`
+	ProjectName string `json:"project_name"`
+	Counts      Counts `json:"counts"`
+	LatestRun   any    `json:"latest_run"`
+	QualityGate any    `json:"quality_gate"`
 }
 
 // Counts 实体计数
@@ -128,4 +128,3 @@ func (s *OverviewService) GetOverview(ctx context.Context, projectID uint) (map[
 	}
 	return summary, nil
 }
-

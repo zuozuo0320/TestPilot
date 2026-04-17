@@ -334,7 +334,13 @@ func (r *caseReviewRepo) UpdateReviewer(ctx context.Context, tx *gorm.DB, rev *m
 func (r *caseReviewRepo) ListReviewersByItemID(ctx context.Context, tx *gorm.DB, itemID uint) ([]model.CaseReviewItemReviewer, error) {
 	var reviewers []model.CaseReviewItemReviewer
 	// [FIX #6] 按 reviewed_at DESC 排序，确保单人模式可正确取最新提交
-	err := r.getDB(tx).WithContext(ctx).Where("review_item_id = ?", itemID).Order("reviewed_at DESC, id DESC").Find(&reviewers).Error
+	err := r.getDB(tx).WithContext(ctx).
+		Table("case_review_item_reviewers").
+		Select("case_review_item_reviewers.*, COALESCE(u.name, '') AS reviewer_name").
+		Joins("LEFT JOIN users u ON u.id = case_review_item_reviewers.reviewer_id").
+		Where("case_review_item_reviewers.review_item_id = ?", itemID).
+		Order("case_review_item_reviewers.reviewed_at DESC, case_review_item_reviewers.id DESC").
+		Scan(&reviewers).Error
 	return reviewers, err
 }
 

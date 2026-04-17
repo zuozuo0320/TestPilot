@@ -105,10 +105,10 @@ const (
 	CodeReviewItemMismatch  = 120108
 
 	// 13: 标签管理模块
-	CodeTagNotFound       = 130001
-	CodeTagNameDuplicate  = 130002
-	CodeTagLimitExceeded  = 130003
-	CodeTagColorInvalid   = 130004
+	CodeTagNotFound          = 130001
+	CodeTagNameDuplicate     = 130002
+	CodeTagLimitExceeded     = 130003
+	CodeTagColorInvalid      = 130004
 	CodeTagCaseLimitExceeded = 130005
 )
 

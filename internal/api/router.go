@@ -14,83 +14,86 @@ import (
 
 // Dependencies 外部依赖注入（服务层）
 type Dependencies struct {
-	Logger                  *slog.Logger
-	AuthService             *service.AuthService
-	UserService             *service.UserService
-	RoleService             *service.RoleService
-	ProjectService          *service.ProjectService
-	TestCaseService         *service.TestCaseService
-	ProfileService          *service.ProfileService
-	ExecutionService        *service.ExecutionService
-	DefectService           *service.DefectService
-	RequirementService      *service.RequirementService
-	ScriptService           *service.ScriptService
-	OverviewService         *service.OverviewService
-	AuditService            *service.AuditService
-	ModuleService           *service.ModuleService
-	AttachmentService       *service.AttachmentService
-	CaseHistoryRepo         *repository.CaseHistoryRepo
-	CaseRelationRepo        *repository.CaseRelationRepo
-	XlsxService             *service.XlsxService
-	AIScriptService         *service.AIScriptService
-	CaseReviewService       *service.CaseReviewService
-	CaseReviewSubmitService *service.CaseReviewSubmitService
-	TagService              *service.TagService
+	Logger                      *slog.Logger
+	AuthService                 *service.AuthService
+	UserService                 *service.UserService
+	RoleService                 *service.RoleService
+	ProjectService              *service.ProjectService
+	TestCaseService             *service.TestCaseService
+	ProfileService              *service.ProfileService
+	ExecutionService            *service.ExecutionService
+	DefectService               *service.DefectService
+	RequirementService          *service.RequirementService
+	ScriptService               *service.ScriptService
+	OverviewService             *service.OverviewService
+	AuditService                *service.AuditService
+	ModuleService               *service.ModuleService
+	AttachmentService           *service.AttachmentService
+	CaseHistoryRepo             *repository.CaseHistoryRepo
+	CaseRelationRepo            *repository.CaseRelationRepo
+	XlsxService                 *service.XlsxService
+	AIScriptService             *service.AIScriptService
+	CaseReviewService           *service.CaseReviewService
+	CaseReviewSubmitService     *service.CaseReviewSubmitService
+	CaseReviewAttachmentService *service.CaseReviewAttachmentService
+	TagService                  *service.TagService
 }
 
 // API 核心结构体
 type API struct {
-	logger              *slog.Logger
-	allowedOrigins      []string
-	authSvc             *service.AuthService
-	userSvc             *service.UserService
-	roleSvc             *service.RoleService
-	projectSvc          *service.ProjectService
-	testCaseSvc         *service.TestCaseService
-	profileSvc          *service.ProfileService
-	executionSvc        *service.ExecutionService
-	defectSvc           *service.DefectService
-	requirementSvc      *service.RequirementService
-	scriptSvc           *service.ScriptService
-	overviewSvc         *service.OverviewService
-	auditSvc            *service.AuditService
-	moduleSvc           *service.ModuleService
-	attachmentSvc       *service.AttachmentService
-	caseHistoryRepo     *repository.CaseHistoryRepo
-	caseRelationRepo    *repository.CaseRelationRepo
-	xlsxSvc             *service.XlsxService
-	aiScriptSvc         *service.AIScriptService
-	caseReviewSvc       *service.CaseReviewService
-	caseReviewSubmitSvc *service.CaseReviewSubmitService
-	tagSvc              *service.TagService
+	logger                  *slog.Logger
+	allowedOrigins          []string
+	authSvc                 *service.AuthService
+	userSvc                 *service.UserService
+	roleSvc                 *service.RoleService
+	projectSvc              *service.ProjectService
+	testCaseSvc             *service.TestCaseService
+	profileSvc              *service.ProfileService
+	executionSvc            *service.ExecutionService
+	defectSvc               *service.DefectService
+	requirementSvc          *service.RequirementService
+	scriptSvc               *service.ScriptService
+	overviewSvc             *service.OverviewService
+	auditSvc                *service.AuditService
+	moduleSvc               *service.ModuleService
+	attachmentSvc           *service.AttachmentService
+	caseHistoryRepo         *repository.CaseHistoryRepo
+	caseRelationRepo        *repository.CaseRelationRepo
+	xlsxSvc                 *service.XlsxService
+	aiScriptSvc             *service.AIScriptService
+	caseReviewSvc           *service.CaseReviewService
+	caseReviewSubmitSvc     *service.CaseReviewSubmitService
+	caseReviewAttachmentSvc *service.CaseReviewAttachmentService
+	tagSvc                  *service.TagService
 }
 
 // NewRouter 创建路由引擎并注册所有路由
 func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	a := &API{
-		logger:              deps.Logger,
-		allowedOrigins:      parseAllowedOrigins(corsOrigins),
-		authSvc:             deps.AuthService,
-		userSvc:             deps.UserService,
-		roleSvc:             deps.RoleService,
-		projectSvc:          deps.ProjectService,
-		testCaseSvc:         deps.TestCaseService,
-		profileSvc:          deps.ProfileService,
-		executionSvc:        deps.ExecutionService,
-		defectSvc:           deps.DefectService,
-		requirementSvc:      deps.RequirementService,
-		scriptSvc:           deps.ScriptService,
-		overviewSvc:         deps.OverviewService,
-		auditSvc:            deps.AuditService,
-		moduleSvc:           deps.ModuleService,
-		attachmentSvc:       deps.AttachmentService,
-		caseHistoryRepo:     deps.CaseHistoryRepo,
-		caseRelationRepo:    deps.CaseRelationRepo,
-		xlsxSvc:             deps.XlsxService,
-		aiScriptSvc:         deps.AIScriptService,
-		caseReviewSvc:       deps.CaseReviewService,
-		caseReviewSubmitSvc: deps.CaseReviewSubmitService,
-		tagSvc:              deps.TagService,
+		logger:                  deps.Logger,
+		allowedOrigins:          parseAllowedOrigins(corsOrigins),
+		authSvc:                 deps.AuthService,
+		userSvc:                 deps.UserService,
+		roleSvc:                 deps.RoleService,
+		projectSvc:              deps.ProjectService,
+		testCaseSvc:             deps.TestCaseService,
+		profileSvc:              deps.ProfileService,
+		executionSvc:            deps.ExecutionService,
+		defectSvc:               deps.DefectService,
+		requirementSvc:          deps.RequirementService,
+		scriptSvc:               deps.ScriptService,
+		overviewSvc:             deps.OverviewService,
+		auditSvc:                deps.AuditService,
+		moduleSvc:               deps.ModuleService,
+		attachmentSvc:           deps.AttachmentService,
+		caseHistoryRepo:         deps.CaseHistoryRepo,
+		caseRelationRepo:        deps.CaseRelationRepo,
+		xlsxSvc:                 deps.XlsxService,
+		aiScriptSvc:             deps.AIScriptService,
+		caseReviewSvc:           deps.CaseReviewService,
+		caseReviewSubmitSvc:     deps.CaseReviewSubmitService,
+		caseReviewAttachmentSvc: deps.CaseReviewAttachmentService,
+		tagSvc:                  deps.TagService,
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -243,6 +246,14 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	caseReview.POST("/:reviewID/items/batch-resubmit", a.batchResubmitItems)
 	caseReview.POST("/:reviewID/items/:itemID/review", a.submitItemReview)
 	caseReview.GET("/:reviewID/items/:itemID/records", a.listItemRecords)
+	// 评审附件：item 维度
+	caseReview.POST("/:reviewID/items/:itemID/attachments", a.uploadReviewAttachment)
+	caseReview.GET("/:reviewID/items/:itemID/attachments", a.listReviewAttachments)
+
+	// 评审附件：按用例聚合（只读镜像）+ 附件自身操作
+	auth.GET("/projects/:projectID/testcases/:testcaseID/review-attachments", a.listReviewAttachmentsByTestCase)
+	auth.DELETE("/projects/:projectID/review-attachments/:attachmentID", a.deleteReviewAttachment)
+	auth.GET("/projects/:projectID/review-attachments/:attachmentID/download", a.downloadReviewAttachment)
 
 	// ---- 标签管理 ----
 	tags := auth.Group("/projects/:projectID/tags")

@@ -197,10 +197,10 @@ type AIScriptTask struct {
 	UpdatedAt              time.Time  `json:"updated_at"`
 
 	// 虚拟字段（不入库）
-	ProjectName string           `json:"project_name" gorm:"-"`
-	CreatedName string           `json:"created_name" gorm:"-"`
-	CaseCount   int64            `json:"case_count" gorm:"-"`
-	CaseTags    []string         `json:"case_tags" gorm:"-"`
+	ProjectName string             `json:"project_name" gorm:"-"`
+	CreatedName string             `json:"created_name" gorm:"-"`
+	CaseCount   int64              `json:"case_count" gorm:"-"`
+	CaseTags    []string           `json:"case_tags" gorm:"-"`
 	Permissions *ActionPermissions `json:"permissions,omitempty" gorm:"-"`
 }
 
@@ -270,9 +270,9 @@ type AIScriptValidation struct {
 	CreatedAt            time.Time  `json:"created_at"`
 
 	// 虚拟字段（API 序列化用，不存 DB）
-	TriggeredName string                `json:"triggered_name" gorm:"-"`
-	Logs          json.RawMessage       `json:"logs" gorm:"-"`
-	Screenshots   []AIScriptEvidence    `json:"screenshots" gorm:"-"`
+	TriggeredName string             `json:"triggered_name" gorm:"-"`
+	Logs          json.RawMessage    `json:"logs" gorm:"-"`
+	Screenshots   []AIScriptEvidence `json:"screenshots" gorm:"-"`
 }
 
 // AIScriptTrace 测试智编-结构化轨迹表
@@ -355,11 +355,11 @@ type AIScriptFile struct {
 	ProjectID            uint      `json:"project_id" gorm:"not null;index:idx_script_file_project"`
 	TaskID               uint      `json:"task_id" gorm:"not null;index:idx_script_file_task"`
 	VersionID            uint      `json:"version_id" gorm:"not null;index:idx_script_file_version;uniqueIndex:uk_version_path"`
-	FileType             string    `json:"file_type" gorm:"size:32;not null"`             // spec / page / shared / fixture / registry
+	FileType             string    `json:"file_type" gorm:"size:32;not null"`                                  // spec / page / shared / fixture / registry
 	RelativePath         string    `json:"relative_path" gorm:"size:512;not null;uniqueIndex:uk_version_path"` // 相对项目根的路径
 	Content              string    `json:"content" gorm:"type:longtext"`
 	ContentHash          string    `json:"content_hash" gorm:"size:64"`
-	SourceKind           string    `json:"source_kind" gorm:"size:32"`                    // create / update / generated / rebuilt
+	SourceKind           string    `json:"source_kind" gorm:"size:32"` // create / update / generated / rebuilt
 	ManualReviewRequired bool      `json:"manual_review_required" gorm:"default:false"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`

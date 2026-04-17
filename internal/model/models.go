@@ -404,7 +404,7 @@ type CaseReviewItemReviewer struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 
 	// 虚拟字段
-	ReviewerName string `json:"reviewer_name,omitempty" gorm:"-"`
+	ReviewerName string `json:"reviewer_name,omitempty" gorm:"->;-:migration"`
 }
 
 // CaseReviewRecord 评审记录表（append-only，只新增不更新）
@@ -421,8 +421,30 @@ type CaseReviewRecord struct {
 	AggregateResultAfterSubmit string    `json:"aggregate_result_after_submit" gorm:"size:16;not null"`
 	CreatedAt                  time.Time `json:"created_at" gorm:"index:idx_rr_item_round;index:idx_rr_proj_reviewer;index:idx_rr_proj_case;index:idx_rr_review"`
 
-	// 虚拟字段
-	ReviewerName string `json:"reviewer_name,omitempty" gorm:"-"`
+	// 虚拟字段：读模式，不参与 migration，但允许 Scan 回填 reviewer_name 列
+	ReviewerName string `json:"reviewer_name,omitempty" gorm:"->;-:migration"`
+}
+
+// CaseReviewAttachment 评审项附件（独立于用例正式附件）
+// 作为评审过程中的证据存在，可追溯到具体评审计划/评审项/轮次；
+// 用例详情页只读镜像展示，不影响用例本身的附件清单。
+type CaseReviewAttachment struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	ReviewID     uint      `json:"review_id" gorm:"not null;index:idx_ra_review"`
+	ReviewItemID uint      `json:"review_item_id" gorm:"not null;index:idx_ra_item"`
+	ProjectID    uint      `json:"project_id" gorm:"not null;index:idx_ra_proj"`
+	TestCaseID   uint      `json:"testcase_id" gorm:"not null;index:idx_ra_case"`
+	RoundNo      int       `json:"round_no" gorm:"not null;default:1"`
+	FileName     string    `json:"file_name" gorm:"size:255;not null"`
+	FilePath     string    `json:"file_path" gorm:"size:500;not null"`
+	FileSize     int64     `json:"file_size"`
+	MimeType     string    `json:"mime_type" gorm:"size:100"`
+	CreatedBy    uint      `json:"created_by" gorm:"default:0"`
+	CreatedAt    time.Time `json:"created_at"`
+
+	// 虚拟字段：读模式，不参与 migration
+	UploaderName string `json:"uploader_name,omitempty" gorm:"->;-:migration"`
+	ReviewName   string `json:"review_name,omitempty" gorm:"->;-:migration"`
 }
 
 func AutoMigrate(db *gorm.DB) error {
@@ -466,6 +488,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&CaseReviewItem{},
 		&CaseReviewItemReviewer{},
 		&CaseReviewRecord{},
+		&CaseReviewAttachment{},
 
 		// 标签管理模块
 		&Tag{},

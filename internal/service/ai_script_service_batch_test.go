@@ -90,8 +90,8 @@ func TestAIScriptService_DiscardTaskRejectsRunningStatus(t *testing.T) {
 	if !errors.As(err, &bizErr) {
 		t.Fatalf("expected BizError, got %T", err)
 	}
-	if bizErr.Code != "AI_SCRIPT_4005" {
-		t.Fatalf("unexpected error code: %s", bizErr.Code)
+	if bizErr.Code != CodeConflict {
+		t.Fatalf("unexpected error code: %d", bizErr.Code)
 	}
 
 	stored, queryErr := repository.NewAIScriptRepo(db).GetTask(t.Context(), task.ID)

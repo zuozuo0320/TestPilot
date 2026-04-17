@@ -38,14 +38,13 @@ func (r *caseReviewRecordRepo) Create(ctx context.Context, tx *gorm.DB, record *
 }
 
 func (r *caseReviewRecordRepo) ListByItemID(ctx context.Context, itemID uint, roundNo *int, page, pageSize int) ([]model.CaseReviewRecord, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.CaseReviewRecord{}).Where("review_item_id = ?", itemID)
-
+	// 统计总数仍基于主表条件，无需 join 用户表
+	countQuery := r.db.WithContext(ctx).Model(&model.CaseReviewRecord{}).Where("review_item_id = ?", itemID)
 	if roundNo != nil {
-		q = q.Where("round_no = ?", *roundNo)
+		countQuery = countQuery.Where("round_no = ?", *roundNo)
 	}
-
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -56,8 +55,22 @@ func (r *caseReviewRecordRepo) ListByItemID(ctx context.Context, itemID uint, ro
 		pageSize = 20
 	}
 
+	// 查询评审记录时回填评审人姓名，避免前端只能显示 reviewer_id
+	listQuery := r.db.WithContext(ctx).
+		Table("case_review_records").
+		Select("case_review_records.*, COALESCE(u.name, '') AS reviewer_name").
+		Joins("LEFT JOIN users u ON u.id = case_review_records.reviewer_id").
+		Where("case_review_records.review_item_id = ?", itemID)
+	if roundNo != nil {
+		listQuery = listQuery.Where("case_review_records.round_no = ?", *roundNo)
+	}
+
 	var records []model.CaseReviewRecord
-	err := q.Order("created_at ASC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&records).Error
+	err := listQuery.
+		Order("case_review_records.created_at ASC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Scan(&records).Error
 	return records, total, err
 }
 
