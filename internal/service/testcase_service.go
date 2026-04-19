@@ -311,6 +311,32 @@ func (s *TestCaseService) BatchMove(ctx context.Context, projectID uint, ids []u
 	return s.testCaseRepo.BatchMove(ctx, projectID, ids, moduleID, modulePath)
 }
 
+// BatchTag 批量为用例设置标签（替换模式：每个用例的标签替换为指定的 tagIDs）
+func (s *TestCaseService) BatchTag(ctx context.Context, projectID uint, ids []uint, tagIDs []uint) (int64, error) {
+	if len(ids) == 0 {
+		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
+	}
+	if len(tagIDs) > 10 {
+		return 0, ErrBadRequest(CodeParamsError, "每个用例最多绑定 10 个标签")
+	}
+	if s.tagRepo == nil {
+		return 0, ErrInternal(CodeInternal, nil)
+	}
+	var affected int64
+	for _, caseID := range ids {
+		// 校验用例属于该项目
+		_, err := s.testCaseRepo.FindByID(ctx, caseID, projectID)
+		if err != nil {
+			continue // 跳过不存在或不属于该项目的用例
+		}
+		if err := s.tagRepo.ReplaceTestCaseTags(ctx, nil, caseID, tagIDs); err != nil {
+			continue
+		}
+		affected++
+	}
+	return affected, nil
+}
+
 // CloneCase 澶嶅埗鐢ㄤ緥
 func (s *TestCaseService) CloneCase(ctx context.Context, projectID, sourceID, userID uint) (*model.TestCase, error) {
 	entity, err := s.testCaseRepo.CloneCase(ctx, projectID, sourceID, userID)

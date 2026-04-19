@@ -141,6 +141,12 @@ type batchMoveRequest struct {
 	ModulePath string `json:"module_path"`
 }
 
+// batchTagRequest 批量打标签请求
+type batchTagRequest struct {
+	IDs    []uint `json:"ids" binding:"required,min=1"`
+	TagIDs []uint `json:"tag_ids" binding:"required,min=1,max=10"`
+}
+
 // createRelationRequest 创建用例关联
 type createRelationRequest struct {
 	TargetCaseID uint   `json:"target_case_id" binding:"required,min=1"`

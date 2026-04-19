@@ -230,6 +230,28 @@ func (a *API) batchMoveTestCases(c *gin.Context) {
 	response.OK(c, gin.H{"affected": affected})
 }
 
+// batchTagTestCases 批量为用例打标签
+func (a *API) batchTagTestCases(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	var req batchTagRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	affected, err := a.testCaseSvc.BatchTag(c.Request.Context(), projectID, req.IDs, req.TagIDs)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"affected": affected})
+}
+
 // ========== 鐢ㄤ緥鍏嬮殕 ==========
 
 func (a *API) cloneTestCase(c *gin.Context) {

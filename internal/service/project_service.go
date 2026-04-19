@@ -111,6 +111,11 @@ func (s *ProjectService) Create(ctx context.Context, userID uint, input CreatePr
 	return created, nil
 }
 
+// GetByID 根据 ID 获取项目
+func (s *ProjectService) GetByID(ctx context.Context, projectID uint) (*model.Project, error) {
+	return s.projectRepo.FindByID(ctx, projectID)
+}
+
 // Update 更新项目（名称、描述、头像）
 // 名称唯一性校验，归档项目不可编辑
 func (s *ProjectService) Update(ctx context.Context, actorID, projectID uint, input UpdateProjectInput) (*model.Project, error) {

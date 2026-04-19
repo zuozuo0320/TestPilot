@@ -161,7 +161,9 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.POST("/projects/:projectID/testcases/batch-delete", a.batchDeleteTestCases)
 	auth.POST("/projects/:projectID/testcases/batch-update-level", a.batchUpdateLevel)
 	auth.POST("/projects/:projectID/testcases/batch-move", a.batchMoveTestCases)
+	auth.POST("/projects/:projectID/testcases/batch-tag", a.batchTagTestCases)
 	auth.GET("/projects/:projectID/testcases/export", a.exportTestCasesXlsx)
+	auth.GET("/projects/:projectID/testcases/export-report", a.exportReportXlsx)
 	auth.POST("/projects/:projectID/testcases/import", a.importTestCasesXlsx)
 	// Parameterized :testcaseID routes
 	auth.PUT("/projects/:projectID/testcases/:testcaseID", a.updateTestCase)

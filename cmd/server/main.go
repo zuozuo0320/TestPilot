@@ -199,7 +199,7 @@ func main() {
 	auditSvc := service.NewAuditService(auditRepo)
 	moduleSvc := service.NewModuleService(moduleRepo, testCaseRepo)
 	attachmentSvc := service.NewAttachmentService(attachmentRepo, "./uploads")
-	xlsxSvc := service.NewXlsxService(testCaseRepo)
+	xlsxSvc := service.NewXlsxService(testCaseRepo, tagRepo)
 	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
 	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, userRepo, caseReviewAttachmentRepo, txMgr, logger)
 	caseReviewSubmitSvc := service.NewCaseReviewSubmitService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, txMgr, logger)
