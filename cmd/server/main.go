@@ -131,15 +131,9 @@ func main() {
 		os.Exit(1)
 	}
 	// 执行增量 SQL 迁移（处理 AutoMigrate 无法完成的变更）
-	// 注意：仅在 MySQL 模式下运行，SQLite 脚本不兼容。
-	if cfg.DBHost != "" && cfg.DBHost != "127.0.0.1" || os.Getenv("DB_HOST") != "" {
-		// 这里的逻辑有点简单，更严谨的做法是检查 db.Dialector.Name()
-		if db.Dialector.Name() == "mysql" {
-			if err := migration.Run(db, logger); err != nil {
-				logger.Error("sql migration failed", "error", err)
-				os.Exit(1)
-			}
-		}
+	if err := migration.Run(db, logger); err != nil {
+		logger.Error("sql migration failed", "error", err)
+		os.Exit(1)
 	}
 	if cfg.AutoSeed {
 		if err := seed.SeedBootstrap(db, logger); err != nil {

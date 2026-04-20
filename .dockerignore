@@ -1,8 +1,39 @@
+# VCS / 元数据
 .git
 .gitignore
-Dockerfile
-README.md
-*.md
-.env
 .vscode
 .idea
+
+# 本地覆盖配置（容器内走环境变量注入）
+.env
+
+# 文档与构建辅助文件（app 镜像不需要）
+Dockerfile
+README.md
+REFACTORING_PLAN.md
+*.md
+docs
+Makefile
+
+# 运行时产物（app 镜像只跑编译好的二进制）
+uploads
+runtime-logs
+logs
+*.log
+
+# Python Executor 不参与 Go 构建
+executor
+
+# 前端仓库（独立部署）
+../TestFront
+
+# 开发脚本（仅供宿主机）
+dev-up.ps1
+dev-down.ps1
+scripts
+
+# 编译产物
+*.exe
+bin
+dist
+.gocache

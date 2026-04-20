@@ -35,21 +35,34 @@
 | Node.js | 20+ | 前端 + Playwright |
 | Docker | 24+ | MySQL 8.4 / Redis 7.4 |
 
-### Step 0 — 一键启动推荐方式
+### Step 0 — 跨电脑一键启动（推荐）
 
-推荐优先使用一键脚本：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\ai_project\.agents\skills\start-testpilot-services\scripts\start-services.ps1
-```
-
-如果只想检查当前环境状态：
+新电脑首次拉下 `TestPilot` 与 `TestFront`（同级目录）后，只需要在 `TestPilot/` 下执行：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\ai_project\.agents\skills\start-testpilot-services\scripts\check-services.ps1
+# 首次执行会自动：生成 .env、建 venv、装依赖、装 Playwright Chromium、npm install、建容器
+powershell -NoProfile -ExecutionPolicy Bypass -File .\dev-up.ps1
 ```
 
-### Step 1 — 启动容器后端（app + MySQL + Redis）
+常用参数：
+
+```powershell
+.\dev-up.ps1 -Rebuild         # 强制 --build --force-recreate 重建 app 镜像
+.\dev-up.ps1 -SkipFrontend    # 只启后端 + Executor
+.\dev-up.ps1 -SkipExecutor    # 只启后端 + 前端
+```
+
+关停（默认保留 MySQL 数据卷）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\dev-down.ps1
+.\dev-down.ps1 -PurgeData     # 额外删除 mysql_data 卷（谨慎！）
+```
+
+> 依赖前提：`docker` / `node` / `npm` / `py` 已安装且在 PATH 中；Docker Desktop 已启动。
+> 首次运行会在 `executor/.env` 生成空的 `OPENAI_API_KEY` 占位，AI 能力使用前请填入真实 Key。
+
+### Step 1 — 启动容器后端（app + MySQL + Redis）手动方式
 
 ```powershell
 # 在 TestPilot 目录执行，使用固定 compose 文件启动容器
