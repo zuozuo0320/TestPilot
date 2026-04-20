@@ -22,3 +22,8 @@ func NewAuditService(repo repository.AuditRepository) *AuditService {
 func (s *AuditService) ListRecent(ctx context.Context, limit int) ([]model.AuditLog, error) {
 	return s.auditRepo.ListRecent(ctx, limit)
 }
+
+// ListByTarget 按目标对象查询审计日志
+func (s *AuditService) ListByTarget(ctx context.Context, targetType string, targetID uint, limit int) ([]model.AuditLog, error) {
+	return s.auditRepo.ListByTarget(ctx, targetType, targetID, limit)
+}

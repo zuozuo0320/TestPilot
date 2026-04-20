@@ -173,6 +173,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.POST("/projects/:projectID/testcase/:testcaseID/discard", a.discardTestCase)
 	auth.POST("/projects/:projectID/testcase/:testcaseID/recover", a.recoverTestCase)
 	auth.GET("/projects/:projectID/testcases/:testcaseID/history", a.listCaseHistory)
+	auth.GET("/projects/:projectID/testcases/:testcaseID/activities", a.listCaseActivities)
 	auth.GET("/projects/:projectID/testcases/:testcaseID/relations", a.listCaseRelations)
 	auth.POST("/projects/:projectID/testcases/:testcaseID/relations", a.createCaseRelation)
 	auth.DELETE("/projects/:projectID/testcases/:testcaseID/relations/:relationID", a.deleteCaseRelation)

@@ -102,10 +102,11 @@ type createTestCaseRequest struct {
 	ModulePath   string `json:"module_path" binding:"omitempty,max=255"`
 	Tags         string `json:"tags" binding:"omitempty,max=500"`
 	TagIDs       []uint `json:"tag_ids" binding:"omitempty,max=10"`
-	Precondition string `json:"precondition"`
-	Steps        string `json:"steps"`
-	Remark       string `json:"remark"`
-	Priority     string `json:"priority" binding:"omitempty,oneof=high medium low"`
+	Precondition  string `json:"precondition"`
+	Postcondition string `json:"postcondition"`
+	Steps         string `json:"steps"`
+	Remark        string `json:"remark"`
+	Priority      string `json:"priority" binding:"omitempty,oneof=high medium low"`
 }
 
 // updateTestCaseRequest 更新用例请求（字段可选）
@@ -117,10 +118,11 @@ type updateTestCaseRequest struct {
 	ModulePath   *string `json:"module_path" binding:"omitempty,max=255"`
 	Tags         *string `json:"tags" binding:"omitempty,max=500"`
 	TagIDs       []uint  `json:"tag_ids" binding:"omitempty,max=10"`
-	Precondition *string `json:"precondition"`
-	Steps        *string `json:"steps"`
-	Remark       *string `json:"remark"`
-	Priority     *string `json:"priority" binding:"omitempty,oneof=high medium low"`
+	Precondition  *string `json:"precondition"`
+	Postcondition *string `json:"postcondition"`
+	Steps         *string `json:"steps"`
+	Remark        *string `json:"remark"`
+	Priority      *string `json:"priority" binding:"omitempty,oneof=high medium low"`
 }
 
 // batchDeleteRequest 批量删除请求

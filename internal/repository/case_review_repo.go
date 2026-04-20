@@ -122,7 +122,7 @@ func (r *caseReviewRepo) ListReviews(ctx context.Context, projectID, currentUser
 	case "created":
 		baseQuery = baseQuery.Where("created_by = ?", currentUserID)
 	case "assigned":
-		baseQuery = baseQuery.Where("id IN (?)",
+		baseQuery = baseQuery.Where("case_reviews.id IN (?)",
 			r.db.Model(&model.CaseReviewItemReviewer{}).
 				Select("DISTINCT review_id").
 				Where("project_id = ? AND reviewer_id = ?", projectID, currentUserID),
@@ -132,9 +132,9 @@ func (r *caseReviewRepo) ListReviews(ctx context.Context, projectID, currentUser
 	if f.Keyword != "" {
 		like := "%" + f.Keyword + "%"
 		if idKey, err := strconv.Atoi(f.Keyword); err == nil && idKey > 0 {
-			baseQuery = baseQuery.Where("id = ? OR name LIKE ?", idKey, like)
+			baseQuery = baseQuery.Where("case_reviews.id = ? OR case_reviews.name LIKE ?", idKey, like)
 		} else {
-			baseQuery = baseQuery.Where("name LIKE ?", like)
+			baseQuery = baseQuery.Where("case_reviews.name LIKE ?", like)
 		}
 	}
 	if f.Status != "" {
@@ -150,7 +150,7 @@ func (r *caseReviewRepo) ListReviews(ctx context.Context, projectID, currentUser
 		baseQuery = baseQuery.Where("created_by = ?", *f.CreatedBy)
 	}
 	if f.ReviewerID != nil {
-		baseQuery = baseQuery.Where("id IN (?)",
+		baseQuery = baseQuery.Where("case_reviews.id IN (?)",
 			r.db.Model(&model.CaseReviewItemReviewer{}).
 				Select("DISTINCT review_id").
 				Where("project_id = ? AND reviewer_id = ?", projectID, *f.ReviewerID),

@@ -16,6 +16,8 @@ type AuditRepository interface {
 	WriteLogTx(tx *gorm.DB, actorID uint, action, targetType string, targetID uint, before, after any) error
 	// ListRecent 获取最近的审计日志
 	ListRecent(ctx context.Context, limit int) ([]model.AuditLog, error)
+	// ListByTarget 按目标对象查询审计日志
+	ListByTarget(ctx context.Context, targetType string, targetID uint, limit int) ([]model.AuditLog, error)
 }
 
 // auditRepo AuditRepository 的 GORM 实现
@@ -51,6 +53,16 @@ func (r *auditRepo) WriteLogTx(tx *gorm.DB, actorID uint, action, targetType str
 func (r *auditRepo) ListRecent(ctx context.Context, limit int) ([]model.AuditLog, error) {
 	var logs []model.AuditLog
 	if err := r.db.WithContext(ctx).Order("id desc").Limit(limit).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+	return logs, nil
+}
+
+func (r *auditRepo) ListByTarget(ctx context.Context, targetType string, targetID uint, limit int) ([]model.AuditLog, error) {
+	var logs []model.AuditLog
+	if err := r.db.WithContext(ctx).
+		Where("target_type = ? AND target_id = ?", targetType, targetID).
+		Order("id desc").Limit(limit).Find(&logs).Error; err != nil {
 		return nil, err
 	}
 	return logs, nil

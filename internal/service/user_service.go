@@ -83,6 +83,11 @@ func NewUserService(
 	}
 }
 
+// FindByIDs 根据 ID 列表批量查找用户
+func (s *UserService) FindByIDs(ctx context.Context, ids []uint) ([]model.User, error) {
+	return s.userRepo.FindByIDs(ctx, ids)
+}
+
 // List 获取用户列表
 func (s *UserService) List(ctx context.Context) ([]model.User, error) {
 	return s.userRepo.List(ctx)

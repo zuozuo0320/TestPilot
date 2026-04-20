@@ -38,10 +38,11 @@ type CreateTestCaseInput struct {
 	ModulePath   string
 	Tags         string
 	TagIDs       []uint
-	Precondition string
-	Steps        string
-	Remark       string
-	Priority     string
+	Precondition  string
+	Postcondition string
+	Steps         string
+	Remark        string
+	Priority      string
 }
 
 // Create 鍒涘缓鐢ㄤ緥
@@ -81,8 +82,9 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 		ModuleID:     input.ModuleID,
 		ModulePath:   modulePath,
 		Tags:         strings.TrimSpace(input.Tags),
-		Precondition: input.Precondition,
-		Steps:        strings.TrimSpace(input.Steps),
+		Precondition:  input.Precondition,
+		Postcondition: input.Postcondition,
+		Steps:         strings.TrimSpace(input.Steps),
 		Remark:       input.Remark,
 		Priority:     priority,
 		CreatedBy:    userID,
@@ -103,6 +105,7 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 			return nil, ErrInternal(CodeInternal, err)
 		}
 	}
+	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "create", "testcase", entity.ID, "", entity.Title)
 	return &entity, nil
 }
 
@@ -140,8 +143,9 @@ type UpdateTestCaseInput struct {
 	ModulePath   *string
 	Tags         *string
 	TagIDs       []uint
-	Precondition *string
-	Steps        *string
+	Precondition  *string
+	Postcondition *string
+	Steps         *string
 	Remark       *string
 	Priority     *string
 }
@@ -200,6 +204,9 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 		updates["precondition"] = *input.Precondition
 		isSubstantialChange = true
 	}
+	if input.Postcondition != nil && *input.Postcondition != entity.Postcondition {
+		updates["postcondition"] = *input.Postcondition
+	}
 	if input.Steps != nil {
 		steps := strings.TrimSpace(*input.Steps)
 		if steps != entity.Steps {
@@ -255,6 +262,7 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 			return nil, ErrInternal(CodeInternal, err)
 		}
 	}
+	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "update", "testcase", testCaseID, "", "")
 	updated, _ := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	return updated, nil
 }

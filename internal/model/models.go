@@ -206,8 +206,9 @@ type TestCase struct {
 	ModuleID     uint      `json:"module_id" gorm:"default:0;index"`
 	ModulePath   string    `json:"module_path" gorm:"size:255;default:/"`
 	Tags         string    `json:"tags" gorm:"size:500"`
-	Precondition string    `json:"precondition" gorm:"type:text"`
-	Steps        string    `json:"steps" gorm:"type:text"`
+	Precondition  string    `json:"precondition" gorm:"type:text"`
+	Postcondition string    `json:"postcondition" gorm:"type:text"`
+	Steps         string    `json:"steps" gorm:"type:text"`
 	Remark       string    `json:"remark" gorm:"type:text"`
 	Priority     string    `json:"priority" gorm:"size:20;default:medium"`
 	CreatedBy    uint      `json:"created_by" gorm:"not null;default:0;index"`
