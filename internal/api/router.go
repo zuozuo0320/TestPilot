@@ -37,6 +37,8 @@ type Dependencies struct {
 	CaseReviewSubmitService     *service.CaseReviewSubmitService
 	CaseReviewAttachmentService *service.CaseReviewAttachmentService
 	TagService                  *service.TagService
+	ExecutorURL                 string
+	ExecutorAPIKey              string
 }
 
 // API 核心结构体
@@ -65,6 +67,8 @@ type API struct {
 	caseReviewSubmitSvc     *service.CaseReviewSubmitService
 	caseReviewAttachmentSvc *service.CaseReviewAttachmentService
 	tagSvc                  *service.TagService
+	executorURL             string
+	executorAPIKey          string
 }
 
 // NewRouter 创建路由引擎并注册所有路由
@@ -94,6 +98,8 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		caseReviewSubmitSvc:     deps.CaseReviewSubmitService,
 		caseReviewAttachmentSvc: deps.CaseReviewAttachmentService,
 		tagSvc:                  deps.TagService,
+		executorURL:             deps.ExecutorURL,
+		executorAPIKey:          deps.ExecutorAPIKey,
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -165,6 +171,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.GET("/projects/:projectID/testcases/export", a.exportTestCasesXlsx)
 	auth.GET("/projects/:projectID/testcases/export-report", a.exportReportXlsx)
 	auth.POST("/projects/:projectID/testcases/import", a.importTestCasesXlsx)
+	auth.POST("/projects/:projectID/testcases/:testcaseID/analyze", a.analyzeTestCase)
 	// Parameterized :testcaseID routes
 	auth.PUT("/projects/:projectID/testcases/:testcaseID", a.updateTestCase)
 	auth.DELETE("/projects/:projectID/testcases/:testcaseID", a.deleteTestCase)

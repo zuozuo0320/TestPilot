@@ -76,6 +76,7 @@ type TestCaseRepository interface {
 	CountByProject(ctx context.Context, projectID uint) (int64, error)
 	CountByExecResult(ctx context.Context, projectID uint) (map[string]int64, error)
 	BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error)
+	BatchDeleteDraftOnly(ctx context.Context, projectID uint, ids []uint) (int64, error)
 	BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error)
 	BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error)
 	UpdateModulePathsByPrefix(ctx context.Context, projectID uint, oldPrefix, newPrefix string) error
@@ -329,6 +330,14 @@ func (r *testCaseRepo) BatchDelete(ctx context.Context, projectID uint, ids []ui
 		return 0, nil
 	}
 	result := r.db.WithContext(ctx).Where("project_id = ? AND id IN ?", projectID, ids).Delete(&model.TestCase{})
+	return result.RowsAffected, result.Error
+}
+
+func (r *testCaseRepo) BatchDeleteDraftOnly(ctx context.Context, projectID uint, ids []uint) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := r.db.WithContext(ctx).Where("project_id = ? AND id IN ? AND status = ?", projectID, ids, model.TestCaseStatusDraft).Delete(&model.TestCase{})
 	return result.RowsAffected, result.Error
 }
 

@@ -225,6 +225,8 @@ func main() {
 		CaseReviewSubmitService:     caseReviewSubmitSvc,
 		CaseReviewAttachmentService: caseReviewAttachmentSvc,
 		TagService:                  tagSvc,
+		ExecutorURL:                 cfg.ExecutorURL,
+		ExecutorAPIKey:              cfg.ExecutorAPIKey,
 	}, cfg.CORSAllowOrigins)
 
 	server := &http.Server{

@@ -812,6 +812,94 @@ def _mask_input(value: str) -> str:
     return value[:2] + "***" + value[-2:]
 
 
+# ── 用例质量 AI 分析 ──
+
+class TestCaseAnalyzeRequest(BaseModel):
+    title: str = ""
+    precondition: str = ""
+    postcondition: str = ""
+    steps: str = ""  # "操作描述 | 预期结果\n..." 格式
+
+
+_ANALYZE_SYSTEM_PROMPT = """你是一位资深测试工程师，擅长评审测试用例的质量。
+请基于用户提供的测试用例内容，从以下三个维度进行分析，并给出 JSON 格式的结果：
+
+1. coverage（覆盖率分析）：检查测试步骤是否完整覆盖了前置条件和后置条件描述的场景，是否有遗漏的测试路径。给出 score (0-100) 和 issues 列表。
+2. boundary（边界值检查）：检查是否考虑了边界情况、异常路径、极端输入、空值处理等。给出 score (0-100) 和 issues 列表。
+3. quality（综合质量评分）：综合评估用例标题清晰度、步骤描述完整性、预期结果明确性。给出 score (0-100) 和 suggestions 列表。
+
+严格按以下 JSON 格式返回，不要包含任何其他文字：
+{
+  "coverage": { "score": 85, "issues": ["缺少XXX场景的覆盖"] },
+  "boundary": { "score": 70, "issues": ["未考虑空值输入", "缺少超长文本测试"] },
+  "quality": { "score": 80, "suggestions": ["建议细化步骤3的预期结果", "标题可以更具体"] },
+  "summary": "一句话总结该用例的整体质量状况"
+}"""
+
+
+@app.post("/api/testcase/analyze")
+async def analyze_testcase(req: TestCaseAnalyzeRequest):
+    """AI 分析测试用例质量：覆盖率、边界值、综合评分"""
+    from openai import OpenAI
+    from config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+
+    if not OPENAI_API_KEY:
+        return JSONResponse(status_code=500, content={"error": "LLM API key not configured"})
+
+    user_content = f"""请分析以下测试用例：
+
+【标题】{req.title or '(无)'}
+
+【前置条件】
+{req.precondition or '(无)'}
+
+【后置条件】
+{req.postcondition or '(无)'}
+
+【测试步骤】(格式：操作描述 | 预期结果)
+{req.steps or '(无)'}
+"""
+
+    try:
+        kwargs = {"api_key": OPENAI_API_KEY}
+        if OPENAI_BASE_URL:
+            kwargs["base_url"] = OPENAI_BASE_URL
+        client = OpenAI(**kwargs)
+
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": _ANALYZE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.3,
+            max_tokens=1500,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        # 尝试提取 JSON
+        import re
+        json_match = re.search(r'\{[\s\S]*\}', raw)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = json.loads(raw)
+
+        return {"status": "ok", "result": result}
+
+    except json.JSONDecodeError:
+        logger.warning(f"LLM returned non-JSON: {raw[:200]}")
+        return {"status": "ok", "result": {
+            "coverage": {"score": 0, "issues": ["AI 返回格式异常，请重试"]},
+            "boundary": {"score": 0, "issues": []},
+            "quality": {"score": 0, "suggestions": []},
+            "summary": raw[:200],
+        }}
+    except Exception as e:
+        logger.error(f"Testcase analyze failed: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 if __name__ == "__main__":
     logger.info(f"Starting executor service on port {SERVICE_PORT}")
     uvicorn.run(

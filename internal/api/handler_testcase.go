@@ -2,6 +2,11 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -184,12 +189,12 @@ func (a *API) batchDeleteTestCases(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	affected, err := a.testCaseSvc.BatchDelete(c.Request.Context(), projectID, req.IDs)
+	result, err := a.testCaseSvc.BatchDelete(c.Request.Context(), projectID, req.IDs)
 	if err != nil {
 		response.HandleError(c, err)
 		return
 	}
-	response.OK(c, gin.H{"affected": affected})
+	response.OK(c, result)
 }
 
 func (a *API) batchUpdateLevel(c *gin.Context) {
@@ -610,4 +615,72 @@ func (a *API) recoverTestCase(c *gin.Context) {
 		return
 	}
 	response.OK(c, "recovered")
+}
+
+// analyzeTestCase 代理到 Executor 的 AI 用例质量分析接口
+func (a *API) analyzeTestCase(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	tcID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+
+	// 查询用例获取内容
+	tc, err := a.testCaseSvc.FindByID(c.Request.Context(), tcID, projectID)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	if tc == nil {
+		response.Error(c, 404, 404000, "用例不存在")
+		return
+	}
+
+	// 构建 Executor 请求
+	payload := map[string]string{
+		"title":         tc.Title,
+		"precondition":  tc.Precondition,
+		"postcondition": tc.Postcondition,
+		"steps":         tc.Steps,
+	}
+	body, _ := json.Marshal(payload)
+
+	executorURL := strings.TrimRight(a.executorURL, "/") + "/api/testcase/analyze"
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, executorURL, bytes.NewReader(body))
+	if err != nil {
+		response.Error(c, 500, 500000, fmt.Sprintf("构建请求失败: %v", err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if a.executorAPIKey != "" {
+		req.Header.Set("X-API-Key", a.executorAPIKey)
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		response.Error(c, 502, 502000, fmt.Sprintf("AI 服务请求失败: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		response.Error(c, resp.StatusCode, 502000, fmt.Sprintf("AI 服务返回错误: %s", string(respBody)))
+		return
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		response.Error(c, 500, 500000, "解析 AI 响应失败")
+		return
+	}
+	response.OK(c, result)
 }

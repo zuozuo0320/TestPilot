@@ -109,7 +109,18 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 	return &entity, nil
 }
 
-// ListPaged 鍒嗛〉鏌ヨ鐢ㄤ緥
+// FindByID 根据 ID 查询单个用例
+func (s *TestCaseService) FindByID(ctx context.Context, testCaseID, projectID uint) (*model.TestCase, error) {
+	tc, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
+	if err != nil {
+		return nil, ErrInternal(CodeInternal, err)
+	}
+	if tc == nil {
+		return nil, ErrTestCaseNotFound
+	}
+	return tc, nil
+}
+
 // ListPaged 分页查询用例
 func (s *TestCaseService) ListPaged(ctx context.Context, projectID uint, filter repository.TestCaseFilter) ([]repository.TestCaseListItem, int64, error) {
 	items, total, err := s.testCaseRepo.ListPaged(ctx, projectID, filter)
@@ -267,8 +278,18 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 	return updated, nil
 }
 
-// Delete 删除用例
+// Delete 删除用例（仅草稿可删除）
 func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint) error {
+	tc, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
+	if err != nil {
+		return ErrInternal(CodeInternal, err)
+	}
+	if tc == nil {
+		return ErrTestCaseNotFound
+	}
+	if tc.Status != model.TestCaseStatusDraft {
+		return ErrBadRequest(CodeParamsError, "仅草稿状态的用例可以删除")
+	}
 	rows, err := s.testCaseRepo.Delete(ctx, testCaseID, projectID)
 	if err != nil {
 		return ErrInternal(CodeInternal, err)
@@ -283,20 +304,27 @@ func (s *TestCaseService) Delete(ctx context.Context, projectID, testCaseID uint
 	return nil
 }
 
-// BatchDelete 批量删除用例
-func (s *TestCaseService) BatchDelete(ctx context.Context, projectID uint, ids []uint) (int64, error) {
+// BatchDeleteResult 批量删除结果
+type BatchDeleteResult struct {
+	Deleted int64 `json:"deleted"`
+	Skipped int64 `json:"skipped"`
+}
+
+// BatchDelete 批量删除用例（仅删除草稿状态，返回跳过数量）
+func (s *TestCaseService) BatchDelete(ctx context.Context, projectID uint, ids []uint) (*BatchDeleteResult, error) {
 	if len(ids) == 0 {
-		return 0, ErrBadRequest(CodeParamsError, "no IDs provided")
+		return nil, ErrBadRequest(CodeParamsError, "no IDs provided")
 	}
-	affected, err := s.testCaseRepo.BatchDelete(ctx, projectID, ids)
+	affected, err := s.testCaseRepo.BatchDeleteDraftOnly(ctx, projectID, ids)
 	if err != nil {
-		return affected, err
+		return nil, ErrInternal(CodeInternal, err)
 	}
-	// 清理标签关联
-	if s.tagRepo != nil && len(ids) > 0 {
+	skipped := int64(len(ids)) - affected
+	// 清理标签关联（对所有提交的 ID 清理，已删除的才会命中）
+	if s.tagRepo != nil && affected > 0 {
 		_ = s.tagRepo.DeleteRelsByTestCaseIDs(ctx, nil, ids)
 	}
-	return affected, nil
+	return &BatchDeleteResult{Deleted: affected, Skipped: skipped}, nil
 }
 
 // BatchUpdateLevel 鎵归噺淇敼绛夌骇
