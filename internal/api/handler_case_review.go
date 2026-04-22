@@ -147,6 +147,31 @@ func (a *API) listReviews(c *gin.Context) {
 	})
 }
 
+// @Summary      获取评审流程汇总
+// @Description  返回项目内评审计划按状态分桶计数以及"我待评审项数"，供评审流程页顶部卡片与徽标使用。与分页无关，始终是项目级全局数字。
+// @Tags         CaseReview
+// @Produce      json
+// @Param        projectID path int true "项目 ID"
+// @Success      200 {object} response.Response{data=service.ReviewSummary}
+// @Failure      403 {object} response.Response
+// @Router       /projects/{projectID}/case-reviews/summary [get]
+func (a *API) getReviewSummary(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	summary, err := a.caseReviewSvc.GetReviewSummary(c.Request.Context(), projectID, user.ID)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, summary)
+}
+
 // @Summary 创建评审计划
 // @Description 在指定项目下创建新的评审计划，并关联初始用例
 // @Tags CaseReview
@@ -648,9 +673,8 @@ func (a *API) batchReviewItems(c *gin.Context) {
 	if !a.requireProjectAccess(c, user, projectID) {
 		return
 	}
-	if !requireRole(c, user, model.GlobalRoleManager, model.GlobalRoleReviewer) {
-		return
-	}
+	// 提交评审权限不基于全局角色，而由 Service 层按每个 item 校验
+	// 用户是否被指派为此评审项的评审人（见 case_review_submit_service.go）
 	reviewID, ok := parseUintParam(c, "reviewID")
 	if !ok {
 		return
@@ -695,9 +719,8 @@ func (a *API) submitItemReview(c *gin.Context) {
 	if !a.requireProjectAccess(c, user, projectID) {
 		return
 	}
-	if !requireRole(c, user, model.GlobalRoleManager, model.GlobalRoleReviewer) {
-		return
-	}
+	// 提交评审权限不基于全局角色，而由 Service 层按此评审项校验
+	// 用户是否被指派为本项的指定评审人（见 case_review_submit_service.go:102-106）
 	reviewID, ok := parseUintParam(c, "reviewID")
 	if !ok {
 		return

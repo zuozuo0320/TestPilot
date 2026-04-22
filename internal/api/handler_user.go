@@ -99,6 +99,55 @@ func (a *API) listUsers(c *gin.Context) {
 	response.OK(c, result)
 }
 
+// userLookupResp 用户检索接口返回结构体（仅暴露公开基础字段）。
+// 用途：评审人、被指派人等下拉选择场景；不含角色、项目归属、启用状态等敏感信息。
+type userLookupResp struct {
+	ID     uint   `json:"id"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Avatar string `json:"avatar"`
+}
+
+// listUsersLookup 获取可选用户列表（所有认证用户可访问）。
+// 相比 listUsers 不返回角色/项目归属等敏感信息，且仅返回已启用用户。
+// 用于测试工程师等非管理角色在创建评审、指派任务时选择协作对象。
+//
+// @Summary      查询可选用户列表（轻量版）
+// @Description  所有认证用户可调用，用于评审人/被指派人等下拉选择。仅返回已启用用户的 id/name/email/avatar。
+// @Tags         User
+// @Produce      json
+// @Param        keyword query string false "姓名或邮箱模糊搜索"
+// @Success      200 {object} response.Response{data=[]userLookupResp}
+// @Failure      401 {object} response.Response
+// @Router       /users/lookup [get]
+func (a *API) listUsersLookup(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// 组装筛选条件：仅返回已启用用户，避免把离职/禁用账号作为可选项
+	filter := repository.UserListFilter{
+		Keyword: strings.TrimSpace(c.Query("keyword")),
+		Status:  "active",
+	}
+
+	users, err := a.userSvc.ListFiltered(ctx, filter)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+
+	// 投影为最小字段，严禁透出 password_hash/role/deleted_at 等敏感信息
+	result := make([]userLookupResp, 0, len(users))
+	for _, u := range users {
+		result = append(result, userLookupResp{
+			ID:     u.ID,
+			Name:   u.Name,
+			Email:  u.Email,
+			Avatar: u.Avatar,
+		})
+	}
+	response.OK(c, result)
+}
+
 // createUser 创建用户（仅 admin）
 // 请求体需包含初始密码，密码须满足复杂度规则
 func (a *API) createUser(c *gin.Context) {

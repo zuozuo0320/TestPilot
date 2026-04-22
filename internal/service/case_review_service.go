@@ -156,6 +156,43 @@ func (s *CaseReviewService) GetReview(ctx context.Context, projectID, reviewID u
 	return review, nil
 }
 
+// ReviewSummary 评审计划项目维度汇总。
+// 用于评审流程页顶部卡片以及"我评审的"徽标，字段均为项目级全局数字，
+// 与分页列表无关。
+type ReviewSummary struct {
+	TotalPlans      int64 `json:"total_plans"`       // 全部计划（不含已软删除）
+	NotStartedPlans int64 `json:"not_started_plans"` // 未开始
+	InProgressPlans int64 `json:"in_progress_plans"` // 进行中
+	CompletedPlans  int64 `json:"completed_plans"`   // 已完成
+	ClosedPlans     int64 `json:"closed_plans"`      // 已关闭
+	MyPendingItems  int64 `json:"my_pending_items"`  // 当前用户待评审项数
+}
+
+// GetReviewSummary 获取项目级评审汇总信息，供页面顶部卡片与徽标消费。
+// 参数:
+//   - ctx:       请求上下文
+//   - projectID: 项目 ID（用于权限与范围过滤）
+//   - userID:    当前登录用户 ID（用于计算"我待评审"口径）
+func (s *CaseReviewService) GetReviewSummary(ctx context.Context, projectID, userID uint) (*ReviewSummary, error) {
+	byStatus, err := s.reviewRepo.CountReviewsByStatus(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	myPending, err := s.reviewRepo.CountMyPendingReviewItems(ctx, projectID, userID)
+	if err != nil {
+		return nil, err
+	}
+	summary := &ReviewSummary{
+		NotStartedPlans: byStatus[model.ReviewPlanStatusNotStarted],
+		InProgressPlans: byStatus[model.ReviewPlanStatusInProgress],
+		CompletedPlans:  byStatus[model.ReviewPlanStatusCompleted],
+		ClosedPlans:     byStatus[model.ReviewPlanStatusClosed],
+		MyPendingItems:  myPending,
+	}
+	summary.TotalPlans = summary.NotStartedPlans + summary.InProgressPlans + summary.CompletedPlans + summary.ClosedPlans
+	return summary, nil
+}
+
 // ListReviews 列表查询
 func (s *CaseReviewService) ListReviews(ctx context.Context, projectID, currentUserID uint, f repository.CaseReviewFilter) ([]model.CaseReview, int64, error) {
 	reviews, total, err := s.reviewRepo.ListReviews(ctx, projectID, currentUserID, f)

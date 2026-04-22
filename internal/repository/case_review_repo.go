@@ -56,7 +56,7 @@ type CaseReviewRepository interface {
 	DeleteItems(ctx context.Context, tx *gorm.DB, reviewID uint, itemIDs []uint) error
 	DeleteItemsByReviewID(ctx context.Context, tx *gorm.DB, reviewID uint) error
 	HasActiveReviewForCase(ctx context.Context, projectID, testcaseID uint, excludeReviewID uint) (bool, error)
-	FindNextPendingItem(ctx context.Context, reviewID, currentItemID uint) (*model.CaseReviewItem, error)
+	FindNextPendingItem(ctx context.Context, tx *gorm.DB, reviewID, currentItemID uint) (*model.CaseReviewItem, error)
 	CountItemsByOwnership(ctx context.Context, tx *gorm.DB, reviewID, projectID uint, itemIDs []uint) (int64, error)
 
 	// ── 评审人分配 ──
@@ -71,6 +71,13 @@ type CaseReviewRepository interface {
 
 	// ── 统计重算 ──
 	RecalcReviewStats(ctx context.Context, tx *gorm.DB, reviewID uint) error
+
+	// ── 项目级汇总统计（评审页顶部卡片） ──
+	// CountReviewsByStatus 按 status 分组统计评审计划数量，返回 status → count 映射
+	CountReviewsByStatus(ctx context.Context, projectID uint) (map[string]int64, error)
+	// CountMyPendingReviewItems 统计当前用户待处理的评审项数量
+	// 口径：该用户被指派为评审人、自身状态为 pending、所属评审计划为未开始 / 进行中
+	CountMyPendingReviewItems(ctx context.Context, projectID, userID uint) (int64, error)
 }
 
 // ─── Implementation ───
@@ -287,9 +294,12 @@ func (r *caseReviewRepo) HasActiveReviewForCase(ctx context.Context, projectID, 
 	return count > 0, err
 }
 
-func (r *caseReviewRepo) FindNextPendingItem(ctx context.Context, reviewID, currentItemID uint) (*model.CaseReviewItem, error) {
+// FindNextPendingItem 查找下一条待评审的评审项。
+// 必须接受 tx 参数，通过 getDB(tx) 选择事务或主连接；
+// 否则在事务回调内调用会命中 SQLite 单写者死锁（参见规范 §2.2）。
+func (r *caseReviewRepo) FindNextPendingItem(ctx context.Context, tx *gorm.DB, reviewID, currentItemID uint) (*model.CaseReviewItem, error) {
 	var item model.CaseReviewItem
-	err := r.db.WithContext(ctx).
+	err := r.getDB(tx).WithContext(ctx).
 		Where("review_id = ? AND id > ? AND final_result = ?", reviewID, currentItemID, model.ReviewResultPending).
 		Order("sort_order ASC, id ASC").
 		First(&item).Error
@@ -426,4 +436,50 @@ func (r *caseReviewRepo) RecalcReviewStats(ctx context.Context, tx *gorm.DB, rev
 		"pass_rate":          passRate,
 		"status":             planStatus,
 	}).Error
+}
+
+// CountReviewsByStatus 按 status 分组统计项目内评审计划数量。
+// 用于评审流程页顶部汇总卡片（P0 #1），返回 status → count 映射；
+// 缺失的 status 由上层默认视为 0。
+func (r *caseReviewRepo) CountReviewsByStatus(ctx context.Context, projectID uint) (map[string]int64, error) {
+	type row struct {
+		Status string
+		Cnt    int64
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).
+		Model(&model.CaseReview{}).
+		Select("status, COUNT(*) AS cnt").
+		Where("project_id = ?", projectID).
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		result[row.Status] = row.Cnt
+	}
+	return result, nil
+}
+
+// CountMyPendingReviewItems 统计当前用户待处理的评审项数量。
+// 口径：
+//   - 该用户被指派为评审人 (case_review_item_reviewers)
+//   - 评审人自身状态为 pending（尚未提交）
+//   - 所属评审计划状态为未开始 / 进行中（关闭 / 已完成的计划不计）
+//
+// 用途：评审流程页 "我评审的" tab 未读徽标（P1 #7）。
+func (r *caseReviewRepo) CountMyPendingReviewItems(ctx context.Context, projectID, userID uint) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.CaseReviewItemReviewer{}).
+		Joins("JOIN case_review_items ON case_review_items.id = case_review_item_reviewers.review_item_id").
+		Joins("JOIN case_reviews ON case_reviews.id = case_review_item_reviewers.review_id").
+		Where("case_review_item_reviewers.reviewer_id = ?", userID).
+		Where("case_review_item_reviewers.review_status = ?", model.ReviewerStatusPending).
+		Where("case_review_items.project_id = ?", projectID).
+		Where("case_reviews.status IN ?", []string{model.ReviewPlanStatusNotStarted, model.ReviewPlanStatusInProgress}).
+		Count(&count).Error
+	return count, err
 }

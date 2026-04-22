@@ -129,6 +129,9 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 
 	// ---- 用户管理 ----
 	auth.GET("/users", a.listUsers)
+	// 轻量查询接口：仅返回 id/name/email/avatar，所有认证用户可用
+	// 用于评审人、被指派人等下拉选择；必须注册在 /users/:userID 之前以避免路由冲突
+	auth.GET("/users/lookup", a.listUsersLookup)
 	auth.POST("/users", a.createUser)
 	auth.PUT("/users/:userID", a.updateUser)
 	auth.DELETE("/users/:userID", a.deleteUser)
@@ -242,6 +245,9 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	// ---- 用例评审 ----
 	caseReview := auth.Group("/projects/:projectID/case-reviews")
 	caseReview.GET("", a.listReviews)
+	// 汇总接口：项目级全局统计（计划分状态计数 + 我待评审数）
+	// 必须注册在 /:reviewID 之前，防止被动态路由吞掉
+	caseReview.GET("/summary", a.getReviewSummary)
 	caseReview.POST("", a.createReview)
 	caseReview.GET("/:reviewID", a.getReview)
 	caseReview.PUT("/:reviewID", a.updateReview)

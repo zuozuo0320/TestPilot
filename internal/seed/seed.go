@@ -209,7 +209,7 @@ func ensureBootstrapData(db *gorm.DB) (*bootstrapSeedContext, error) {
 	roles := []model.Role{
 		{Name: model.GlobalRoleAdmin, DisplayName: "系统管理员", Description: "全权限，系统配置、用户/角色/项目管理"},
 		{Name: model.GlobalRoleManager, DisplayName: "项目管理员", Description: "项目级管理权限，可管理项目成员、配置模块"},
-		{Name: model.GlobalRoleTester, DisplayName: "测试工程师", Description: "用例增删改、执行、提交缺陷、导入导出"},
+		{Name: model.GlobalRoleTester, DisplayName: "测试工程师", Description: "用例增删改、执行、缺陷管理、参与评审、导入导出"},
 		{Name: model.GlobalRoleReviewer, DisplayName: "评审员", Description: "评审用例、修改评审状态，不可增删用例"},
 		{Name: model.GlobalRoleDeveloper, DisplayName: "开发工程师", Description: "查看用例+缺陷，认领/修复缺陷，不可改用例"},
 		{Name: model.GlobalRoleReadonly, DisplayName: "只读访客", Description: "纯查看，不可修改任何数据"},

@@ -177,8 +177,8 @@ func (s *CaseReviewSubmitService) SubmitReview(ctx context.Context, projectID, r
 		output.TestCaseStatus = tcStatus
 		output.TestCaseReviewResult = tcReviewResult
 
-		// 9. 查找下一条待评审项
-		nextItem, err := s.reviewRepo.FindNextPendingItem(ctx, reviewID, itemID)
+		// 9. 查找下一条待评审项 —— 必须传 tx，否则在事务内会命中 SQLite 单写者死锁（§2.2）
+		nextItem, err := s.reviewRepo.FindNextPendingItem(ctx, tx, reviewID, itemID)
 		if err == nil && nextItem != nil {
 			output.NextPendingItemID = &nextItem.ID
 		}
