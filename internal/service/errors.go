@@ -104,6 +104,20 @@ const (
 	CodeReviewEmptyReviewer = 120107
 	CodeReviewItemMismatch  = 120108
 
+	// 12-v0.2: 用例评审 v0.2 角色 / AI 门禁 / 缺陷
+	CodeReviewSelfReviewForbidden = 120201 // 禁止自审 Author 不能评审自己的用例
+	CodeReviewPrimaryRequired     = 120202 // 必须指定唯一 Primary
+	CodeReviewPrimaryDuplicate    = 120203 // 同一评审项存在多个 Primary
+	CodeReviewRoleInvalid         = 120204 // review_role 枚举非法
+	CodeReviewSeverityInvalid     = 120205 // severity 枚举非法
+	CodeReviewModeratorInvalid    = 120206 // Moderator 不在项目成员列表或不存在
+	CodeReviewAIGateStatusInvalid = 120207 // ai_gate_status 非法
+	CodeReviewDefectNotFound      = 120208 // Action Item 不存在
+	CodeReviewDefectStatusInvalid = 120209 // Action Item 状态不允许本次变更
+	CodeReviewCriticalOpen        = 120210 // 存在未 resolve 的 critical 缺陷，禁止重提
+	CodeReviewRerunForbidden      = 120211 // 评审项当前状态不允许触发 AI 门禁 rerun
+	CodeReviewFeedbackInvalid     = 120212 // AI feedback 格式非法
+
 	// 13: 标签管理模块
 	CodeTagNotFound          = 130001
 	CodeTagNameDuplicate     = 130002

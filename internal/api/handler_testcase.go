@@ -116,6 +116,28 @@ func (a *API) listTestCases(c *gin.Context) {
 	response.Page(c, items, total, filter.Page, filter.PageSize)
 }
 
+// getTestCase 按 ID 查询单条用例（用于评审详情页回显 steps/precondition/postcondition）
+func (a *API) getTestCase(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	tcID, ok := parseUintParam(c, "testcaseID")
+	if !ok {
+		return
+	}
+	tc, err := a.testCaseSvc.FindByID(c.Request.Context(), tcID, projectID)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, tc)
+}
+
 func (a *API) updateTestCase(c *gin.Context) {
 	user := currentUser(c)
 	projectID, ok := parseUintParam(c, "projectID")

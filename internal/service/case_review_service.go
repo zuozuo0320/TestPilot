@@ -19,6 +19,7 @@ type CaseReviewService struct {
 	recordRepo     repository.CaseReviewRecordRepository
 	testCaseRepo   repository.TestCaseRepository
 	userRepo       repository.UserRepository
+	projectRepo    repository.ProjectRepository // v0.2：读项目 settings.allow_self_review
 	attachmentRepo repository.CaseReviewAttachmentRepository
 	txMgr          *repository.TxManager
 	logger         *slog.Logger
@@ -30,6 +31,7 @@ func NewCaseReviewService(
 	recordRepo repository.CaseReviewRecordRepository,
 	testCaseRepo repository.TestCaseRepository,
 	userRepo repository.UserRepository,
+	projectRepo repository.ProjectRepository,
 	attachmentRepo repository.CaseReviewAttachmentRepository,
 	txMgr *repository.TxManager,
 	logger *slog.Logger,
@@ -39,9 +41,10 @@ func NewCaseReviewService(
 		recordRepo:     recordRepo,
 		testCaseRepo:   testCaseRepo,
 		userRepo:       userRepo,
+		projectRepo:    projectRepo,
 		attachmentRepo: attachmentRepo,
 		txMgr:          txMgr,
-		logger:         logger,
+		logger:         logger.With("module", "case_review"),
 	}
 }
 
@@ -58,6 +61,16 @@ type CreateReviewInput struct {
 	Description        string
 	TestCaseIDs        []uint
 	AutoSubmit         bool
+
+	// v0.2 新增字段
+	// ModeratorID Moderator 用户 ID；0 表示使用创建者作为默认。
+	ModeratorID uint
+	// AIEnabled AI 门禁总开关；nil 表示默认开启。
+	AIEnabled *bool
+	// DefaultPrimaryReviewerID 默认主评人。不传时取 DefaultReviewerIDs[0]（兼容）。
+	DefaultPrimaryReviewerID uint
+	// DefaultShadowReviewerIDs 默认陪审列表。不传时取 DefaultReviewerIDs[1:]（兼容）。
+	DefaultShadowReviewerIDs []uint
 }
 
 // UpdateReviewInput 更新评审计划输入
@@ -80,7 +93,28 @@ type LinkItemsInput struct {
 // LinkItemEntry 关联用例条目
 type LinkItemEntry struct {
 	TestCaseID  uint
-	ReviewerIDs []uint
+	ReviewerIDs []uint // 兼容字段：小于 v0.2 时直接用，首元素当 Primary
+
+	// v0.2 新增字段
+	PrimaryReviewerID uint   // 本条目的主评人 ID，0 则回退 ReviewerIDs[0]
+	ShadowReviewerIDs []uint // 本条目的陪审列表
+}
+
+// ReviewerAssignment v0.2 评审角色分配结果：同项唯一 Primary + 任意 Shadow
+type ReviewerAssignment struct {
+	PrimaryID uint
+	ShadowIDs []uint
+}
+
+// AllReviewerIDs 返回 Primary+Shadow 全部评审人 ID（保留顺序）
+func (a ReviewerAssignment) AllReviewerIDs() []uint {
+	if a.PrimaryID == 0 && len(a.ShadowIDs) == 0 {
+		return nil
+	}
+	out := make([]uint, 0, 1+len(a.ShadowIDs))
+	out = append(out, a.PrimaryID)
+	out = append(out, a.ShadowIDs...)
+	return out
 }
 
 // CopyReviewInput 复制评审计划输入
@@ -93,6 +127,7 @@ type CopyReviewInput struct {
 // ─── 评审计划 CRUD ───
 
 // CreateReview 创建评审计划（事务：创建计划 + 关联用例 + 分配评审人 + 可选提审）
+// v0.2：默认填充 Moderator=userID、AIEnabled=true；支持 Primary+Shadow 角色分配。
 func (s *CaseReviewService) CreateReview(ctx context.Context, projectID, userID uint, input CreateReviewInput) (*model.CaseReview, error) {
 	s.logger.Info("create review start", "project_id", projectID, "user_id", userID, "name", input.Name)
 
@@ -102,15 +137,37 @@ func (s *CaseReviewService) CreateReview(ctx context.Context, projectID, userID 
 	if input.ReviewMode != model.ReviewModeSingle && input.ReviewMode != model.ReviewModeParallel {
 		return nil, ErrBadRequest(CodeReviewStatusInvalid, "评审模式必须为 single 或 parallel")
 	}
-	if len(input.DefaultReviewerIDs) == 0 {
-		return nil, ErrBadRequest(CodeReviewEmptyReviewer, "未配置评审人")
+
+	// v0.2：派生默认 assignment。若 Primary/Shadow 显式给出则优先；否则回退到 DefaultReviewerIDs。
+	defaultAssign, err := deriveAssignment(input.DefaultPrimaryReviewerID, input.DefaultShadowReviewerIDs, input.DefaultReviewerIDs)
+	if err != nil {
+		return nil, err
+	}
+	// 兼容：DefaultReviewerIDs 作为序列化字段继续保留；未传时也从 assignment 回填一份
+	allReviewerIDs := input.DefaultReviewerIDs
+	if len(allReviewerIDs) == 0 {
+		allReviewerIDs = defaultAssign.AllReviewerIDs()
+	}
+	defReviewerJSON, _ := json.Marshal(allReviewerIDs)
+
+	// v0.2：Moderator 与 AIEnabled 默认值
+	moderatorID := input.ModeratorID
+	if moderatorID == 0 {
+		moderatorID = userID
+	}
+	aiEnabled := true
+	if input.AIEnabled != nil {
+		aiEnabled = *input.AIEnabled
 	}
 
-	// 序列化默认评审人
-	defReviewerJSON, _ := json.Marshal(input.DefaultReviewerIDs)
+	// 读项目 settings，判断是否允许自审
+	settings, err := s.loadProjectSettings(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
 
 	var review model.CaseReview
-	err := s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
+	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		review = model.CaseReview{
 			ProjectID:          projectID,
 			Name:               input.Name,
@@ -121,6 +178,8 @@ func (s *CaseReviewService) CreateReview(ctx context.Context, projectID, userID 
 			PlannedStartAt:     input.PlannedStartAt,
 			PlannedEndAt:       input.PlannedEndAt,
 			DefaultReviewerIDs: string(defReviewerJSON),
+			ModeratorID:        moderatorID,
+			AIEnabled:          aiEnabled,
 			CreatedBy:          userID,
 			UpdatedBy:          userID,
 		}
@@ -130,7 +189,7 @@ func (s *CaseReviewService) CreateReview(ctx context.Context, projectID, userID 
 
 		// 关联用例
 		if len(input.TestCaseIDs) > 0 {
-			if err := s.linkItemsInternal(ctx, tx, review.ID, projectID, userID, input.DefaultReviewerIDs, input.TestCaseIDs, input.AutoSubmit); err != nil {
+			if err := s.linkItemsInternal(ctx, tx, review.ID, projectID, userID, defaultAssign, input.TestCaseIDs, settings.AllowSelfReview, input.AutoSubmit); err != nil {
 				return err
 			}
 			// 重算统计
@@ -142,7 +201,7 @@ func (s *CaseReviewService) CreateReview(ctx context.Context, projectID, userID 
 		s.logger.Error("create review failed", "error", err)
 		return nil, err
 	}
-	s.logger.Info("create review success", "review_id", review.ID)
+	s.logger.Info("create review success", "review_id", review.ID, "moderator_id", moderatorID, "ai_enabled", aiEnabled)
 	return &review, nil
 }
 
@@ -385,12 +444,17 @@ func (s *CaseReviewService) CopyReview(ctx context.Context, projectID, reviewID,
 					if !ok {
 						continue
 					}
+					role := sr.ReviewRole
+					if role == "" {
+						role = model.ReviewRolePrimary
+					}
 					newReviewers = append(newReviewers, model.CaseReviewItemReviewer{
 						ReviewID:     newReview.ID,
 						ReviewItemID: newItemID,
 						ProjectID:    projectID,
 						ReviewerID:   sr.ReviewerID,
 						ReviewStatus: model.ReviewerStatusPending,
+						ReviewRole:   role,
 					})
 				}
 				if len(newReviewers) > 0 {
@@ -412,6 +476,7 @@ func (s *CaseReviewService) CopyReview(ctx context.Context, projectID, reviewID,
 // ─── 评审项管理 ───
 
 // LinkItems 关联用例到评审计划
+// v0.2：支持按条目指定 Primary/Shadow；未指定时回退到计划默认评审人。
 func (s *CaseReviewService) LinkItems(ctx context.Context, projectID, reviewID, userID uint, input LinkItemsInput) error {
 	s.logger.Info("link items start", "project_id", projectID, "review_id", reviewID, "user_id", userID, "count", len(input.Items))
 	review, err := s.reviewRepo.GetReviewByID(ctx, reviewID, projectID)
@@ -422,26 +487,26 @@ func (s *CaseReviewService) LinkItems(ctx context.Context, projectID, reviewID, 
 		return ErrBadRequest(CodeReviewStatusInvalid, "当前计划状态不允许关联用例")
 	}
 
-	reviewerMap := make(map[uint][]uint)
-	for _, item := range input.Items {
-		if len(item.ReviewerIDs) > 0 {
-			reviewerMap[item.TestCaseID] = item.ReviewerIDs
-		}
-	}
-
-	// [FIX #4] 从持久化的 default_reviewer_ids JSON 字段中获取默认评审人
+	// 计划默认评审人：v0.2 把 DefaultReviewerIDs 首个作为 Primary，其余 Shadow
 	defaultReviewerIDs := review.ParseDefaultReviewerIDs()
+	defaultAssign, _ := deriveAssignment(0, nil, defaultReviewerIDs) // 缺失 Primary 时后面再拦截
+
+	settings, err := s.loadProjectSettings(ctx, projectID)
+	if err != nil {
+		return err
+	}
 
 	return s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		for _, entry := range input.Items {
-			rIDs := reviewerMap[entry.TestCaseID]
-			if len(rIDs) == 0 {
-				rIDs = defaultReviewerIDs
+			assign, err := deriveAssignment(entry.PrimaryReviewerID, entry.ShadowReviewerIDs, entry.ReviewerIDs)
+			if err != nil {
+				// 条目未指定则尝试使用计划默认
+				if defaultAssign.PrimaryID == 0 {
+					return ErrBadRequest(CodeReviewEmptyReviewer, "请先为评审计划配置默认评审人或为本次用例指定评审人")
+				}
+				assign = defaultAssign
 			}
-			if len(rIDs) == 0 {
-				return ErrBadRequest(CodeReviewEmptyReviewer, "请先为评审计划配置默认评审人或为本次用例指定评审人")
-			}
-			if err := s.linkItemsInternal(ctx, tx, reviewID, projectID, userID, rIDs, []uint{entry.TestCaseID}, input.AutoSubmit); err != nil {
+			if err := s.linkItemsInternal(ctx, tx, reviewID, projectID, userID, assign, []uint{entry.TestCaseID}, settings.AllowSelfReview, input.AutoSubmit); err != nil {
 				return err
 			}
 		}
@@ -502,10 +567,17 @@ func (s *CaseReviewService) ListItems(ctx context.Context, projectID, reviewID u
 }
 
 // BatchReassign 批量修改评审人
+// v0.2：对外签名不变；首元素自动视作 Primary，其余 Shadow；同时做自审校验。
 func (s *CaseReviewService) BatchReassign(ctx context.Context, projectID, reviewID, userID uint, itemIDs []uint, reviewerIDs []uint) error {
 	s.logger.Info("batch reassign start", "review_id", reviewID, "item_count", len(itemIDs), "reviewer_count", len(reviewerIDs))
 	if len(reviewerIDs) == 0 {
 		return ErrBadRequest(CodeReviewEmptyReviewer, "评审人不能为空")
+	}
+
+	// v0.2：派生 Primary/Shadow 角色
+	assign, err := deriveAssignment(0, nil, reviewerIDs)
+	if err != nil {
+		return err
 	}
 
 	// 状态守卫：已关闭/已完成的计划不可修改
@@ -522,6 +594,12 @@ func (s *CaseReviewService) BatchReassign(ctx context.Context, projectID, review
 		return err
 	}
 
+	// v0.2：读项目 settings 判断是否允许自审
+	settings, err := s.loadProjectSettings(ctx, projectID)
+	if err != nil {
+		return err
+	}
+
 	return s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		// 删除旧评审人并重建
 		if err := s.reviewRepo.DeleteReviewersByItemIDs(ctx, tx, itemIDs); err != nil {
@@ -533,15 +611,16 @@ func (s *CaseReviewService) BatchReassign(ctx context.Context, projectID, review
 			if err != nil {
 				return ErrNotFound(CodeReviewItemNotFound, "评审项不存在")
 			}
-			for _, rID := range reviewerIDs {
-				newReviewers = append(newReviewers, model.CaseReviewItemReviewer{
-					ReviewID:     reviewID,
-					ReviewItemID: itemID,
-					ProjectID:    projectID,
-					ReviewerID:   rID,
-					ReviewStatus: model.ReviewerStatusPending,
-				})
+			// v0.2 自审校验
+			if !settings.AllowSelfReview {
+				tc, tcErr := s.testCaseRepo.FindByID(ctx, item.TestCaseID, projectID)
+				if tcErr == nil {
+					if selfErr := ensureNoSelfReview(tc, assign); selfErr != nil {
+						return selfErr
+					}
+				}
 			}
+			newReviewers = append(newReviewers, buildReviewerRows(reviewID, itemID, projectID, assign)...)
 			// [FIX #5] 如果该评审项已完成，重置并回写主表
 			if item.FinalResult != model.ReviewResultPending {
 				if err := s.reviewRepo.UpdateItem(ctx, tx, item, map[string]any{
@@ -619,10 +698,22 @@ func (s *CaseReviewService) BatchResubmit(ctx context.Context, projectID, review
 // ─── 内部方法 ───
 
 // linkItemsInternal 内部方法：批量关联用例到评审计划
-func (s *CaseReviewService) linkItemsInternal(ctx context.Context, tx *gorm.DB, reviewID, projectID, userID uint, reviewerIDs, testcaseIDs []uint, autoSubmit bool) error {
+// v0.2：接受 ReviewerAssignment 明确 Primary/Shadow 角色；allowSelfReview 控制自审豁免。
+func (s *CaseReviewService) linkItemsInternal(
+	ctx context.Context,
+	tx *gorm.DB,
+	reviewID, projectID, userID uint,
+	assign ReviewerAssignment,
+	testcaseIDs []uint,
+	allowSelfReview bool,
+	autoSubmit bool,
+) error {
+	if assign.PrimaryID == 0 {
+		return ErrBadRequest(CodeReviewPrimaryRequired, "必须指定唯一主评人")
+	}
 	for _, tcID := range testcaseIDs {
-		// 冲突检测
-		conflict, _ := s.reviewRepo.HasActiveReviewForCase(ctx, projectID, tcID, reviewID)
+		// 冲突检测：注意必须传 tx，避免 SQLite 单写者死锁
+		conflict, _ := s.reviewRepo.HasActiveReviewForCase(ctx, tx, projectID, tcID, reviewID)
 		if conflict {
 			return ErrBadRequest(CodeReviewStatusInvalid, "用例已存在进行中的评审计划")
 		}
@@ -631,6 +722,13 @@ func (s *CaseReviewService) linkItemsInternal(ctx context.Context, tx *gorm.DB, 
 		tc, err := s.testCaseRepo.FindByID(ctx, tcID, projectID)
 		if err != nil {
 			return ErrNotFound(CodeReviewItemNotFound, "测试用例不存在")
+		}
+
+		// v0.2：自审校验 —— Author 不能出现在 Primary/Shadow 名单（除非 AllowSelfReview=true）
+		if !allowSelfReview {
+			if err := ensureNoSelfReview(tc, assign); err != nil {
+				return err
+			}
 		}
 
 		// [FIX #1] 使用指针传入 Create，GORM 回填 ID 到同一变量
@@ -644,6 +742,7 @@ func (s *CaseReviewService) linkItemsInternal(ctx context.Context, tx *gorm.DB, 
 			ReviewStatus:    model.ReviewItemStatusPending,
 			FinalResult:     model.ReviewResultPending,
 			CurrentRoundNo:  1,
+			AIGateStatus:    model.AIGateStatusNotStarted, // v0.2：门禁状态独立字段
 			CreatedBy:       userID,
 			UpdatedBy:       userID,
 		}
@@ -652,17 +751,8 @@ func (s *CaseReviewService) linkItemsInternal(ctx context.Context, tx *gorm.DB, 
 		}
 		// item.ID 此时已被 GORM 回填为真实数据库 ID
 
-		// 分配评审人
-		var reviewers []model.CaseReviewItemReviewer
-		for _, rID := range reviewerIDs {
-			reviewers = append(reviewers, model.CaseReviewItemReviewer{
-				ReviewID:     reviewID,
-				ReviewItemID: item.ID,
-				ProjectID:    projectID,
-				ReviewerID:   rID,
-				ReviewStatus: model.ReviewerStatusPending,
-			})
-		}
+		// 分配评审人（区分 Primary / Shadow 角色）
+		reviewers := buildReviewerRows(reviewID, item.ID, projectID, assign)
 		if err := s.reviewRepo.CreateReviewers(ctx, tx, reviewers); err != nil {
 			return err
 		}
@@ -675,6 +765,107 @@ func (s *CaseReviewService) linkItemsInternal(ctx context.Context, tx *gorm.DB, 
 		}
 	}
 	return nil
+}
+
+// buildReviewerRows 按 assignment 构造评审人记录，写入 ReviewRole
+func buildReviewerRows(reviewID, itemID, projectID uint, assign ReviewerAssignment) []model.CaseReviewItemReviewer {
+	rows := make([]model.CaseReviewItemReviewer, 0, 1+len(assign.ShadowIDs))
+	rows = append(rows, model.CaseReviewItemReviewer{
+		ReviewID:     reviewID,
+		ReviewItemID: itemID,
+		ProjectID:    projectID,
+		ReviewerID:   assign.PrimaryID,
+		ReviewStatus: model.ReviewerStatusPending,
+		ReviewRole:   model.ReviewRolePrimary,
+	})
+	seen := map[uint]struct{}{assign.PrimaryID: {}}
+	for _, sid := range assign.ShadowIDs {
+		if sid == 0 {
+			continue
+		}
+		if _, dup := seen[sid]; dup {
+			continue
+		}
+		seen[sid] = struct{}{}
+		rows = append(rows, model.CaseReviewItemReviewer{
+			ReviewID:     reviewID,
+			ReviewItemID: itemID,
+			ProjectID:    projectID,
+			ReviewerID:   sid,
+			ReviewStatus: model.ReviewerStatusPending,
+			ReviewRole:   model.ReviewRoleShadow,
+		})
+	}
+	return rows
+}
+
+// ensureNoSelfReview 禁止 Author 评审自己用例（Primary 与 Shadow 均不允许）
+func ensureNoSelfReview(tc *model.TestCase, assign ReviewerAssignment) error {
+	if tc == nil || tc.CreatedBy == 0 {
+		return nil
+	}
+	if assign.PrimaryID == tc.CreatedBy {
+		return ErrBadRequest(CodeReviewSelfReviewForbidden, "主评人不能是用例作者（allow_self_review 未开启）")
+	}
+	for _, sid := range assign.ShadowIDs {
+		if sid == tc.CreatedBy {
+			return ErrBadRequest(CodeReviewSelfReviewForbidden, "陪审不能包含用例作者（allow_self_review 未开启）")
+		}
+	}
+	return nil
+}
+
+// deriveAssignment 从请求参数派生 ReviewerAssignment：
+//   - 优先采用 primaryID + shadowIDs 显式指定
+//   - 否则回退到 legacyIDs：首元素当 Primary，其余当 Shadow
+//   - Primary 为 0 时返回空 assignment + 错误，由上层决定是否回退默认值
+func deriveAssignment(primaryID uint, shadowIDs, legacyIDs []uint) (ReviewerAssignment, error) {
+	if primaryID != 0 {
+		return ReviewerAssignment{
+			PrimaryID: primaryID,
+			ShadowIDs: dedupExclude(shadowIDs, primaryID),
+		}, nil
+	}
+	if len(legacyIDs) == 0 {
+		return ReviewerAssignment{}, ErrBadRequest(CodeReviewPrimaryRequired, "必须指定唯一主评人")
+	}
+	pid := legacyIDs[0]
+	return ReviewerAssignment{
+		PrimaryID: pid,
+		ShadowIDs: dedupExclude(legacyIDs[1:], pid),
+	}, nil
+}
+
+// dedupExclude 去重并排除 exclude 值，返回去重后的新切片（不原地修改）
+func dedupExclude(ids []uint, exclude uint) []uint {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]uint, 0, len(ids))
+	seen := map[uint]struct{}{}
+	for _, id := range ids {
+		if id == 0 || id == exclude {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// loadProjectSettings 读取项目 settings；项目不存在时回退到默认（禁止自审）
+func (s *CaseReviewService) loadProjectSettings(ctx context.Context, projectID uint) (model.ProjectSettings, error) {
+	if s.projectRepo == nil {
+		return model.ProjectSettings{}, nil
+	}
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil {
+		return model.ProjectSettings{}, ErrNotFound(CodeProjectNotFound, "项目不存在")
+	}
+	return project.ParseSettings(), nil
 }
 
 // validateItemOwnership [FIX #2] 校验 itemIDs 全部属于指定的 reviewID + projectID

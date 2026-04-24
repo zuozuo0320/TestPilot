@@ -1,0 +1,96 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="900" fill="#0F1118"/>
+  <rect x="0" y="0" width="1600" height="56" fill="#0B0D13"/>
+  <text x="26" y="35" fill="#FFFFFF" font-size="22" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">Aisight</text>
+  <rect x="18" y="74" width="216" height="806" rx="14" fill="#141722" stroke="#232736"/>
+  <rect x="28" y="92" width="196" height="58" rx="12" fill="#1A1F2B" stroke="#2B3143"/>
+  <rect x="40" y="105" width="34" height="34" rx="9" fill="#7C3AED"/>
+  <text x="86" y="126" fill="#EAE6FF" font-size="17" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">FObrain</text>
+  <text x="198" y="127" fill="#7C839C" font-size="18" font-family="Segoe UI Symbol, Microsoft YaHei, sans-serif">⌄</text>
+
+  <text x="40" y="192" fill="#7A8198" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">系统管理</text>
+  <rect x="28" y="208" width="196" height="44" rx="10" fill="#1A1F2B"/>
+  <text x="50" y="236" fill="#E6E0FF" font-size="15" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="600">标签管理</text>
+  <text x="50" y="280" fill="#8D94AB" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">用户管理</text>
+  <text x="50" y="314" fill="#8D94AB" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">角色管理</text>
+  <text x="50" y="348" fill="#8D94AB" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">项目管理</text>
+
+  <rect x="258" y="74" width="1324" height="806" rx="16" fill="#14161E" stroke="#212533"/>
+  <text x="286" y="132" fill="#FFFFFF" font-size="26" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">标签管理</text>
+  <text x="286" y="162" fill="#8087A0" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">统一管理当前项目下的测试标签，支持颜色、描述、关联用例统计与快速复用。</text>
+
+  <rect x="286" y="192" width="1012" height="52" rx="12" fill="#171A24" stroke="#262B3B"/>
+  <text x="314" y="224" fill="#5F667D" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">搜索标签名称 / 描述</text>
+  <rect x="1316" y="192" width="118" height="52" rx="12" fill="#181C26" stroke="#2A2F40"/>
+  <text x="1343" y="224" fill="#DAD5FF" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">按创建时间</text>
+  <rect x="1452" y="192" width="102" height="52" rx="12" fill="#7C3AED"/>
+  <text x="1480" y="224" fill="#FFFFFF" font-size="15" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">新建标签</text>
+
+  <rect x="286" y="272" width="132" height="94" rx="14" fill="#181B25" stroke="#272C3D"/>
+  <text x="312" y="304" fill="#8087A0" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">标签总数</text>
+  <text x="312" y="344" fill="#FFFFFF" font-size="32" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">24</text>
+
+  <rect x="434" y="272" width="132" height="94" rx="14" fill="#181B25" stroke="#272C3D"/>
+  <text x="460" y="304" fill="#8087A0" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">已使用标签</text>
+  <text x="460" y="344" fill="#FFFFFF" font-size="32" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">18</text>
+
+  <rect x="582" y="272" width="132" height="94" rx="14" fill="#181B25" stroke="#272C3D"/>
+  <text x="608" y="304" fill="#8087A0" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">未使用标签</text>
+  <text x="608" y="344" fill="#FFFFFF" font-size="32" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">6</text>
+
+  <rect x="286" y="392" width="1268" height="434" rx="16" fill="#171A24" stroke="#262B3B"/>
+  <text x="316" y="428" fill="#FFFFFF" font-size="17" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">标签列表</text>
+
+  <rect x="306" y="452" width="1228" height="52" rx="10" fill="#141822"/>
+  <text x="334" y="485" fill="#7E85A0" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">颜色</text>
+  <text x="410" y="485" fill="#7E85A0" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">标签名称</text>
+  <text x="620" y="485" fill="#7E85A0" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">描述</text>
+  <text x="960" y="485" fill="#7E85A0" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">关联用例数</text>
+  <text x="1110" y="485" fill="#7E85A0" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">创建人</text>
+  <text x="1270" y="485" fill="#7E85A0" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">创建时间</text>
+  <text x="1440" y="485" fill="#7E85A0" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">操作</text>
+
+  <rect x="306" y="520" width="1228" height="74" rx="12" fill="#161A24"/>
+  <circle cx="348" cy="557" r="12" fill="#EF4444"/>
+  <text x="410" y="556" fill="#FFFFFF" font-size="15" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">冒烟测试</text>
+  <text x="410" y="577" fill="#8B92A8" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">系统核心路径回归时优先执行</text>
+  <text x="620" y="561" fill="#B8BED1" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">登录、首页、关键提交流程的最小验证集</text>
+  <text x="996" y="561" fill="#E9E5FF" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">15</text>
+  <circle cx="1122" cy="557" r="10" fill="#3B82F6"/>
+  <text x="1142" y="561" fill="#EDE9FF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">超级管理员</text>
+  <text x="1270" y="561" fill="#B8BED1" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">2026-04-13 10:00</text>
+  <text x="1442" y="561" fill="#D5C7FF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">编辑</text>
+  <text x="1488" y="561" fill="#8E95AD" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">删除</text>
+
+  <rect x="306" y="606" width="1228" height="74" rx="12" fill="#161A24"/>
+  <circle cx="348" cy="643" r="12" fill="#10B981"/>
+  <text x="410" y="642" fill="#FFFFFF" font-size="15" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">回归测试</text>
+  <text x="410" y="663" fill="#8B92A8" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">版本发布前执行</text>
+  <text x="620" y="647" fill="#B8BED1" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">中高优先级用例的版本回归验证标签</text>
+  <text x="996" y="647" fill="#E9E5FF" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">9</text>
+  <circle cx="1122" cy="643" r="10" fill="#8B5CF6"/>
+  <text x="1142" y="647" fill="#EDE9FF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">Mia Manager</text>
+  <text x="1270" y="647" fill="#B8BED1" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">2026-04-12 18:25</text>
+  <text x="1442" y="647" fill="#D5C7FF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">编辑</text>
+  <text x="1488" y="647" fill="#8E95AD" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">删除</text>
+
+  <rect x="306" y="692" width="1228" height="74" rx="12" fill="#161A24"/>
+  <circle cx="348" cy="729" r="12" fill="#06B6D4"/>
+  <text x="410" y="728" fill="#FFFFFF" font-size="15" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">资产扫描</text>
+  <text x="410" y="749" fill="#8B92A8" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">测试智编场景标签</text>
+  <text x="620" y="733" fill="#B8BED1" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">关联资产探知任务、端口扫描与工作台流程</text>
+  <text x="996" y="733" fill="#E9E5FF" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">4</text>
+  <circle cx="1122" cy="729" r="10" fill="#3B82F6"/>
+  <text x="1142" y="733" fill="#EDE9FF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">超级管理员</text>
+  <text x="1270" y="733" fill="#B8BED1" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">2026-04-11 14:08</text>
+  <text x="1442" y="733" fill="#D5C7FF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">编辑</text>
+  <text x="1488" y="733" fill="#8E95AD" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">删除</text>
+
+  <rect x="1364" y="842" width="46" height="32" rx="8" fill="#1A1E2A"/>
+  <text x="1380" y="863" fill="#8F96AD" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">上一页</text>
+  <rect x="1422" y="842" width="32" height="32" rx="8" fill="#7C3AED"/>
+  <text x="1433" y="863" fill="#FFFFFF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">1</text>
+  <rect x="1466" y="842" width="32" height="32" rx="8" fill="#1A1E2A"/>
+  <text x="1477" y="863" fill="#8F96AD" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">2</text>
+  <text x="1512" y="863" fill="#8F96AD" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">共 24 条</text>
+</svg>

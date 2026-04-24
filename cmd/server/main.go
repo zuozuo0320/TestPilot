@@ -174,6 +174,7 @@ func main() {
 	caseReviewRepo := repository.NewCaseReviewRepo(db)
 	caseReviewRecordRepo := repository.NewCaseReviewRecordRepo(db)
 	caseReviewAttachmentRepo := repository.NewCaseReviewAttachmentRepo(db)
+	caseReviewDefectRepo := repository.NewCaseReviewDefectRepo(db)
 	tagRepo := repository.NewTagRepo(db)
 
 	// 2. Service 层
@@ -195,9 +196,11 @@ func main() {
 	attachmentSvc := service.NewAttachmentService(attachmentRepo, "./uploads")
 	xlsxSvc := service.NewXlsxService(testCaseRepo, tagRepo)
 	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
-	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, userRepo, caseReviewAttachmentRepo, txMgr, logger)
+	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, userRepo, projectRepo, caseReviewAttachmentRepo, txMgr, logger)
 	caseReviewSubmitSvc := service.NewCaseReviewSubmitService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, txMgr, logger)
 	caseReviewAttachmentSvc := service.NewCaseReviewAttachmentService(caseReviewAttachmentRepo, caseReviewRepo, "./uploads")
+	caseReviewDefectSvc := service.NewCaseReviewDefectService(caseReviewDefectRepo, caseReviewRepo, testCaseRepo, txMgr, logger)
+	caseReviewRuleSvc := service.NewCaseReviewRuleService(caseReviewRepo, testCaseRepo, caseReviewDefectRepo, caseReviewDefectSvc, txMgr, logger)
 	tagSvc := service.NewTagService(tagRepo, auditRepo, txMgr, logger)
 
 	// 3. API 层
@@ -224,6 +227,8 @@ func main() {
 		CaseReviewService:           caseReviewSvc,
 		CaseReviewSubmitService:     caseReviewSubmitSvc,
 		CaseReviewAttachmentService: caseReviewAttachmentSvc,
+		CaseReviewRuleService:       caseReviewRuleSvc,
+		CaseReviewDefectService:     caseReviewDefectSvc,
 		TagService:                  tagSvc,
 		ExecutorURL:                 cfg.ExecutorURL,
 		ExecutorAPIKey:              cfg.ExecutorAPIKey,

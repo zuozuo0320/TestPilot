@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"math"
 	"strings"
@@ -506,4 +507,49 @@ func (s *ProjectService) resolveOwnerID(ctx context.Context, actorID uint, owner
 		return 0, ErrBadRequest(CodeProjectOwnerInvalid, "负责人用户已禁用")
 	}
 	return targetOwnerID, nil
+}
+
+// UpdateProjectSettingsInput 更新项目 settings 的输入
+// 字段使用指针以区分"未传"与"显式关闭"。
+type UpdateProjectSettingsInput struct {
+	// AllowSelfReview 是否允许 Author 评审自己的用例（默认 false）。nil 表示不修改。
+	AllowSelfReview *bool
+}
+
+// GetSettings 读取项目 settings。项目不存在时返回 CodeProjectNotFound。
+// Settings 为空串时返回零值（即默认配置）。
+func (s *ProjectService) GetSettings(ctx context.Context, projectID uint) (model.ProjectSettings, error) {
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil {
+		return model.ProjectSettings{}, ErrNotFound(CodeProjectNotFound, "项目不存在")
+	}
+	return project.ParseSettings(), nil
+}
+
+// UpdateSettings 局部更新项目 settings（目前仅支持 AllowSelfReview）。
+// 返回写入后的完整 settings，方便前端即时回显。
+func (s *ProjectService) UpdateSettings(ctx context.Context, projectID, actorID uint, input UpdateProjectSettingsInput) (model.ProjectSettings, error) {
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil {
+		return model.ProjectSettings{}, ErrNotFound(CodeProjectNotFound, "项目不存在")
+	}
+	settings := project.ParseSettings()
+	if input.AllowSelfReview != nil {
+		settings.AllowSelfReview = *input.AllowSelfReview
+	}
+
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return model.ProjectSettings{}, ErrInternal(CodeInternal, err)
+	}
+	if err := s.projectRepo.Updates(ctx, project.ID, map[string]any{"settings": string(raw)}); err != nil {
+		s.logger.Error("update project settings failed", "project_id", projectID, "actor_id", actorID, "error", err)
+		return model.ProjectSettings{}, ErrInternal(CodeInternal, err)
+	}
+	s.logger.Info("project settings updated",
+		"project_id", projectID,
+		"actor_id", actorID,
+		"allow_self_review", settings.AllowSelfReview,
+	)
+	return settings, nil
 }

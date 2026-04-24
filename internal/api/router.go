@@ -36,6 +36,8 @@ type Dependencies struct {
 	CaseReviewService           *service.CaseReviewService
 	CaseReviewSubmitService     *service.CaseReviewSubmitService
 	CaseReviewAttachmentService *service.CaseReviewAttachmentService
+	CaseReviewRuleService       *service.CaseReviewRuleService
+	CaseReviewDefectService     *service.CaseReviewDefectService
 	TagService                  *service.TagService
 	ExecutorURL                 string
 	ExecutorAPIKey              string
@@ -66,6 +68,8 @@ type API struct {
 	caseReviewSvc           *service.CaseReviewService
 	caseReviewSubmitSvc     *service.CaseReviewSubmitService
 	caseReviewAttachmentSvc *service.CaseReviewAttachmentService
+	caseReviewRuleSvc       *service.CaseReviewRuleService
+	caseReviewDefectSvc     *service.CaseReviewDefectService
 	tagSvc                  *service.TagService
 	executorURL             string
 	executorAPIKey          string
@@ -97,6 +101,8 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		caseReviewSvc:           deps.CaseReviewService,
 		caseReviewSubmitSvc:     deps.CaseReviewSubmitService,
 		caseReviewAttachmentSvc: deps.CaseReviewAttachmentService,
+		caseReviewRuleSvc:       deps.CaseReviewRuleService,
+		caseReviewDefectSvc:     deps.CaseReviewDefectService,
 		tagSvc:                  deps.TagService,
 		executorURL:             deps.ExecutorURL,
 		executorAPIKey:          deps.ExecutorAPIKey,
@@ -176,6 +182,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.POST("/projects/:projectID/testcases/import", a.importTestCasesXlsx)
 	auth.POST("/projects/:projectID/testcases/:testcaseID/analyze", a.analyzeTestCase)
 	// Parameterized :testcaseID routes
+	auth.GET("/projects/:projectID/testcases/:testcaseID", a.getTestCase)
 	auth.PUT("/projects/:projectID/testcases/:testcaseID", a.updateTestCase)
 	auth.DELETE("/projects/:projectID/testcases/:testcaseID", a.deleteTestCase)
 	// Single testcase operations (Use singular "testcase" to avoid Gin POST conflict with static "testcases" batch routes)
@@ -265,6 +272,24 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	// 评审附件：item 维度
 	caseReview.POST("/:reviewID/items/:itemID/attachments", a.uploadReviewAttachment)
 	caseReview.GET("/:reviewID/items/:itemID/attachments", a.listReviewAttachments)
+
+	// ---- 用例评审 v0.2 新增 ----
+	// 规则引擎：单项 rerun / 计划级一键全量
+	caseReview.POST("/:reviewID/items/:itemID/ai-gate/rerun", a.rerunAIGate)
+	caseReview.POST("/:reviewID/ai-gate/run-all", a.runPlanAIGate)
+	// Action Items：单项列表 / 计划级列表（跨项聚合）
+	caseReview.GET("/:reviewID/items/:itemID/defects", a.listItemDefects)
+	caseReview.GET("/:reviewID/defects", a.listReviewDefects)
+
+	// Action Items 单项操作（与 case-reviews 并列，使用独立路径便于前端直链）
+	auth.GET("/projects/:projectID/case-review-defects/:defectID", a.getDefect)
+	auth.POST("/projects/:projectID/case-review-defects/:defectID/resolve", a.resolveDefect)
+	auth.POST("/projects/:projectID/case-review-defects/:defectID/dispute", a.disputeDefect)
+	auth.POST("/projects/:projectID/case-review-defects/:defectID/reopen", a.reopenDefect)
+
+	// 项目 settings（v0.2 引入，用于开关自审等）
+	auth.GET("/projects/:projectID/settings", a.getProjectSettings)
+	auth.PUT("/projects/:projectID/settings", a.updateProjectSettings)
 
 	// 评审附件：按用例聚合（只读镜像）+ 附件自身操作
 	auth.GET("/projects/:projectID/testcases/:testcaseID/review-attachments", a.listReviewAttachmentsByTestCase)

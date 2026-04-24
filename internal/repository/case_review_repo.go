@@ -55,7 +55,7 @@ type CaseReviewRepository interface {
 	UpdateItem(ctx context.Context, tx *gorm.DB, item *model.CaseReviewItem, fields map[string]any) error
 	DeleteItems(ctx context.Context, tx *gorm.DB, reviewID uint, itemIDs []uint) error
 	DeleteItemsByReviewID(ctx context.Context, tx *gorm.DB, reviewID uint) error
-	HasActiveReviewForCase(ctx context.Context, projectID, testcaseID uint, excludeReviewID uint) (bool, error)
+	HasActiveReviewForCase(ctx context.Context, tx *gorm.DB, projectID, testcaseID uint, excludeReviewID uint) (bool, error)
 	FindNextPendingItem(ctx context.Context, tx *gorm.DB, reviewID, currentItemID uint) (*model.CaseReviewItem, error)
 	CountItemsByOwnership(ctx context.Context, tx *gorm.DB, reviewID, projectID uint, itemIDs []uint) (int64, error)
 
@@ -280,9 +280,12 @@ func (r *caseReviewRepo) DeleteItemsByReviewID(ctx context.Context, tx *gorm.DB,
 	return r.getDB(tx).WithContext(ctx).Where("review_id = ?", reviewID).Delete(&model.CaseReviewItem{}).Error
 }
 
-func (r *caseReviewRepo) HasActiveReviewForCase(ctx context.Context, projectID, testcaseID, excludeReviewID uint) (bool, error) {
+// HasActiveReviewForCase 查询指定用例是否有进行中的评审。
+// 必须接受 tx：在 TxManager.WithTx 回调内调用时，用主连接会命中 SQLite
+// 单写者死锁（参见后端规范 §2.2 事务铁律）。
+func (r *caseReviewRepo) HasActiveReviewForCase(ctx context.Context, tx *gorm.DB, projectID, testcaseID, excludeReviewID uint) (bool, error) {
 	var count int64
-	q := r.db.WithContext(ctx).
+	q := r.getDB(tx).WithContext(ctx).
 		Model(&model.CaseReviewItem{}).
 		Joins("JOIN case_reviews ON case_reviews.id = case_review_items.review_id").
 		Where("case_review_items.project_id = ? AND case_review_items.test_case_id = ?", projectID, testcaseID).

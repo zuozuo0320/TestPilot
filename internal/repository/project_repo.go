@@ -21,6 +21,7 @@ const projectSelectColumns = `
 	projects.avatar,
 	projects.owner_id,
 	projects.status,
+	projects.settings,
 	COALESCE(owner_user.name, '') AS owner_name,
 	COALESCE(owner_user.avatar, '') AS owner_avatar,
 	projects.archived_at,
@@ -170,6 +171,7 @@ type projectRow struct {
 	OwnerName             string          `gorm:"column:owner_name"`
 	OwnerAvatar           string          `gorm:"column:owner_avatar"`
 	Status                string          `gorm:"column:status"`
+	Settings              string          `gorm:"column:settings"`
 	ArchivedAt            *time.Time      `gorm:"column:archived_at"`
 	CreatedAt             time.Time       `gorm:"column:created_at"`
 	UpdatedAt             time.Time       `gorm:"column:updated_at"`
@@ -197,6 +199,7 @@ func (pr projectRow) toModel() model.Project {
 		OwnerName:             pr.OwnerName,
 		OwnerAvatar:           pr.OwnerAvatar,
 		Status:                pr.Status,
+		Settings:              pr.Settings,
 		ArchivedAt:            pr.ArchivedAt,
 		CreatedAt:             pr.CreatedAt,
 		UpdatedAt:             pr.UpdatedAt,

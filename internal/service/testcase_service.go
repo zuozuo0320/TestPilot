@@ -3,9 +3,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"gorm.io/gorm"
 
 	"testpilot/internal/model"
 	"testpilot/internal/repository"
@@ -109,10 +112,13 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 	return &entity, nil
 }
 
-// FindByID 根据 ID 查询单个用例
+// FindByID 根据 ID 查询单个用例；找不到时返回 404 而非 500。
 func (s *TestCaseService) FindByID(ctx context.Context, testCaseID, projectID uint) (*model.TestCase, error) {
 	tc, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTestCaseNotFound
+		}
 		return nil, ErrInternal(CodeInternal, err)
 	}
 	if tc == nil {

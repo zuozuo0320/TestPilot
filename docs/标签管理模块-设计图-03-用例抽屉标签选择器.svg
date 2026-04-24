@@ -1,0 +1,60 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="900" fill="#0F1118"/>
+  <rect x="0" y="0" width="1600" height="56" fill="#0B0D13"/>
+  <rect x="0" y="56" width="1600" height="844" fill="#0F1118"/>
+
+  <rect x="0" y="56" width="980" height="844" fill="rgba(10,12,18,0.58)"/>
+  <rect x="980" y="56" width="620" height="844" fill="#171A24" stroke="#2B3040"/>
+
+  <text x="1018" y="108" fill="#FFFFFF" font-size="26" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">编辑测试用例</text>
+  <text x="1018" y="138" fill="#838AA2" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">在现有用例抽屉中增加结构化标签选择器，支持搜索、快速新建与多选绑定。</text>
+  <text x="1560" y="110" fill="#7C839C" font-size="24" font-family="Segoe UI Symbol, Microsoft YaHei, sans-serif">×</text>
+
+  <text x="1018" y="196" fill="#D9D3FA" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="600">用例名称</text>
+  <rect x="1018" y="210" width="542" height="48" rx="10" fill="#121620" stroke="#2E3548"/>
+  <text x="1040" y="240" fill="#FFFFFF" font-size="15" font-family="Segoe UI, Microsoft YaHei, sans-serif">全端口扫描-极速扫描任务</text>
+
+  <text x="1018" y="294" fill="#D9D3FA" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="600">标签</text>
+
+  <rect x="1018" y="310" width="542" height="214" rx="14" fill="#121620" stroke="#2E3548"/>
+  <text x="1040" y="340" fill="#8A91A8" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">已选标签</text>
+
+  <rect x="1040" y="356" width="96" height="30" rx="15" fill="rgba(239,68,68,0.16)" stroke="#F78A8A"/>
+  <text x="1070" y="375" fill="#FFE2E2" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">冒烟测试</text>
+  <text x="1118" y="375" fill="#FFE2E2" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">×</text>
+
+  <rect x="1146" y="356" width="92" height="30" rx="15" fill="rgba(16,185,129,0.16)" stroke="#7FE3BB"/>
+  <text x="1176" y="375" fill="#E4FFF4" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">回归测试</text>
+  <text x="1220" y="375" fill="#E4FFF4" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">×</text>
+
+  <text x="1040" y="422" fill="#8A91A8" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">搜索或创建</text>
+  <rect x="1040" y="438" width="498" height="44" rx="10" fill="#171B26" stroke="#424A62"/>
+  <text x="1060" y="466" fill="#5F667D" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">搜索标签名称，或输入新标签名后回车</text>
+
+  <rect x="1040" y="490" width="498" height="148" rx="12" fill="#181C27" stroke="#2E3548"/>
+  <circle cx="1064" cy="520" r="8" fill="#EF4444"/>
+  <text x="1084" y="525" fill="#FFFFFF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">冒烟测试</text>
+  <text x="1498" y="525" fill="#A0A7BC" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">已选中</text>
+
+  <circle cx="1064" cy="560" r="8" fill="#10B981"/>
+  <text x="1084" y="565" fill="#FFFFFF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">回归测试</text>
+  <text x="1488" y="565" fill="#7C839C" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">点击选中</text>
+
+  <circle cx="1064" cy="600" r="8" fill="#06B6D4"/>
+  <text x="1084" y="605" fill="#FFFFFF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">资产扫描</text>
+  <text x="1498" y="605" fill="#7C839C" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">点击选中</text>
+
+  <rect x="1040" y="648" width="498" height="40" rx="10" fill="rgba(124,58,237,0.14)" stroke="#7C3AED"/>
+  <text x="1060" y="673" fill="#DCCFFF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">+ 创建标签 “安全测试”</text>
+
+  <text x="1040" y="718" fill="#8A91A8" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">规则提示</text>
+  <text x="1040" y="742" fill="#C9CEE0" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">• 最多绑定 10 个标签</text>
+  <text x="1040" y="764" fill="#C9CEE0" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">• 重名标签自动选中已有项</text>
+  <text x="1040" y="786" fill="#C9CEE0" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">• 快速新建默认颜色为 #3B82F6</text>
+
+  <line x1="980" y1="828" x2="1600" y2="828" stroke="#262B3B"/>
+  <rect x="1340" y="842" width="92" height="40" rx="10" fill="#1E2330" stroke="#30374A"/>
+  <text x="1372" y="868" fill="#C7CDE1" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">取消</text>
+  <rect x="1444" y="842" width="116" height="40" rx="10" fill="#7C3AED"/>
+  <text x="1476" y="868" fill="#FFFFFF" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">保存用例</text>
+</svg>

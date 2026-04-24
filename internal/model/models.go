@@ -74,6 +74,32 @@ const (
 	ReviewerStatusPending  = "pending"  // 尚未评审
 	ReviewerStatusReviewed = "reviewed" // 已提交评审
 
+	// ---- 用例评审 v0.2：评审角色（计划内的职责划分） ----
+	ReviewRolePrimary = "primary" // 主评人，一个评审项只有一个，决策者
+	ReviewRoleShadow  = "shadow"  // 陪审，多人，仅建议不决策
+
+	// ---- 用例评审 v0.2：AI 门禁状态 ----
+	AIGateStatusNotStarted = "not_started" // 未开始（默认）
+	AIGateStatusRunning    = "running"     // 运行中
+	AIGateStatusPassed     = "passed"      // 通过
+	AIGateStatusFailed     = "failed"      // 未通过
+	AIGateStatusTimeout    = "timeout"     // 超时
+	AIGateStatusBypassed   = "bypassed"    // 已绕过（Moderator 手动放行）
+
+	// ---- 用例评审 v0.2：评审严重度（驳回/缺陷用） ----
+	ReviewSeverityCritical = "critical" // 严重，阻断性缺陷
+	ReviewSeverityMajor    = "major"    // 重要，需修复
+	ReviewSeverityMinor    = "minor"    // 轻微，提示性
+
+	// ---- 用例评审 v0.2：Action Items 状态 ----
+	DefectStatusOpen     = "open"     // 待处理
+	DefectStatusResolved = "resolved" // 已解决
+	DefectStatusDisputed = "disputed" // 异议中
+
+	// ---- 用例评审 v0.2：Action Items 来源 ----
+	DefectSourcePrimaryReview = "primary_review" // 主评人驳回生成
+	DefectSourceAIGate        = "ai_gate"        // AI 门禁失败生成
+
 	// ---- 用例主表 review_result 回写文案 ----
 	CaseReviewResultNotReviewed = "未评审"
 	CaseReviewResultPending     = "待评审"
@@ -156,8 +182,12 @@ type Project struct {
 	OwnerID     uint       `json:"owner_id" gorm:"not null;default:0;index"`
 	Status      string     `json:"status" gorm:"size:20;not null;default:active;index"`
 	ArchivedAt  *time.Time `json:"archived_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// Settings 项目级 JSON 配置（v0.2 用例评审引入）。
+	// 约定结构：{"allow_self_review": bool, "terminology": map[string]string}。
+	// 默认为空串，Service 层用 ParseSettings / UpdateSettings 封装读写。
+	Settings  string    `json:"-" gorm:"type:text"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// 虚拟字段（不入库，API 返回时填充）
 	MemberCount           int64    `json:"member_count" gorm:"-"`            // 虚拟字段：SQL 子查询填充
@@ -195,26 +225,26 @@ type Requirement struct {
 }
 
 type TestCase struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
-	ProjectID    uint      `json:"project_id" gorm:"not null;index;uniqueIndex:idx_project_testcase_title"`
-	Title        string    `json:"title" gorm:"size:200;not null;uniqueIndex:idx_project_testcase_title"`
-	Status       string    `json:"status" gorm:"size:20;not null;default:draft;index"` // 草稿(draft)/待评审(pending)/已生效(active)/已废弃(discarded)
-	Version      string    `json:"version" gorm:"size:20;not null;default:V1"`         // 版本号，如 V1, V2...
-	Level        string    `json:"level" gorm:"size:10;default:P1"`
-	ReviewResult string    `json:"review_result" gorm:"size:30;default:未评审"`
-	ExecResult   string    `json:"exec_result" gorm:"size:30;default:未执行"`
-	ModuleID     uint      `json:"module_id" gorm:"default:0;index"`
-	ModulePath   string    `json:"module_path" gorm:"size:255;default:/"`
-	Tags         string    `json:"tags" gorm:"size:500"`
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	ProjectID     uint      `json:"project_id" gorm:"not null;index;uniqueIndex:idx_project_testcase_title"`
+	Title         string    `json:"title" gorm:"size:200;not null;uniqueIndex:idx_project_testcase_title"`
+	Status        string    `json:"status" gorm:"size:20;not null;default:draft;index"` // 草稿(draft)/待评审(pending)/已生效(active)/已废弃(discarded)
+	Version       string    `json:"version" gorm:"size:20;not null;default:V1"`         // 版本号，如 V1, V2...
+	Level         string    `json:"level" gorm:"size:10;default:P1"`
+	ReviewResult  string    `json:"review_result" gorm:"size:30;default:未评审"`
+	ExecResult    string    `json:"exec_result" gorm:"size:30;default:未执行"`
+	ModuleID      uint      `json:"module_id" gorm:"default:0;index"`
+	ModulePath    string    `json:"module_path" gorm:"size:255;default:/"`
+	Tags          string    `json:"tags" gorm:"size:500"`
 	Precondition  string    `json:"precondition" gorm:"type:text"`
 	Postcondition string    `json:"postcondition" gorm:"type:text"`
 	Steps         string    `json:"steps" gorm:"type:text"`
-	Remark       string    `json:"remark" gorm:"type:text"`
-	Priority     string    `json:"priority" gorm:"size:20;default:medium"`
-	CreatedBy    uint      `json:"created_by" gorm:"not null;default:0;index"`
-	UpdatedBy    uint      `json:"updated_by" gorm:"not null;default:0;index"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	Remark        string    `json:"remark" gorm:"type:text"`
+	Priority      string    `json:"priority" gorm:"size:20;default:medium"`
+	CreatedBy     uint      `json:"created_by" gorm:"not null;default:0;index"`
+	UpdatedBy     uint      `json:"updated_by" gorm:"not null;default:0;index"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 
 	// 虚拟字段：用例评审模块关联摘要
 	InReview           bool   `json:"in_review" gorm:"-"`
@@ -344,10 +374,17 @@ type CaseReview struct {
 	RejectedCount      int        `json:"rejected_count" gorm:"not null;default:0"`
 	NeedsUpdateCount   int        `json:"needs_update_count" gorm:"not null;default:0"`
 	PassRate           float64    `json:"pass_rate" gorm:"type:decimal(5,2);not null;default:0"`
-	CreatedBy          uint       `json:"created_by" gorm:"not null;index:idx_cr_proj_creator"`
-	UpdatedBy          uint       `json:"updated_by" gorm:"not null"`
-	CreatedAt          time.Time  `json:"created_at" gorm:"index:idx_cr_proj_created"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+
+	// v0.2 新增字段：Moderator 与 AI 门禁总开关
+	// ModeratorID 评审组织者。老数据回填为 created_by（迁移脚本负责），空值 0 表示未指定。
+	ModeratorID uint `json:"moderator_id" gorm:"not null;default:0;index:idx_cr_proj_moderator"`
+	// AIEnabled 是否启用 AI 门禁预审。关闭后新评审项直接进入 pending_assign。
+	AIEnabled bool `json:"ai_enabled" gorm:"not null;default:true"`
+
+	CreatedBy uint      `json:"created_by" gorm:"not null;index:idx_cr_proj_creator"`
+	UpdatedBy uint      `json:"updated_by" gorm:"not null"`
+	CreatedAt time.Time `json:"created_at" gorm:"index:idx_cr_proj_created"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// 虚拟字段（不入库，API 返回时填充）
 	CreatedByName   string   `json:"created_by_name,omitempty" gorm:"-"`
@@ -366,6 +403,35 @@ func (cr *CaseReview) ParseDefaultReviewerIDs() []uint {
 	return ids
 }
 
+// ProjectSettings 项目级 JSON 配置（v0.2 用例评审引入）。
+// 当前字段仅有 AllowSelfReview，后续可按需扩展 Terminology 等。
+type ProjectSettings struct {
+	// AllowSelfReview 是否允许 Author 评审自己的用例。默认 false（禁止自审）。
+	AllowSelfReview bool `json:"allow_self_review"`
+}
+
+// ParseSettings 解析项目 JSON 配置，空串返回零值（即默认禁止自审）。
+// 解析失败时也返回零值，避免坏数据阻断主流程；上层应观察 slog 告警。
+func (p *Project) ParseSettings() ProjectSettings {
+	var s ProjectSettings
+	if p.Settings == "" {
+		return s
+	}
+	_ = json.Unmarshal([]byte(p.Settings), &s)
+	return s
+}
+
+// EncodeSettings 将配置结构体序列化为 JSON 字符串，写入 Project.Settings。
+// 调用方负责持久化更新。
+func (p *Project) EncodeSettings(s ProjectSettings) error {
+	bs, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	p.Settings = string(bs)
+	return nil
+}
+
 // CaseReviewItem 评审计划-用例关联表
 type CaseReviewItem struct {
 	ID              uint       `json:"id" gorm:"primaryKey"`
@@ -381,10 +447,19 @@ type CaseReviewItem struct {
 	ReviewedAt      *time.Time `json:"reviewed_at"`
 	LatestComment   string     `json:"latest_comment" gorm:"size:1000"`
 	SortOrder       int        `json:"sort_order" gorm:"not null;default:0"`
-	CreatedBy       uint       `json:"created_by" gorm:"not null"`
-	UpdatedBy       uint       `json:"updated_by" gorm:"not null"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at" gorm:"index:idx_ri_review_updated"`
+
+	// v0.2 新增字段：AI 门禁与修订轮次
+	// AIGateStatus 独立于主状态机的 AI 门禁状态，枚举见 AIGateStatus* 常量。
+	AIGateStatus string `json:"ai_gate_status" gorm:"size:16;not null;default:not_started;index:idx_ri_ai_gate"`
+	// AIReportID 最近一次 AI 报告 ID（关联 case_review_ai_reports，Phase 2 接入）。
+	AIReportID uint `json:"ai_report_id" gorm:"default:0"`
+	// RevisionRound 驳回-修改轮次计数。每次被打回 +1，用于二次评审 diff 展示。
+	RevisionRound int `json:"revision_round" gorm:"not null;default:0"`
+
+	CreatedBy uint      `json:"created_by" gorm:"not null"`
+	UpdatedBy uint      `json:"updated_by" gorm:"not null"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" gorm:"index:idx_ri_review_updated"`
 
 	// 虚拟字段
 	Reviewers []CaseReviewItemReviewer `json:"reviewers,omitempty" gorm:"-"`
@@ -392,12 +467,16 @@ type CaseReviewItem struct {
 
 // CaseReviewItemReviewer 评审项-评审人当前分配表
 type CaseReviewItemReviewer struct {
-	ID            uint       `json:"id" gorm:"primaryKey"`
-	ReviewID      uint       `json:"review_id" gorm:"not null;index:idx_ir_review_reviewer"`
-	ReviewItemID  uint       `json:"review_item_id" gorm:"not null;uniqueIndex:uk_item_reviewer;index:idx_ir_item_status"`
-	ProjectID     uint       `json:"project_id" gorm:"not null;index:idx_ir_proj_reviewer"`
-	ReviewerID    uint       `json:"reviewer_id" gorm:"not null;uniqueIndex:uk_item_reviewer;index:idx_ir_proj_reviewer;index:idx_ir_review_reviewer"`
-	ReviewStatus  string     `json:"review_status" gorm:"size:16;not null;default:pending;index:idx_ir_proj_reviewer;index:idx_ir_item_status"`
+	ID           uint   `json:"id" gorm:"primaryKey"`
+	ReviewID     uint   `json:"review_id" gorm:"not null;index:idx_ir_review_reviewer"`
+	ReviewItemID uint   `json:"review_item_id" gorm:"not null;uniqueIndex:uk_item_reviewer;index:idx_ir_item_status;index:idx_ir_item_role"`
+	ProjectID    uint   `json:"project_id" gorm:"not null;index:idx_ir_proj_reviewer"`
+	ReviewerID   uint   `json:"reviewer_id" gorm:"not null;uniqueIndex:uk_item_reviewer;index:idx_ir_proj_reviewer;index:idx_ir_review_reviewer"`
+	ReviewStatus string `json:"review_status" gorm:"size:16;not null;default:pending;index:idx_ir_proj_reviewer;index:idx_ir_item_status"`
+	// v0.2 新增字段：评审角色（primary / shadow）。
+	// 同一评审项内唯一 primary，由 Service 层事务校验（不依赖 DB 部分唯一索引）。
+	// 老数据迁移：review_role = 'primary'（兼容历史单评模式）。
+	ReviewRole    string     `json:"review_role" gorm:"size:16;not null;default:primary;index:idx_ir_item_role"`
 	LatestResult  string     `json:"latest_result" gorm:"size:16"`
 	LatestComment string     `json:"latest_comment" gorm:"size:1000"`
 	ReviewedAt    *time.Time `json:"reviewed_at"`
@@ -410,20 +489,57 @@ type CaseReviewItemReviewer struct {
 
 // CaseReviewRecord 评审记录表（append-only，只新增不更新）
 type CaseReviewRecord struct {
-	ID                         uint      `json:"id" gorm:"primaryKey"`
-	ReviewID                   uint      `json:"review_id" gorm:"not null;index:idx_rr_review"`
-	ReviewItemID               uint      `json:"review_item_id" gorm:"not null;index:idx_rr_item_round"`
-	ProjectID                  uint      `json:"project_id" gorm:"not null;index:idx_rr_proj_reviewer;index:idx_rr_proj_case"`
-	TestCaseID                 uint      `json:"testcase_id" gorm:"not null;index:idx_rr_proj_case"`
-	ReviewerID                 uint      `json:"reviewer_id" gorm:"not null;index:idx_rr_proj_reviewer"`
-	RoundNo                    int       `json:"round_no" gorm:"not null;index:idx_rr_item_round"`
-	Result                     string    `json:"result" gorm:"size:16;not null"`
-	Comment                    string    `json:"comment" gorm:"size:2000"`
-	AggregateResultAfterSubmit string    `json:"aggregate_result_after_submit" gorm:"size:16;not null"`
-	CreatedAt                  time.Time `json:"created_at" gorm:"index:idx_rr_item_round;index:idx_rr_proj_reviewer;index:idx_rr_proj_case;index:idx_rr_review"`
+	ID                         uint   `json:"id" gorm:"primaryKey"`
+	ReviewID                   uint   `json:"review_id" gorm:"not null;index:idx_rr_review"`
+	ReviewItemID               uint   `json:"review_item_id" gorm:"not null;index:idx_rr_item_round"`
+	ProjectID                  uint   `json:"project_id" gorm:"not null;index:idx_rr_proj_reviewer;index:idx_rr_proj_case"`
+	TestCaseID                 uint   `json:"testcase_id" gorm:"not null;index:idx_rr_proj_case"`
+	ReviewerID                 uint   `json:"reviewer_id" gorm:"not null;index:idx_rr_proj_reviewer"`
+	RoundNo                    int    `json:"round_no" gorm:"not null;index:idx_rr_item_round"`
+	Result                     string `json:"result" gorm:"size:16;not null"`
+	Comment                    string `json:"comment" gorm:"size:2000"`
+	AggregateResultAfterSubmit string `json:"aggregate_result_after_submit" gorm:"size:16;not null"`
+
+	// v0.2 新增字段：严重度 + AI 建议采纳反馈
+	// Severity 严重度，驳回 / 需修改时必填，枚举见 ReviewSeverity* 常量；通过时可为空串。
+	Severity string `json:"severity" gorm:"size:16;not null;default:major"`
+	// AIFeedback Primary 对 AI findings 的采纳反馈，JSON 格式：
+	// [{"ai_finding_id": string, "action": "accepted|rejected|unsure"}...]。用于回流 prompt 迭代。
+	AIFeedback string `json:"ai_feedback" gorm:"type:text"`
+
+	CreatedAt time.Time `json:"created_at" gorm:"index:idx_rr_item_round;index:idx_rr_proj_reviewer;index:idx_rr_proj_case;index:idx_rr_review"`
 
 	// 虚拟字段：读模式，不参与 migration，但允许 Scan 回填 reviewer_name 列
 	ReviewerName string `json:"reviewer_name,omitempty" gorm:"->;-:migration"`
+}
+
+// CaseReviewDefect 评审缺陷 / Action Items（v0.2 新增）。
+// 来源有两种：primary_review（主评人驳回生成）和 ai_gate（AI 门禁失败生成）。
+// Author 在列表视图追踪 Action Items。Critical 缺陷未 resolve 不允许重新提交评审项。
+type CaseReviewDefect struct {
+	ID           uint `json:"id" gorm:"primaryKey"`
+	ReviewID     uint `json:"review_id" gorm:"not null;index:idx_crd_review"`
+	ReviewItemID uint `json:"review_item_id" gorm:"not null;index:idx_crd_item_status"`
+	ProjectID    uint `json:"project_id" gorm:"not null;index:idx_crd_proj"`
+	// RecordID 触发本缺陷的评审记录 ID；AI 门禁来源时为 0。
+	RecordID uint `json:"record_id" gorm:"default:0"`
+	// Source 来源：primary_review / ai_gate。
+	Source string `json:"source" gorm:"size:20;not null"`
+	Title  string `json:"title" gorm:"size:200;not null"`
+	// Severity critical / major / minor。Critical 未 resolve 阻止重提。
+	Severity string `json:"severity" gorm:"size:16;not null;default:major"`
+	// Status open / resolved / disputed。
+	Status         string     `json:"status" gorm:"size:20;not null;default:open;index:idx_crd_item_status"`
+	ResolvedBy     uint       `json:"resolved_by" gorm:"default:0;index:idx_crd_resolver"`
+	ResolvedAt     *time.Time `json:"resolved_at"`
+	ResolutionNote string     `json:"resolution_note" gorm:"size:1000"`
+	DisputeReason  string     `json:"dispute_reason" gorm:"size:1000"`
+	CreatedBy      uint       `json:"created_by" gorm:"not null;default:0"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+
+	// 虚拟字段：读模式 JOIN 回填用于 UI 展示
+	ResolvedByName string `json:"resolved_by_name,omitempty" gorm:"->;-:migration"`
 }
 
 // CaseReviewAttachment 评审项附件（独立于用例正式附件）
@@ -490,6 +606,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&CaseReviewItemReviewer{},
 		&CaseReviewRecord{},
 		&CaseReviewAttachment{},
+		&CaseReviewDefect{}, // v0.2 Action Items
 
 		// 标签管理模块
 		&Tag{},

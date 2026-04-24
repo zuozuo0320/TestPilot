@@ -47,6 +47,7 @@ type TestCaseListItem struct {
 	ModulePath         string     `json:"module_path"`
 	Tags               string     `json:"tags"`
 	Precondition       string     `json:"precondition"`
+	Postcondition      string     `json:"postcondition"`
 	Steps              string     `json:"steps"`
 	Remark             string     `json:"remark"`
 	Priority           string     `json:"priority"`
@@ -195,6 +196,7 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 		"test_cases.module_path",
 		"test_cases.tags",
 		"test_cases.precondition",
+		"test_cases.postcondition",
 		"test_cases.steps",
 		"test_cases.remark",
 		"test_cases.priority",

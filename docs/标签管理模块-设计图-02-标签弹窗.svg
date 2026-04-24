@@ -1,0 +1,68 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="900" fill="#0E1118"/>
+  <rect width="1600" height="900" fill="rgba(5,7,12,0.68)"/>
+
+  <rect x="432" y="118" width="736" height="664" rx="22" fill="#171A24" stroke="#2A3040"/>
+  <text x="474" y="174" fill="#FFFFFF" font-size="28" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">新建标签</text>
+  <text x="474" y="204" fill="#8A91A8" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">创建当前项目下可复用的结构化标签，统一标签颜色、描述与用例统计口径。</text>
+  <text x="1120" y="176" fill="#7C839C" font-size="24" font-family="Segoe UI Symbol, Microsoft YaHei, sans-serif">×</text>
+
+  <text x="474" y="264" fill="#D8D2F9" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="600">标签名称 *</text>
+  <rect x="474" y="280" width="382" height="54" rx="12" fill="#121620" stroke="#30374A"/>
+  <text x="496" y="313" fill="#FFFFFF" font-size="16" font-family="Segoe UI, Microsoft YaHei, sans-serif">冒烟测试</text>
+
+  <text x="474" y="376" fill="#D8D2F9" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="600">标签颜色 *</text>
+  <rect x="474" y="392" width="382" height="162" rx="14" fill="#121620" stroke="#30374A"/>
+  <text x="496" y="422" fill="#8A91A8" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">推荐色板</text>
+
+  <circle cx="518" cy="454" r="15" fill="#3B82F6"/>
+  <circle cx="566" cy="454" r="15" fill="#10B981"/>
+  <circle cx="614" cy="454" r="15" fill="#F59E0B"/>
+  <circle cx="662" cy="454" r="15" fill="#EF4444"/>
+  <circle cx="710" cy="454" r="15" fill="#8B5CF6"/>
+  <circle cx="758" cy="454" r="15" fill="#EC4899"/>
+
+  <circle cx="518" cy="500" r="15" fill="#06B6D4"/>
+  <circle cx="566" cy="500" r="15" fill="#F97316"/>
+  <circle cx="614" cy="500" r="15" fill="#14B8A6"/>
+  <circle cx="662" cy="500" r="15" fill="#6366F1"/>
+  <circle cx="710" cy="500" r="15" fill="#84CC16"/>
+  <circle cx="758" cy="500" r="15" fill="#78716C"/>
+
+  <rect x="496" y="528" width="118" height="34" rx="17" fill="#7C3AED" stroke="#BFA8FF"/>
+  <text x="530" y="550" fill="#FFFFFF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">已选颜色</text>
+
+  <text x="474" y="592" fill="#D8D2F9" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="600">HEX 值</text>
+  <rect x="474" y="608" width="182" height="48" rx="10" fill="#171B26" stroke="#424A62"/>
+  <text x="496" y="638" fill="#FFFFFF" font-size="15" font-family="Consolas, Segoe UI, sans-serif">#7C3AED</text>
+
+  <text x="474" y="692" fill="#D8D2F9" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="600">描述</text>
+  <rect x="474" y="708" width="382" height="54" rx="12" fill="#121620" stroke="#30374A"/>
+  <text x="496" y="740" fill="#70778E" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">系统核心路径回归时优先执行</text>
+
+  <rect x="888" y="280" width="238" height="482" rx="16" fill="#121620" stroke="#30374A"/>
+  <text x="916" y="318" fill="#FFFFFF" font-size="18" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">实时预览</text>
+  <text x="916" y="346" fill="#8A91A8" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">标签管理页与用例页的展示效果</text>
+
+  <rect x="916" y="392" width="126" height="34" rx="17" fill="rgba(124,58,237,0.20)" stroke="#A98AFF"/>
+  <text x="947" y="414" fill="#EDE7FF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">冒烟测试</text>
+
+  <rect x="916" y="458" width="176" height="72" rx="14" fill="#171B25" stroke="#272E40"/>
+  <circle cx="944" cy="494" r="10" fill="#7C3AED"/>
+  <text x="964" y="490" fill="#FFFFFF" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">冒烟测试</text>
+  <text x="964" y="512" fill="#8A91A8" font-size="12" font-family="Segoe UI, Microsoft YaHei, sans-serif">关联用例 15 条</text>
+
+  <rect x="916" y="562" width="176" height="82" rx="14" fill="#171B25" stroke="#272E40"/>
+  <text x="936" y="592" fill="#8A91A8" font-size="11" font-family="Segoe UI, Microsoft YaHei, sans-serif">当前规则</text>
+  <text x="936" y="618" fill="#FFFFFF" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">项目级唯一</text>
+  <text x="1026" y="618" fill="#8A91A8" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">最大 100 个</text>
+
+  <rect x="916" y="676" width="176" height="54" rx="12" fill="#1A1F2B"/>
+  <text x="938" y="708" fill="#CFC9EC" font-size="13" font-family="Segoe UI, Microsoft YaHei, sans-serif">审计日志：创建标签</text>
+
+  <line x1="432" y1="724" x2="1168" y2="724" stroke="#262B3B"/>
+  <rect x="898" y="736" width="106" height="44" rx="10" fill="#1E2330" stroke="#31384B"/>
+  <text x="938" y="764" fill="#C7CDE1" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif">取消</text>
+  <rect x="1018" y="736" width="108" height="44" rx="10" fill="#7C3AED"/>
+  <text x="1052" y="764" fill="#FFFFFF" font-size="14" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700">保存</text>
+</svg>
