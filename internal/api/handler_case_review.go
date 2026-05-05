@@ -17,15 +17,17 @@ import (
 // ═══════ 请求结构体 ═══════
 
 type createReviewRequest struct {
-	Name               string  `json:"name" binding:"required,max=128"`
-	ModuleID           uint    `json:"module_id"`
-	ReviewMode         string  `json:"review_mode" binding:"required,oneof=single parallel"`
-	DefaultReviewerIDs []uint  `json:"default_reviewer_ids" binding:"required,min=1"`
-	PlannedStartAt     *string `json:"planned_start_at"`
-	PlannedEndAt       *string `json:"planned_end_at"`
-	Description        string  `json:"description" binding:"max=500"`
-	TestCaseIDs        []uint  `json:"testcase_ids"`
-	AutoSubmit         bool    `json:"auto_submit"`
+	Name                     string  `json:"name" binding:"required,max=128"`
+	ModuleID                 uint    `json:"module_id"`
+	ReviewMode               string  `json:"review_mode" binding:"required,oneof=single parallel"`
+	DefaultReviewerIDs       []uint  `json:"default_reviewer_ids" binding:"required,min=1"`
+	DefaultPrimaryReviewerID uint    `json:"default_primary_reviewer_id"`
+	DefaultShadowReviewerIDs []uint  `json:"default_shadow_reviewer_ids"`
+	PlannedStartAt           *string `json:"planned_start_at"`
+	PlannedEndAt             *string `json:"planned_end_at"`
+	Description              string  `json:"description" binding:"max=500"`
+	TestCaseIDs              []uint  `json:"testcase_ids"`
+	AutoSubmit               bool    `json:"auto_submit"`
 }
 
 type updateReviewRequest struct {
@@ -54,8 +56,10 @@ type linkItemsRequest struct {
 }
 
 type linkItemEntry struct {
-	TestCaseID  uint   `json:"testcase_id" binding:"required"`
-	ReviewerIDs []uint `json:"reviewer_ids"`
+	TestCaseID        uint   `json:"testcase_id" binding:"required"`
+	ReviewerIDs       []uint `json:"reviewer_ids"`
+	PrimaryReviewerID uint   `json:"primary_reviewer_id"`
+	ShadowReviewerIDs []uint `json:"shadow_reviewer_ids"`
 }
 
 type unlinkItemsRequest struct {
@@ -201,13 +205,15 @@ func (a *API) createReview(c *gin.Context) {
 	}
 
 	input := service.CreateReviewInput{
-		Name:               strings.TrimSpace(req.Name),
-		ModuleID:           req.ModuleID,
-		ReviewMode:         req.ReviewMode,
-		DefaultReviewerIDs: req.DefaultReviewerIDs,
-		Description:        req.Description,
-		TestCaseIDs:        req.TestCaseIDs,
-		AutoSubmit:         req.AutoSubmit,
+		Name:                     strings.TrimSpace(req.Name),
+		ModuleID:                 req.ModuleID,
+		ReviewMode:               req.ReviewMode,
+		DefaultReviewerIDs:       req.DefaultReviewerIDs,
+		DefaultPrimaryReviewerID: req.DefaultPrimaryReviewerID,
+		DefaultShadowReviewerIDs: req.DefaultShadowReviewerIDs,
+		Description:              req.Description,
+		TestCaseIDs:              req.TestCaseIDs,
+		AutoSubmit:               req.AutoSubmit,
 	}
 	if req.PlannedStartAt != nil {
 		if t, err := time.Parse(time.RFC3339, *req.PlannedStartAt); err == nil {
@@ -522,8 +528,10 @@ func (a *API) linkItems(c *gin.Context) {
 	var entries []service.LinkItemEntry
 	for _, item := range req.Items {
 		entries = append(entries, service.LinkItemEntry{
-			TestCaseID:  item.TestCaseID,
-			ReviewerIDs: item.ReviewerIDs,
+			TestCaseID:        item.TestCaseID,
+			ReviewerIDs:       item.ReviewerIDs,
+			PrimaryReviewerID: item.PrimaryReviewerID,
+			ShadowReviewerIDs: item.ShadowReviewerIDs,
 		})
 	}
 
