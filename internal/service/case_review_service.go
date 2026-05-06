@@ -138,15 +138,21 @@ func (s *CaseReviewService) CreateReview(ctx context.Context, projectID, userID 
 		return nil, ErrBadRequest(CodeReviewStatusInvalid, "评审模式必须为 single 或 parallel")
 	}
 
-	// v0.2：派生默认 assignment。若 Primary/Shadow 显式给出则优先；否则回退到 DefaultReviewerIDs。
-	defaultAssign, err := deriveAssignment(input.DefaultPrimaryReviewerID, input.DefaultShadowReviewerIDs, input.DefaultReviewerIDs)
-	if err != nil {
-		return nil, err
+	var defaultAssign ReviewerAssignment
+	if input.DefaultPrimaryReviewerID != 0 || len(input.DefaultShadowReviewerIDs) > 0 || len(input.DefaultReviewerIDs) > 0 {
+		var err error
+		defaultAssign, err = deriveAssignment(input.DefaultPrimaryReviewerID, input.DefaultShadowReviewerIDs, input.DefaultReviewerIDs)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// 兼容：DefaultReviewerIDs 作为序列化字段继续保留；未传时也从 assignment 回填一份
 	allReviewerIDs := input.DefaultReviewerIDs
 	if len(allReviewerIDs) == 0 {
 		allReviewerIDs = defaultAssign.AllReviewerIDs()
+	}
+	if len(allReviewerIDs) == 0 {
+		allReviewerIDs = []uint{}
 	}
 	defReviewerJSON, _ := json.Marshal(allReviewerIDs)
 
@@ -189,6 +195,9 @@ func (s *CaseReviewService) CreateReview(ctx context.Context, projectID, userID 
 
 		// 关联用例
 		if len(input.TestCaseIDs) > 0 {
+			if defaultAssign.PrimaryID == 0 {
+				return ErrBadRequest(CodeReviewEmptyReviewer, "关联用例前必须指定主评人")
+			}
 			if err := s.linkItemsInternal(ctx, tx, review.ID, projectID, userID, defaultAssign, input.TestCaseIDs, settings.AllowSelfReview, input.AutoSubmit); err != nil {
 				return err
 			}

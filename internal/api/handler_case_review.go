@@ -20,7 +20,7 @@ type createReviewRequest struct {
 	Name                     string  `json:"name" binding:"required,max=128"`
 	ModuleID                 uint    `json:"module_id"`
 	ReviewMode               string  `json:"review_mode" binding:"required,oneof=single parallel"`
-	DefaultReviewerIDs       []uint  `json:"default_reviewer_ids" binding:"required,min=1"`
+	DefaultReviewerIDs       []uint  `json:"default_reviewer_ids"`
 	DefaultPrimaryReviewerID uint    `json:"default_primary_reviewer_id"`
 	DefaultShadowReviewerIDs []uint  `json:"default_shadow_reviewer_ids"`
 	PlannedStartAt           *string `json:"planned_start_at"`
