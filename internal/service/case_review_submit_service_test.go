@@ -273,8 +273,8 @@ func TestSubmitReview_UpdatesAggregatedResult(t *testing.T) {
 	assert.Equal(t, model.ReviewResultRejected, reviewer.LatestResult)
 }
 
-// TestSubmitReview_ParallelMode_AllMustSubmit 多人评审：单人提交不应结束评审
-func TestSubmitReview_ParallelMode_AllMustSubmit(t *testing.T) {
+// TestSubmitReview_ParallelMode_FirstDecisionUpdatesResult 多人评审：有人提交后立即同步评审结果
+func TestSubmitReview_ParallelMode_FirstDecisionUpdatesResult(t *testing.T) {
 	env := newCaseReviewSubmitEnv(t, model.ReviewModeParallel)
 	// 给 item 10 指派两位评审人
 	env.assignReviewer(t, 10, 1) // admin
@@ -285,8 +285,16 @@ func TestSubmitReview_ParallelMode_AllMustSubmit(t *testing.T) {
 		Result: model.ReviewResultApproved,
 	})
 	require.NoError(t, err)
-	// 还有一位评审人未提交，item 应仍处于 pending（或 reviewing）而非 completed
-	assert.NotEqual(t, model.ReviewItemStatusCompleted, out.ReviewStatus)
+	// 有人提交通过后，评审项和用例主表都应立即反映为已通过
+	assert.Equal(t, model.ReviewItemStatusCompleted, out.ReviewStatus)
+	assert.Equal(t, model.ReviewResultApproved, out.FinalResult)
+	assert.Equal(t, model.TestCaseStatusActive, out.TestCaseStatus)
+	assert.Equal(t, model.CaseReviewResultApproved, out.TestCaseReviewResult)
+
+	var tc model.TestCase
+	require.NoError(t, env.db.First(&tc, 101).Error)
+	assert.Equal(t, model.TestCaseStatusActive, tc.Status)
+	assert.Equal(t, model.CaseReviewResultApproved, tc.ReviewResult)
 }
 
 // ─── listUsersLookup 依赖：UserService.ListFiltered Status=active 过滤 ───

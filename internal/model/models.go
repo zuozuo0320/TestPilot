@@ -68,7 +68,7 @@ const (
 	ReviewResultPending     = "pending"      // 待评审
 	ReviewResultApproved    = "approved"     // 通过
 	ReviewResultRejected    = "rejected"     // 不通过
-	ReviewResultNeedsUpdate = "needs_update" // 建议修改
+	ReviewResultNeedsUpdate = "needs_update" // 打回修订
 
 	// ---- 用例评审：评审人处理状态 ----
 	ReviewerStatusPending  = "pending"  // 尚未评审
@@ -106,7 +106,7 @@ const (
 	CaseReviewResultResubmit    = "重新提审"
 	CaseReviewResultApproved    = "已通过"
 	CaseReviewResultRejected    = "已驳回"
-	CaseReviewResultNeedsUpdate = "建议修改"
+	CaseReviewResultNeedsUpdate = "打回修订"
 )
 
 // PresetRoleDisplayNames 预置角色的中文显示名映射
@@ -510,7 +510,8 @@ type CaseReviewRecord struct {
 	CreatedAt time.Time `json:"created_at" gorm:"index:idx_rr_item_round;index:idx_rr_proj_reviewer;index:idx_rr_proj_case;index:idx_rr_review"`
 
 	// 虚拟字段：读模式，不参与 migration，但允许 Scan 回填 reviewer_name 列
-	ReviewerName string `json:"reviewer_name,omitempty" gorm:"->;-:migration"`
+	ReviewerName   string `json:"reviewer_name,omitempty" gorm:"->;-:migration"`
+	ReviewerAvatar string `json:"reviewer_avatar,omitempty" gorm:"->;-:migration"`
 }
 
 // CaseReviewDefect 评审缺陷 / Action Items（v0.2 新增）。

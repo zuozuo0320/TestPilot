@@ -55,10 +55,10 @@ func (r *caseReviewRecordRepo) ListByItemID(ctx context.Context, itemID uint, ro
 		pageSize = 20
 	}
 
-	// 查询评审记录时回填评审人姓名，避免前端只能显示 reviewer_id
+	// 查询评审记录时回填评审人公开信息，避免前端只能显示 reviewer_id
 	listQuery := r.db.WithContext(ctx).
 		Table("case_review_records").
-		Select("case_review_records.*, COALESCE(u.name, '') AS reviewer_name").
+		Select("case_review_records.*, COALESCE(u.name, '') AS reviewer_name, COALESCE(u.avatar, '') AS reviewer_avatar").
 		Joins("LEFT JOIN users u ON u.id = case_review_records.reviewer_id").
 		Where("case_review_records.review_item_id = ?", itemID)
 	if roundNo != nil {

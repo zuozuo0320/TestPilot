@@ -162,6 +162,10 @@ func (s *CaseReviewSubmitService) SubmitReview(ctx context.Context, projectID, r
 			if err := s.writebackTestCase(ctx, tx, item.TestCaseID, projectID, tcStatus, tcReviewResult); err != nil {
 				return err
 			}
+		} else if reviewStatus == model.ReviewItemStatusReviewing {
+			if err := s.writebackTestCase(ctx, tx, item.TestCaseID, projectID, model.TestCaseStatusPending, model.CaseReviewResultPending); err != nil {
+				return err
+			}
 		}
 
 		// 8. 重算计划统计
@@ -250,50 +254,36 @@ func (s *CaseReviewSubmitService) aggregateSingleMode(reviewers []model.CaseRevi
 
 // aggregateParallelMode 多人评审聚合
 func (s *CaseReviewSubmitService) aggregateParallelMode(reviewers []model.CaseReviewItemReviewer) (string, string, error) {
-	pendingCount := 0
+	latestResult := ""
 	hasRejected := false
 	hasNeedsUpdate := false
-	allApproved := true
 
 	for _, r := range reviewers {
-		if r.ReviewStatus == model.ReviewerStatusPending {
-			pendingCount++
-			allApproved = false
+		if r.ReviewStatus != model.ReviewerStatusReviewed || r.LatestResult == "" {
 			continue
+		}
+		if r.ReviewRole == model.ReviewRolePrimary {
+			return r.LatestResult, model.ReviewItemStatusCompleted, nil
+		}
+		if latestResult == "" {
+			latestResult = r.LatestResult
 		}
 		switch r.LatestResult {
 		case model.ReviewResultRejected:
 			hasRejected = true
-			allApproved = false
 		case model.ReviewResultNeedsUpdate:
 			hasNeedsUpdate = true
-			allApproved = false
-		case model.ReviewResultApproved:
-			// ok
-		default:
-			allApproved = false
 		}
 	}
 
-	// 还有评审人未提交
-	if pendingCount > 0 {
-		// 即使有人已驳回，也需等所有人提交后再出最终结果（按需求文档）
-		// 但如果已有 rejected，可提前标记为 reviewing
-		if hasRejected || hasNeedsUpdate {
-			return model.ReviewResultPending, model.ReviewItemStatusReviewing, nil
-		}
-		return model.ReviewResultPending, model.ReviewItemStatusReviewing, nil
-	}
-
-	// 所有评审人都已提交
 	if hasRejected {
 		return model.ReviewResultRejected, model.ReviewItemStatusCompleted, nil
 	}
-	if allApproved {
-		return model.ReviewResultApproved, model.ReviewItemStatusCompleted, nil
-	}
 	if hasNeedsUpdate {
 		return model.ReviewResultNeedsUpdate, model.ReviewItemStatusCompleted, nil
+	}
+	if latestResult != "" {
+		return latestResult, model.ReviewItemStatusCompleted, nil
 	}
 
 	return model.ReviewResultPending, model.ReviewItemStatusPending, nil

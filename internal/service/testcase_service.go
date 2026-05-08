@@ -34,13 +34,13 @@ func NewTestCaseService(repo repository.TestCaseRepository, historyRepo *reposit
 
 // CreateTestCaseInput 创建用例输入
 type CreateTestCaseInput struct {
-	Title        string
-	Level        string
-	ExecResult   string
-	ModuleID     uint
-	ModulePath   string
-	Tags         string
-	TagIDs       []uint
+	Title         string
+	Level         string
+	ExecResult    string
+	ModuleID      uint
+	ModulePath    string
+	Tags          string
+	TagIDs        []uint
 	Precondition  string
 	Postcondition string
 	Steps         string
@@ -75,23 +75,23 @@ func (s *TestCaseService) Create(ctx context.Context, projectID, userID uint, in
 	}
 
 	entity := model.TestCase{
-		ProjectID:    projectID,
-		Title:        strings.TrimSpace(input.Title),
-		Status:       model.TestCaseStatusDraft,
-		Version:      "V1",
-		Level:        level,
-		ReviewResult: model.CaseReviewResultNotReviewed,
-		ExecResult:   execResult,
-		ModuleID:     input.ModuleID,
-		ModulePath:   modulePath,
-		Tags:         strings.TrimSpace(input.Tags),
+		ProjectID:     projectID,
+		Title:         strings.TrimSpace(input.Title),
+		Status:        model.TestCaseStatusDraft,
+		Version:       "V1",
+		Level:         level,
+		ReviewResult:  model.CaseReviewResultNotReviewed,
+		ExecResult:    execResult,
+		ModuleID:      input.ModuleID,
+		ModulePath:    modulePath,
+		Tags:          strings.TrimSpace(input.Tags),
 		Precondition:  input.Precondition,
 		Postcondition: input.Postcondition,
 		Steps:         strings.TrimSpace(input.Steps),
-		Remark:       input.Remark,
-		Priority:     priority,
-		CreatedBy:    userID,
-		UpdatedBy:    userID,
+		Remark:        input.Remark,
+		Priority:      priority,
+		CreatedBy:     userID,
+		UpdatedBy:     userID,
 	}
 	if err := s.testCaseRepo.Create(ctx, &entity); err != nil {
 		if isDuplicateError(err) {
@@ -124,6 +124,9 @@ func (s *TestCaseService) FindByID(ctx context.Context, testCaseID, projectID ui
 	if tc == nil {
 		return nil, ErrTestCaseNotFound
 	}
+	if err := s.applyEffectiveReviewState(ctx, tc); err != nil {
+		return nil, ErrInternal(CodeInternal, err)
+	}
 	return tc, nil
 }
 
@@ -153,18 +156,18 @@ func (s *TestCaseService) ListPaged(ctx context.Context, projectID uint, filter 
 
 // UpdateTestCaseInput 更新用例输入
 type UpdateTestCaseInput struct {
-	Title        *string
-	Level        *string
-	ExecResult   *string
-	ModuleID     *uint
-	ModulePath   *string
-	Tags         *string
-	TagIDs       []uint
+	Title         *string
+	Level         *string
+	ExecResult    *string
+	ModuleID      *uint
+	ModulePath    *string
+	Tags          *string
+	TagIDs        []uint
 	Precondition  *string
 	Postcondition *string
 	Steps         *string
-	Remark       *string
-	Priority     *string
+	Remark        *string
+	Priority      *string
 }
 
 // Update 鏇存柊鐢ㄤ緥
@@ -172,6 +175,11 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 	entity, err := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	if err != nil {
 		return nil, ErrTestCaseNotFound
+	}
+	storedStatus := entity.Status
+	storedReviewResult := entity.ReviewResult
+	if err := s.applyEffectiveReviewState(ctx, entity); err != nil {
+		return nil, ErrInternal(CodeInternal, err)
 	}
 
 	isSubstantialChange := false
@@ -247,6 +255,12 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 			isSubstantialChange = true
 		}
 	}
+	if entity.Status != storedStatus {
+		updates["status"] = entity.Status
+	}
+	if entity.ReviewResult != storedReviewResult {
+		updates["review_result"] = entity.ReviewResult
+	}
 
 	if entity.Status == model.TestCaseStatusActive && isSubstantialChange {
 		_ = s.saveHistorySnapshot(ctx, entity, userID, "version_bump")
@@ -282,6 +296,54 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "update", "testcase", testCaseID, "", "")
 	updated, _ := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	return updated, nil
+}
+
+func (s *TestCaseService) applyEffectiveReviewState(ctx context.Context, tc *model.TestCase) error {
+	if tc == nil || tc.Status != model.TestCaseStatusPending {
+		return nil
+	}
+
+	var results []string
+	err := s.testCaseRepo.DB(ctx).
+		Model(&model.CaseReviewItemReviewer{}).
+		Select("case_review_item_reviewers.latest_result").
+		Joins("JOIN case_review_items ON case_review_items.id = case_review_item_reviewers.review_item_id").
+		Joins("JOIN case_reviews ON case_reviews.id = case_review_items.review_id AND case_reviews.project_id = case_review_items.project_id").
+		Where("case_review_items.test_case_id = ? AND case_review_items.project_id = ?", tc.ID, tc.ProjectID).
+		Where("case_reviews.status IN ?", []string{model.ReviewPlanStatusNotStarted, model.ReviewPlanStatusInProgress, model.ReviewPlanStatusCompleted}).
+		Where("case_review_item_reviewers.review_status = ?", model.ReviewerStatusReviewed).
+		Where("case_review_item_reviewers.latest_result <> ''").
+		Pluck("case_review_item_reviewers.latest_result", &results).Error
+	if err != nil {
+		return err
+	}
+
+	effectiveResult := ""
+	for _, result := range results {
+		if result == model.ReviewResultRejected {
+			effectiveResult = model.ReviewResultRejected
+			break
+		}
+		if result == model.ReviewResultNeedsUpdate && effectiveResult != model.ReviewResultRejected {
+			effectiveResult = model.ReviewResultNeedsUpdate
+		}
+		if result == model.ReviewResultApproved && effectiveResult == "" {
+			effectiveResult = model.ReviewResultApproved
+		}
+	}
+
+	switch effectiveResult {
+	case model.ReviewResultApproved:
+		tc.Status = model.TestCaseStatusActive
+		tc.ReviewResult = model.CaseReviewResultApproved
+	case model.ReviewResultRejected:
+		tc.Status = model.TestCaseStatusDraft
+		tc.ReviewResult = model.CaseReviewResultRejected
+	case model.ReviewResultNeedsUpdate:
+		tc.Status = model.TestCaseStatusDraft
+		tc.ReviewResult = model.CaseReviewResultNeedsUpdate
+	}
+	return nil
 }
 
 // Delete 删除用例（仅草稿可删除）

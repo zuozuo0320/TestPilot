@@ -187,10 +187,69 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 		"test_cases.id",
 		"test_cases.project_id",
 		"test_cases.title",
-		"test_cases.status",
+		`CASE
+			WHEN EXISTS (
+				SELECT 1
+				FROM case_review_items cri
+				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
+				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
+				WHERE cri.test_case_id = test_cases.id
+				  AND cri.project_id = test_cases.project_id
+				  AND cr.status IN ('not_started', 'in_progress')
+				  AND cir.review_status = 'reviewed'
+				  AND cir.latest_result IN ('rejected', 'needs_update')
+			) THEN 'draft'
+			WHEN EXISTS (
+				SELECT 1
+				FROM case_review_items cri
+				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
+				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
+				WHERE cri.test_case_id = test_cases.id
+				  AND cri.project_id = test_cases.project_id
+				  AND cr.status IN ('not_started', 'in_progress')
+				  AND cir.review_status = 'reviewed'
+				  AND cir.latest_result = 'approved'
+			) THEN 'active'
+			ELSE test_cases.status
+		END AS status`,
 		"test_cases.version",
 		"test_cases.level",
-		"test_cases.review_result",
+		`CASE
+			WHEN EXISTS (
+				SELECT 1
+				FROM case_review_items cri
+				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
+				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
+				WHERE cri.test_case_id = test_cases.id
+				  AND cri.project_id = test_cases.project_id
+				  AND cr.status IN ('not_started', 'in_progress')
+				  AND cir.review_status = 'reviewed'
+				  AND cir.latest_result = 'rejected'
+			) THEN '已驳回'
+			WHEN EXISTS (
+				SELECT 1
+				FROM case_review_items cri
+				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
+				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
+				WHERE cri.test_case_id = test_cases.id
+				  AND cri.project_id = test_cases.project_id
+				  AND cr.status IN ('not_started', 'in_progress')
+				  AND cir.review_status = 'reviewed'
+				  AND cir.latest_result = 'needs_update'
+			) THEN '打回修订'
+			WHEN EXISTS (
+				SELECT 1
+				FROM case_review_items cri
+				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
+				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
+				WHERE cri.test_case_id = test_cases.id
+				  AND cri.project_id = test_cases.project_id
+				  AND cr.status IN ('not_started', 'in_progress')
+				  AND cir.review_status = 'reviewed'
+				  AND cir.latest_result = 'approved'
+			) THEN '已通过'
+			ELSE test_cases.review_result
+		END AS review_result`,
 		"test_cases.exec_result",
 		"test_cases.module_id",
 		"test_cases.module_path",
