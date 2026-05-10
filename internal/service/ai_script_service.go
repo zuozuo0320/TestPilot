@@ -1530,6 +1530,49 @@ func (s *AIScriptService) GetLatestRecording(ctx context.Context, taskID uint) (
 	return session, nil
 }
 
+func (s *AIScriptService) RegenerateFromLatestRecording(ctx context.Context, userID, taskID uint) error {
+	task, err := s.repo.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound(CodeNotFound, "任务不存在")
+		}
+		return ErrInternal(CodeInternal, err)
+	}
+	if task.GenerationMode != model.AIGenerationModeRecordingEnhanced {
+		return ErrConflict(CodeConflict, "仅录制增强模式支持复用录制稿重新生成")
+	}
+	if task.TaskStatus != model.AITaskStatusGenerateFailed {
+		return ErrConflict(CodeConflict, fmt.Sprintf("当前状态 %s 不允许重新生成，仅 GENERATE_FAILED 可触发", task.TaskStatus))
+	}
+
+	session, err := s.repo.FindLatestRecordingByTaskID(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound(CodeNotFound, "未找到可复用的录制记录")
+		}
+		return ErrInternal(CodeInternal, err)
+	}
+	if session.RecordingStatus != model.AIRecordingStatusFinished {
+		return ErrConflict(CodeConflict, "最近一次录制尚未完成，无法复用录制稿重新生成")
+	}
+	rawScript := strings.TrimSpace(session.RawScriptContent)
+	if rawScript == "" {
+		return ErrConflict(CodeConflict, "最近一次录制没有可复用的脚本内容，请重新录制")
+	}
+
+	now := time.Now()
+	if err := s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
+		"task_status":         model.AITaskStatusRunning,
+		"latest_recording_id": &session.ID,
+		"latest_execute_at":   &now,
+	}); err != nil {
+		return ErrInternal(CodeInternal, err)
+	}
+
+	go s.callExecutorRefactor(taskID, session.ID, rawScript, userID)
+	return nil
+}
+
 // callExecutorRefactor 异步调用执行服务进行 AI 重构（录制增强模式）
 func (s *AIScriptService) callExecutorRefactor(taskID, recordingID uint, rawScript string, userID uint) {
 	ctx := context.Background()

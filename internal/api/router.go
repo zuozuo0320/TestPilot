@@ -231,6 +231,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	// 录制
 	aiScript.POST("/tasks/:taskID/recording/start", a.startRecording)
 	aiScript.POST("/tasks/:taskID/recording/finish", a.finishRecording)
+	aiScript.POST("/tasks/:taskID/recording/regenerate", a.regenerateFromLatestRecording)
 	aiScript.POST("/tasks/:taskID/recording/fail", a.failRecording)
 	aiScript.GET("/tasks/:taskID/recordings/latest", a.getLatestRecording)
 	// 脚本版本

@@ -507,6 +507,20 @@ func (a *API) finishRecording(c *gin.Context) {
 	response.OK(c, gin.H{"message": "录制已结束"})
 }
 
+func (a *API) regenerateFromLatestRecording(c *gin.Context) {
+	user := currentUser(c)
+	taskID, ok := parseUintParam(c, "taskID")
+	if !ok {
+		return
+	}
+
+	if err := a.aiScriptSvc.RegenerateFromLatestRecording(c.Request.Context(), user.ID, taskID); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"message": "已重新触发 AI 重构"})
+}
+
 // getLatestRecording 获取最近录制结果
 // failRecording 标记录制失败，避免异常会话长期卡在 RECORDING。
 func (a *API) failRecording(c *gin.Context) {
