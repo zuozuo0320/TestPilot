@@ -28,6 +28,8 @@ type disputeDefectRequest struct {
 type updateProjectSettingsRequest struct {
 	// AllowSelfReview 是否允许 Author 评审自己的用例（默认 false）
 	AllowSelfReview *bool `json:"allow_self_review"`
+	// TestEnvironments 当前项目可复用的测试环境列表
+	TestEnvironments *[]model.TestEnvironment `json:"test_environments"`
 }
 
 // ═══════ 规则引擎 ═══════
@@ -316,7 +318,10 @@ func (a *API) updateProjectSettings(c *gin.Context) {
 		response.Error(c, 400, 400001, "请求参数非法: "+err.Error())
 		return
 	}
-	input := service.UpdateProjectSettingsInput{AllowSelfReview: req.AllowSelfReview}
+	input := service.UpdateProjectSettingsInput{
+		AllowSelfReview:  req.AllowSelfReview,
+		TestEnvironments: req.TestEnvironments,
+	}
 	settings, err := a.projectSvc.UpdateSettings(c.Request.Context(), projectID, user.ID, input)
 	if err != nil {
 		response.HandleError(c, err)

@@ -182,8 +182,8 @@ type Project struct {
 	OwnerID     uint       `json:"owner_id" gorm:"not null;default:0;index"`
 	Status      string     `json:"status" gorm:"size:20;not null;default:active;index"`
 	ArchivedAt  *time.Time `json:"archived_at"`
-	// Settings 项目级 JSON 配置（v0.2 用例评审引入）。
-	// 约定结构：{"allow_self_review": bool, "terminology": map[string]string}。
+	// Settings 项目级 JSON 配置。
+	// 约定结构：{"allow_self_review": bool, "test_environments": []TestEnvironment}。
 	// 默认为空串，Service 层用 ParseSettings / UpdateSettings 封装读写。
 	Settings  string    `json:"-" gorm:"type:text"`
 	CreatedAt time.Time `json:"created_at"`
@@ -403,11 +403,21 @@ func (cr *CaseReview) ParseDefaultReviewerIDs() []uint {
 	return ids
 }
 
-// ProjectSettings 项目级 JSON 配置（v0.2 用例评审引入）。
-// 当前字段仅有 AllowSelfReview，后续可按需扩展 Terminology 等。
+// TestEnvironment 项目级通用测试环境配置。
+type TestEnvironment struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	BaseURL     string `json:"base_url"`
+	Description string `json:"description"`
+	IsDefault   bool   `json:"is_default"`
+}
+
+// ProjectSettings 项目级 JSON 配置。
+// 这里承载跨模块共享配置，避免用例评审、测试执行、智能脚本各自维护重复配置。
 type ProjectSettings struct {
 	// AllowSelfReview 是否允许 Author 评审自己的用例。默认 false（禁止自审）。
-	AllowSelfReview bool `json:"allow_self_review"`
+	AllowSelfReview  bool              `json:"allow_self_review"`
+	TestEnvironments []TestEnvironment `json:"test_environments"`
 }
 
 // ParseSettings 解析项目 JSON 配置，空串返回零值（即默认禁止自审）。

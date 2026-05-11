@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math"
+	"net/url"
 	"strings"
 
 	"gorm.io/gorm"
@@ -514,6 +515,8 @@ func (s *ProjectService) resolveOwnerID(ctx context.Context, actorID uint, owner
 type UpdateProjectSettingsInput struct {
 	// AllowSelfReview 是否允许 Author 评审自己的用例（默认 false）。nil 表示不修改。
 	AllowSelfReview *bool
+	// TestEnvironments 项目级通用测试环境列表。nil 表示不修改。
+	TestEnvironments *[]model.TestEnvironment
 }
 
 // GetSettings 读取项目 settings。项目不存在时返回 CodeProjectNotFound。
@@ -526,7 +529,7 @@ func (s *ProjectService) GetSettings(ctx context.Context, projectID uint) (model
 	return project.ParseSettings(), nil
 }
 
-// UpdateSettings 局部更新项目 settings（目前仅支持 AllowSelfReview）。
+// UpdateSettings 局部更新项目 settings。
 // 返回写入后的完整 settings，方便前端即时回显。
 func (s *ProjectService) UpdateSettings(ctx context.Context, projectID, actorID uint, input UpdateProjectSettingsInput) (model.ProjectSettings, error) {
 	project, err := s.projectRepo.FindByID(ctx, projectID)
@@ -536,6 +539,13 @@ func (s *ProjectService) UpdateSettings(ctx context.Context, projectID, actorID 
 	settings := project.ParseSettings()
 	if input.AllowSelfReview != nil {
 		settings.AllowSelfReview = *input.AllowSelfReview
+	}
+	if input.TestEnvironments != nil {
+		envs, err := normalizeTestEnvironments(*input.TestEnvironments)
+		if err != nil {
+			return model.ProjectSettings{}, err
+		}
+		settings.TestEnvironments = envs
 	}
 
 	raw, err := json.Marshal(settings)
@@ -550,6 +560,63 @@ func (s *ProjectService) UpdateSettings(ctx context.Context, projectID, actorID 
 		"project_id", projectID,
 		"actor_id", actorID,
 		"allow_self_review", settings.AllowSelfReview,
+		"test_environment_count", len(settings.TestEnvironments),
 	)
 	return settings, nil
+}
+
+func normalizeTestEnvironments(items []model.TestEnvironment) ([]model.TestEnvironment, error) {
+	if len(items) > 20 {
+		return nil, ErrBadRequest(CodeParamsError, "测试环境最多支持 20 个")
+	}
+	seen := make(map[string]struct{}, len(items))
+	envs := make([]model.TestEnvironment, 0, len(items))
+	defaultIndex := -1
+	for _, item := range items {
+		env := model.TestEnvironment{
+			ID:          strings.TrimSpace(item.ID),
+			Name:        strings.TrimSpace(item.Name),
+			BaseURL:     strings.TrimSpace(item.BaseURL),
+			Description: strings.TrimSpace(item.Description),
+			IsDefault:   item.IsDefault,
+		}
+		if env.ID == "" {
+			return nil, ErrBadRequest(CodeParamsError, "测试环境标识不能为空")
+		}
+		if _, exists := seen[env.ID]; exists {
+			return nil, ErrBadRequest(CodeParamsError, "测试环境标识不能重复")
+		}
+		if env.Name == "" {
+			return nil, ErrBadRequest(CodeParamsError, "测试环境名称不能为空")
+		}
+		if len([]rune(env.Name)) > 64 {
+			return nil, ErrBadRequest(CodeParamsError, "测试环境名称不能超过 64 个字符")
+		}
+		if env.BaseURL == "" {
+			return nil, ErrBadRequest(CodeParamsError, "测试环境访问地址不能为空")
+		}
+		parsed, err := url.Parse(env.BaseURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return nil, ErrBadRequest(CodeParamsError, "测试环境访问地址格式不正确")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return nil, ErrBadRequest(CodeParamsError, "测试环境访问地址仅支持 http 或 https")
+		}
+		if len([]rune(env.Description)) > 200 {
+			return nil, ErrBadRequest(CodeParamsError, "测试环境描述不能超过 200 个字符")
+		}
+		if env.IsDefault {
+			if defaultIndex >= 0 {
+				env.IsDefault = false
+			} else {
+				defaultIndex = len(envs)
+			}
+		}
+		seen[env.ID] = struct{}{}
+		envs = append(envs, env)
+	}
+	if len(envs) > 0 && defaultIndex < 0 {
+		envs[0].IsDefault = true
+	}
+	return envs, nil
 }
