@@ -124,6 +124,10 @@ const (
 	CodeTagLimitExceeded     = 130003
 	CodeTagColorInvalid      = 130004
 	CodeTagCaseLimitExceeded = 130005
+
+	// 14: AI 模型配置模块
+	CodeAIModelNotFound = 140001
+	CodeAIModelIsActive = 140002
 )
 
 // ========== 预定义错误（向后兼容） ==========

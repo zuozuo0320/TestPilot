@@ -41,7 +41,7 @@ SYSTEM_PROMPT_AI_DIRECT = """你是一位资深的 Playwright 自动化测试工
 - 定位器优先级: data-testid > getByRole > getByText > getByLabel > CSS
 - 必须包含至少 1 个 expect 断言
 - 等待策略: page.waitForLoadState / locator.waitFor()
-- 敏感信息使用环境变量: process.env.XXX
+- 仅密码、token、API key 等认证凭据替换为 process.env.XXX；IP 地址、URL、端口、业务参数等一律保留录制时的硬编码值，不得自行提取为环境变量
 
 ## 输出格式
 你必须输出一个 JSON 对象，包含以下字段：
@@ -67,7 +67,7 @@ SYSTEM_PROMPT_REFACTOR = """你是一位受控的 Playwright 脚本重构器。
 7. 如果原始定位器是链式定位器，抽取时必须保留完整 locator chain，不得简化、替换、拼接新定位器。
 8. 可以补充适当的等待与断言，但必须服务于下一步真实录制动作，不得凭空发明固定 URL 断言。
 9. 所有新增函数、方法、类和关键逻辑都必须补充中文注释或中文 JSDoc。
-10. 敏感信息替换为 `process.env.XXX`。
+10. 仅密码、token、API key 等认证凭据替换为 `process.env.XXX`；IP 地址、URL、端口、业务参数等一律保留录制时的硬编码值，不得自行提取为环境变量。
 
 ## 输出格式
 你必须输出一个 JSON 对象，包含以下字段：

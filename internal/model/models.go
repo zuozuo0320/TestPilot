@@ -622,6 +622,9 @@ func AutoMigrate(db *gorm.DB) error {
 		// 标签管理模块
 		&Tag{},
 		&TestCaseTag{},
+
+		// AI 模型配置
+		&AIModelConfig{},
 	)
 }
 
@@ -683,6 +686,40 @@ type TestCaseTag struct {
 	TestCaseID uint      `json:"testcase_id" gorm:"primaryKey"`
 	TagID      uint      `json:"tag_id" gorm:"primaryKey;index"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// AIModelConfig AI 模型配置（全局，仅 admin 可操作）
+type AIModelConfig struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Provider  string    `json:"provider" gorm:"size:30;not null;comment:提供商标识(openai/anthropic/custom)"`
+	Name      string    `json:"name" gorm:"size:100;not null;comment:显示名称"`
+	ModelID   string    `json:"model_id" gorm:"size:100;not null;comment:模型标识(如 gpt-4o/claude-opus-4-6)"`
+	BaseURL   string    `json:"base_url" gorm:"size:500;default:'';comment:API Base URL"`
+	APIKey    string    `json:"-" gorm:"size:500;default:'';comment:API Key(不返回前端)"`
+	IsActive  bool      `json:"is_active" gorm:"default:false;comment:当前启用的模型"`
+	SortOrder int       `json:"sort_order" gorm:"default:0;comment:排序"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AIModelConfigMasked 返回前端的脱敏视图，APIKey 只显示后 4 位
+func (m *AIModelConfig) Masked() map[string]interface{} {
+	masked := "****"
+	if len(m.APIKey) > 4 {
+		masked = "****" + m.APIKey[len(m.APIKey)-4:]
+	}
+	return map[string]interface{}{
+		"id":         m.ID,
+		"provider":   m.Provider,
+		"name":       m.Name,
+		"model_id":   m.ModelID,
+		"base_url":   m.BaseURL,
+		"api_key":    masked,
+		"is_active":  m.IsActive,
+		"sort_order": m.SortOrder,
+		"created_at": m.CreatedAt,
+		"updated_at": m.UpdatedAt,
+	}
 }
 
 func IsValidMemberRole(role string) bool {

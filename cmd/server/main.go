@@ -176,6 +176,7 @@ func main() {
 	caseReviewAttachmentRepo := repository.NewCaseReviewAttachmentRepo(db)
 	caseReviewDefectRepo := repository.NewCaseReviewDefectRepo(db)
 	tagRepo := repository.NewTagRepo(db)
+	aiModelConfigRepo := repository.NewAIModelConfigRepo(db)
 
 	// 2. Service 层
 	mockExecutor := execution.NewMockExecutor(logger, cfg.RunFailRate)
@@ -202,6 +203,7 @@ func main() {
 	caseReviewDefectSvc := service.NewCaseReviewDefectService(caseReviewDefectRepo, caseReviewRepo, testCaseRepo, txMgr, logger)
 	caseReviewRuleSvc := service.NewCaseReviewRuleService(caseReviewRepo, testCaseRepo, caseReviewDefectRepo, caseReviewDefectSvc, txMgr, logger)
 	tagSvc := service.NewTagService(tagRepo, auditRepo, txMgr, logger)
+	aiModelConfigSvc := service.NewAIModelConfigService(aiModelConfigRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, logger)
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{
@@ -230,6 +232,7 @@ func main() {
 		CaseReviewRuleService:       caseReviewRuleSvc,
 		CaseReviewDefectService:     caseReviewDefectSvc,
 		TagService:                  tagSvc,
+		AIModelConfigService:        aiModelConfigSvc,
 		ExecutorURL:                 cfg.ExecutorURL,
 		ExecutorAPIKey:              cfg.ExecutorAPIKey,
 	}, cfg.CORSAllowOrigins)

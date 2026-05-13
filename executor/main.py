@@ -247,6 +247,119 @@ async def health():
     return {"status": "ok", "service": "executor", "version": "2.0.0"}
 
 
+class ModelConfigUpdate(BaseModel):
+    """AI 模型配置更新请求体"""
+    api_key: str
+    base_url: str = ""
+    model: str = ""
+
+
+class ModelConfigTest(BaseModel):
+    """测试 LLM 连接请求体"""
+    api_key: str
+    base_url: str = ""
+    model: str = ""
+
+
+@app.post("/config/model/test")
+async def test_model_config(body: ModelConfigTest):
+    """
+    用最小请求测试 LLM API 连通性。
+    成功返回模型名称，失败返回错误信息。
+    """
+    import httpx
+
+    base = body.base_url.rstrip("/") if body.base_url else "https://api.openai.com/v1"
+    url = f"{base}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {body.api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": body.model or "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "max_tokens": 5,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            model_used = data.get("model", body.model)
+            return {"status": "ok", "message": f"连接成功，模型: {model_used}"}
+        else:
+            detail = resp.text[:300]
+            logger.warning(f"LLM test failed: {resp.status_code} {detail}")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"API 返回 {resp.status_code}: {detail}"},
+            )
+    except Exception as e:
+        logger.warning(f"LLM test connection error: {e}")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"连接失败: {str(e)}"},
+        )
+
+
+@app.post("/config/model")
+async def update_model_config(body: ModelConfigUpdate):
+    """
+    接收 Go 后端推送的模型配置，更新 executor/.env 并热重载到内存。
+    仅更新 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL 三项，
+    其余 .env 条目保持不变。
+    """
+    import config as cfg
+
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+
+    # 读取现有 .env 内容
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+    # 构建要更新的键值对
+    updates = {
+        "OPENAI_API_KEY": body.api_key,
+        "OPENAI_BASE_URL": body.base_url,
+        "OPENAI_MODEL": body.model,
+    }
+    seen_keys = set()
+
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0]
+            if key in updates:
+                new_lines.append(f"{key}={updates[key]}\n")
+                seen_keys.add(key)
+                continue
+        new_lines.append(line)
+
+    # 追加没出现过的键
+    for key, value in updates.items():
+        if key not in seen_keys:
+            new_lines.append(f"{key}={value}\n")
+
+    # 写回 .env
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    # 热重载到内存（config 模块级变量）
+    cfg.OPENAI_API_KEY = body.api_key
+    cfg.OPENAI_BASE_URL = body.base_url
+    cfg.OPENAI_MODEL = body.model
+    # 同步到 os.environ 以便其他模块读取
+    os.environ["OPENAI_API_KEY"] = body.api_key
+    os.environ["OPENAI_BASE_URL"] = body.base_url
+    os.environ["OPENAI_MODEL"] = body.model
+
+    logger.info(f"Model config updated: model={body.model}, base_url={body.base_url}")
+    return {"status": "ok", "model": body.model, "base_url": body.base_url}
+
+
 @app.post("/execute/generate")
 async def execute_generate(req: GenerateRequest):
     """AI 直生模式：browser-use 探索 + LLM 生成 Playwright TypeScript 脚本"""

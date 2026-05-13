@@ -39,6 +39,7 @@ type Dependencies struct {
 	CaseReviewRuleService       *service.CaseReviewRuleService
 	CaseReviewDefectService     *service.CaseReviewDefectService
 	TagService                  *service.TagService
+	AIModelConfigService        *service.AIModelConfigService
 	ExecutorURL                 string
 	ExecutorAPIKey              string
 }
@@ -71,6 +72,7 @@ type API struct {
 	caseReviewRuleSvc       *service.CaseReviewRuleService
 	caseReviewDefectSvc     *service.CaseReviewDefectService
 	tagSvc                  *service.TagService
+	aiModelConfigSvc        *service.AIModelConfigService
 	executorURL             string
 	executorAPIKey          string
 }
@@ -104,6 +106,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		caseReviewRuleSvc:       deps.CaseReviewRuleService,
 		caseReviewDefectSvc:     deps.CaseReviewDefectService,
 		tagSvc:                  deps.TagService,
+		aiModelConfigSvc:        deps.AIModelConfigService,
 		executorURL:             deps.ExecutorURL,
 		executorAPIKey:          deps.ExecutorAPIKey,
 	}
@@ -304,6 +307,16 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	tags.POST("", a.createTag)
 	tags.PUT("/:tagID", a.updateTag)
 	tags.DELETE("/:tagID", a.deleteTag)
+
+	// ---- AI 模型配置（仅 admin） ----
+	aiModelConfig := auth.Group("/ai-model-configs")
+	aiModelConfig.GET("", a.listAIModelConfigs)
+	aiModelConfig.GET("/active", a.getActiveAIModel)
+	aiModelConfig.POST("/test", a.testAIModelConnection)
+	aiModelConfig.POST("", a.createAIModelConfig)
+	aiModelConfig.PUT("/:configID", a.updateAIModelConfig)
+	aiModelConfig.DELETE("/:configID", a.deleteAIModelConfig)
+	aiModelConfig.POST("/:configID/activate", a.activateAIModel)
 
 	return r
 }
