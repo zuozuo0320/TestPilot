@@ -9,14 +9,7 @@ from typing import Optional
 
 from browser_use import Agent, ChatOpenAI
 
-from config import (
-    OPENAI_API_KEY,
-    OPENAI_BASE_URL,
-    OPENAI_MODEL,
-    BROWSER_HEADLESS,
-    BROWSER_TIMEOUT_MS,
-    SCREENSHOT_DIR,
-)
+import config as cfg
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +17,13 @@ logger = logging.getLogger(__name__)
 def _build_llm() -> ChatOpenAI:
     """构建 LLM 客户端（使用 browser-use 内置 ChatOpenAI）"""
     kwargs = {
-        "model": OPENAI_MODEL,
-        "api_key": OPENAI_API_KEY,
+        "model": cfg.OPENAI_MODEL,
+        "api_key": cfg.OPENAI_API_KEY,
         "temperature": 0,
+        "reasoning_effort": cfg.OPENAI_REASONING_EFFORT,
     }
-    if OPENAI_BASE_URL:
-        kwargs["base_url"] = OPENAI_BASE_URL
+    if cfg.OPENAI_BASE_URL:
+        kwargs["base_url"] = cfg.OPENAI_BASE_URL
     return ChatOpenAI(**kwargs)
 
 

@@ -339,28 +339,38 @@ def _call_v1_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
     """调用 LLM 并解析 JSON 输出"""
     import re
     import time
-    from config import OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL
+    import config as cfg
     from openai import OpenAI
 
     client = OpenAI(
-        base_url=OPENAI_BASE_URL,
-        api_key=OPENAI_API_KEY,
+        base_url=cfg.OPENAI_BASE_URL,
+        api_key=cfg.OPENAI_API_KEY,
     )
 
     max_retries = 3
     last_error = None
     content = ""
+    name = (cfg.OPENAI_MODEL or "").lower()
+    if name.startswith(("o1", "o3", "o4")) or any(item in name for item in ("gpt-5", "reasoning")):
+        completion_params = {
+            "reasoning_effort": cfg.OPENAI_REASONING_EFFORT if cfg.OPENAI_REASONING_EFFORT in {"low", "medium", "high"} else "medium",
+            "max_completion_tokens": 16384,
+        }
+    else:
+        completion_params = {
+            "temperature": 0.1,
+            "max_tokens": 16384,
+        }
 
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=cfg.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.1,
-                max_tokens=16384,
+                **completion_params,
             )
 
             content = response.choices[0].message.content.strip()

@@ -230,6 +230,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	aiScript.POST("/tasks/:taskID/discard", a.discardTask)
 	aiScript.DELETE("/tasks/:taskID", a.deleteTask)
 	aiScript.POST("/tasks/:taskID/clone", a.cloneTask)
+	aiScript.PUT("/tasks/:taskID/name", a.renameTask)
 	aiScript.POST("/tasks/:taskID/cases/update", a.updateTaskCases)
 	// 录制
 	aiScript.POST("/tasks/:taskID/recording/start", a.startRecording)
@@ -312,6 +313,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	aiModelConfig := auth.Group("/ai-model-configs")
 	aiModelConfig.GET("", a.listAIModelConfigs)
 	aiModelConfig.GET("/active", a.getActiveAIModel)
+	aiModelConfig.POST("/models", a.listAIModelOptions)
 	aiModelConfig.POST("/test", a.testAIModelConnection)
 	aiModelConfig.POST("", a.createAIModelConfig)
 	aiModelConfig.PUT("/:configID", a.updateAIModelConfig)

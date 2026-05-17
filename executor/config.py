@@ -11,9 +11,11 @@ load_dotenv(override=True)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini") # 允许覆盖环境变量
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "medium")
 
 print(f"[config] Loaded OPENAI_MODEL: {OPENAI_MODEL}")
 print(f"[config] Loaded OPENAI_BASE_URL: {OPENAI_BASE_URL}")
+print(f"[config] Loaded OPENAI_REASONING_EFFORT: {OPENAI_REASONING_EFFORT}")
 if OPENAI_API_KEY:
     print(f"[config] OPENAI_API_KEY detected (len={len(OPENAI_API_KEY)})")
 else:

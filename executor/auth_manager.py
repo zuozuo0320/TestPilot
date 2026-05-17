@@ -56,35 +56,62 @@ def has_valid_auth_state(start_url: str) -> bool:
         )
         return False
 
-    # 检查 2: Cookie 过期时间
+    # 检查 2: Cookie / localStorage 认证凭据
     try:
         with open(path, "r", encoding="utf-8") as f:
             state = json.load(f)
 
-        cookies = state.get("cookies", [])
-        now = time.time()
+        # ── 2a: 检查 localStorage 中是否有 token 类条目 ──
+        # 许多 SPA 应用（如 foradar）将 Bearer token 存在 localStorage 而非 Cookie
+        token_keywords = ("token", "auth", "jwt", "session", "sid")
+        origins = state.get("origins", [])
+        has_ls_token = False
+        for origin in origins:
+            for item in origin.get("localStorage", []):
+                if any(kw in item.get("name", "").lower() for kw in token_keywords):
+                    has_ls_token = True
+                    break
+            if has_ls_token:
+                break
 
-        # 寻找 session 相关的 Cookie（name 中包含 token/session/auth）
-        session_keywords = ("token", "session", "auth", "sid", "jwt")
-        session_cookies = [
-            c for c in cookies
-            if any(kw in c.get("name", "").lower() for kw in session_keywords)
-        ]
-
-        if session_cookies:
-            all_expired = all(
-                c.get("expires", float("inf")) < now
-                for c in session_cookies
+        if has_ls_token:
+            logger.info(
+                f"Valid localStorage token found for {start_url}, "
+                f"skipping cookie expiry check"
             )
-            if all_expired:
-                logger.info(
-                    f"All session cookies expired "
-                    f"({len(session_cookies)} cookies checked)"
-                )
-                return False
+            # localStorage token 存在，文件未超龄 → 视为有效
         else:
-            # 没有明确的 session Cookie，但文件存在且未超龄 → 视为有效
-            logger.debug("No session-related cookies found, treating as valid")
+            # ── 2b: 回退到 Cookie 过期检测 ──
+            cookies = state.get("cookies", [])
+            now = time.time()
+
+            session_keywords_cookie = ("token", "session", "auth", "sid", "jwt")
+            session_cookies = [
+                c for c in cookies
+                if any(
+                    kw in c.get("name", "").lower()
+                    for kw in session_keywords_cookie
+                )
+            ]
+
+            if session_cookies:
+                # expires <= 0 表示 session cookie（Playwright 用 -1 表示无显式过期时间），
+                # 浏览器关闭前一直有效，Playwright 恢复后同样有效，不应判定为过期
+                all_expired = all(
+                    0 < c.get("expires", float("inf")) < now
+                    for c in session_cookies
+                )
+                if all_expired:
+                    logger.info(
+                        f"All session cookies expired "
+                        f"({len(session_cookies)} cookies checked)"
+                    )
+                    return False
+            else:
+                # 没有明确的 session Cookie，但文件存在且未超龄 → 视为有效
+                logger.debug(
+                    "No session-related cookies found, treating as valid"
+                )
 
     except Exception as e:
         logger.warning(f"Failed to parse auth_state file: {e}")

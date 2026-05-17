@@ -13,7 +13,7 @@ import os
 import tempfile
 import time
 import uuid
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -252,13 +252,100 @@ class ModelConfigUpdate(BaseModel):
     api_key: str
     base_url: str = ""
     model: str = ""
+    reasoning_effort: str = "medium"
 
 
 class ModelConfigTest(BaseModel):
     """测试 LLM 连接请求体"""
+    provider: str = ""
     api_key: str
     base_url: str = ""
     model: str = ""
+
+
+class ModelListRequest(BaseModel):
+    """拉取 LLM 模型列表请求体"""
+    provider: str = ""
+    api_key: str
+    base_url: str = ""
+
+
+def _normalize_model_options(raw: Any) -> List[Dict[str, str]]:
+    source = raw
+    if isinstance(raw, dict):
+        source = raw.get("data") or raw.get("models") or raw.get("items") or []
+    if not isinstance(source, list):
+        return []
+
+    options: List[Dict[str, str]] = []
+    seen = set()
+    for item in source:
+        model_id = ""
+        name = ""
+        if isinstance(item, str):
+            model_id = item
+            name = item
+        elif isinstance(item, dict):
+            value = item.get("id") or item.get("model") or item.get("name")
+            if value:
+                model_id = str(value)
+                display = item.get("display_name") or item.get("name") or item.get("id")
+                name = str(display or model_id)
+        if model_id and model_id not in seen:
+            options.append({"id": model_id, "name": name or model_id})
+            seen.add(model_id)
+    return options
+
+
+def _default_base_url(provider: str, base_url: str) -> str:
+    if base_url:
+        return base_url.rstrip("/")
+    if provider.lower() == "anthropic":
+        return "https://api.anthropic.com/v1"
+    return "https://api.openai.com/v1"
+
+
+def _model_from_sse_text(text: str) -> str:
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            data = json.loads(payload)
+        except Exception:
+            continue
+        model = data.get("model")
+        if model:
+            return str(model)
+    return ""
+
+
+def _normalize_reasoning_effort(value: str) -> str:
+    if value in {"low", "medium", "high"}:
+        return value
+    return "medium"
+
+
+def _is_reasoning_model(model: str) -> bool:
+    name = (model or "").lower()
+    return name.startswith(("o1", "o3", "o4")) or any(item in name for item in ("gpt-5", "reasoning"))
+
+
+def _openai_completion_params(model: str, temperature: float, max_tokens: int) -> Dict[str, Any]:
+    if _is_reasoning_model(model):
+        import config as cfg
+
+        return {
+            "reasoning_effort": _normalize_reasoning_effort(getattr(cfg, "OPENAI_REASONING_EFFORT", "medium")),
+            "max_completion_tokens": max_tokens,
+        }
+    return {
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
 
 
 @app.post("/config/model/test")
@@ -269,22 +356,50 @@ async def test_model_config(body: ModelConfigTest):
     """
     import httpx
 
-    base = body.base_url.rstrip("/") if body.base_url else "https://api.openai.com/v1"
-    url = f"{base}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {body.api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": body.model or "gpt-4o-mini",
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 5,
-    }
+    provider = (body.provider or "").lower()
+    base = _default_base_url(provider, body.base_url)
+    if provider == "anthropic":
+        url = f"{base}/messages"
+        headers = {
+            "x-api-key": body.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": body.model,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 5,
+            "stream": False,
+        }
+    else:
+        url = f"{base}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {body.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": body.model or "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 5,
+            "stream": False,
+        }
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(url, json=payload, headers=headers)
         if resp.status_code == 200:
-            data = resp.json()
+            content_type = resp.headers.get("content-type", "").lower()
+            if "text/event-stream" in content_type:
+                model_used = _model_from_sse_text(resp.text) or body.model
+                return {"status": "ok", "message": f"连接成功，模型: {model_used}（流式响应）"}
+            try:
+                data = resp.json()
+            except Exception:
+                detail = resp.text[:300]
+                content_type = resp.headers.get("content-type", "")
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "error", "message": f"API 返回 200 但响应不是 JSON: {content_type} {detail}"},
+                )
             model_used = data.get("model", body.model)
             return {"status": "ok", "message": f"连接成功，模型: {model_used}"}
         else:
@@ -302,11 +417,64 @@ async def test_model_config(body: ModelConfigTest):
         )
 
 
+@app.post("/config/model/list")
+async def list_model_config(body: ModelListRequest):
+    import httpx
+
+    provider = (body.provider or "").lower()
+    base = _default_base_url(provider, body.base_url)
+    if provider == "anthropic":
+        url = f"{base}/models"
+        headers = {
+            "x-api-key": body.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+    else:
+        url = f"{base}/models"
+        headers = {
+            "Authorization": f"Bearer {body.api_key}",
+            "Content-Type": "application/json",
+        }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            detail = resp.text[:300]
+            logger.warning(f"LLM model list failed: {resp.status_code} {detail}")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"模型列表接口返回 {resp.status_code}: {detail}"},
+            )
+        try:
+            data = resp.json()
+        except Exception:
+            detail = resp.text[:300]
+            content_type = resp.headers.get("content-type", "")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"模型列表接口返回非 JSON: {content_type} {detail}"},
+            )
+        models = _normalize_model_options(data)
+        if not models:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "模型列表为空，请确认 Base URL 是否支持 /models 接口"},
+            )
+        return {"status": "ok", "models": models}
+    except Exception as e:
+        logger.warning(f"LLM model list error: {e}")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"获取模型列表失败: {str(e)}"},
+        )
+
+
 @app.post("/config/model")
 async def update_model_config(body: ModelConfigUpdate):
     """
     接收 Go 后端推送的模型配置，更新 executor/.env 并热重载到内存。
-    仅更新 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL 三项，
+    仅更新 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL / OPENAI_REASONING_EFFORT 四项，
     其余 .env 条目保持不变。
     """
     import config as cfg
@@ -324,6 +492,7 @@ async def update_model_config(body: ModelConfigUpdate):
         "OPENAI_API_KEY": body.api_key,
         "OPENAI_BASE_URL": body.base_url,
         "OPENAI_MODEL": body.model,
+        "OPENAI_REASONING_EFFORT": _normalize_reasoning_effort(body.reasoning_effort),
     }
     seen_keys = set()
 
@@ -351,13 +520,15 @@ async def update_model_config(body: ModelConfigUpdate):
     cfg.OPENAI_API_KEY = body.api_key
     cfg.OPENAI_BASE_URL = body.base_url
     cfg.OPENAI_MODEL = body.model
+    cfg.OPENAI_REASONING_EFFORT = _normalize_reasoning_effort(body.reasoning_effort)
     # 同步到 os.environ 以便其他模块读取
     os.environ["OPENAI_API_KEY"] = body.api_key
     os.environ["OPENAI_BASE_URL"] = body.base_url
     os.environ["OPENAI_MODEL"] = body.model
+    os.environ["OPENAI_REASONING_EFFORT"] = cfg.OPENAI_REASONING_EFFORT
 
-    logger.info(f"Model config updated: model={body.model}, base_url={body.base_url}")
-    return {"status": "ok", "model": body.model, "base_url": body.base_url}
+    logger.info(f"Model config updated: model={body.model}, base_url={body.base_url}, reasoning_effort={cfg.OPENAI_REASONING_EFFORT}")
+    return {"status": "ok", "model": body.model, "base_url": body.base_url, "reasoning_effort": cfg.OPENAI_REASONING_EFFORT}
 
 
 @app.post("/execute/generate")
@@ -859,6 +1030,167 @@ async def auth_invalidate(start_url: str):
     return {"message": f"Auth state invalidated for {start_url}"}
 
 
+class AuthLoginRequest(BaseModel):
+    """手动触发自动登录，获取目标站点 Token"""
+    start_url: str
+    username: str = ""
+    password: str = ""
+    auth_config: Optional[dict] = None  # 高级登录配置（选择器等）
+
+
+@app.post("/auth/login")
+async def auth_login(req: AuthLoginRequest):
+    """
+    手动触发自动登录，获取并保存目标站点的认证状态。
+    支持两种方式：
+      1. 简单模式：传入 username/password，使用默认选择器
+      2. 高级模式：传入完整 auth_config JSON
+    """
+    from login_handler import auto_login, build_login_config
+    from auth_manager import get_auth_state_info
+
+    # 构建 LoginConfig：优先用 auth_config，否则用 username/password
+    if req.auth_config:
+        login_cfg = build_login_config(req.start_url, req.auth_config)
+    elif req.username:
+        login_cfg = build_login_config(req.start_url, {
+            "login_url": req.start_url,
+            "username": req.username,
+            "password": req.password,
+        })
+    else:
+        # 回退到环境变量默认值
+        login_cfg = build_login_config(req.start_url, None)
+
+    if not login_cfg.username:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": "未提供登录用户名（请输入或在环境变量中配置 DEFAULT_LOGIN_USERNAME）",
+            },
+        )
+
+    logger.info(
+        f"[auth/login] Triggering auto login for {req.start_url}, "
+        f"user={login_cfg.username}"
+    )
+
+    result = await auto_login(req.start_url, login_cfg)
+
+    # 获取登录后的最新状态
+    auth_info = get_auth_state_info(req.start_url)
+
+    return {
+        "success": result["success"],
+        "error": result.get("error", ""),
+        "attempts": result.get("attempts", 0),
+        "auth_state": auth_info,
+    }
+
+
+# ── 手动浏览器登录（用户自行处理验证码/短信等）──
+_manual_login_sessions: dict[str, dict] = {}
+
+
+class ManualLoginRequest(BaseModel):
+    """打开浏览器让用户手动登录"""
+    start_url: str
+
+
+@app.post("/auth/manual-login")
+async def auth_manual_login_start(req: ManualLoginRequest):
+    """
+    打开一个可见的浏览器窗口到目标站点，用户自行完成登录。
+    登录完成后调用 /auth/manual-login/complete 保存认证状态。
+    """
+    from playwright.async_api import async_playwright
+    from auth_manager import get_auth_state_path
+
+    domain = req.start_url.split("//")[-1].split("/")[0]
+
+    # 如果已有该域名的会话，先关闭
+    if domain in _manual_login_sessions:
+        try:
+            old = _manual_login_sessions.pop(domain)
+            await old["browser"].close()
+        except Exception:
+            pass
+
+    try:
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        context = await browser.new_context(ignore_https_errors=True)
+        page = await context.new_page()
+        await page.goto(req.start_url, wait_until="domcontentloaded", timeout=30000)
+
+        _manual_login_sessions[domain] = {
+            "pw": pw,
+            "browser": browser,
+            "context": context,
+            "page": page,
+            "start_url": req.start_url,
+        }
+
+        logger.info(f"[auth/manual-login] Browser opened for {domain}, waiting for user to login")
+
+        return {
+            "success": True,
+            "message": "浏览器已打开，请在浏览器中完成登录后点击「登录完成」",
+            "domain": domain,
+        }
+    except Exception as e:
+        logger.error(f"[auth/manual-login] Failed to open browser: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": f"打开浏览器失败: {str(e)}"},
+        )
+
+
+@app.post("/auth/manual-login/complete")
+async def auth_manual_login_complete(req: ManualLoginRequest):
+    """
+    用户确认登录完成后，保存浏览器的 storageState 并关闭浏览器。
+    """
+    from auth_manager import get_auth_state_path, get_auth_state_info
+
+    domain = req.start_url.split("//")[-1].split("/")[0]
+    session = _manual_login_sessions.pop(domain, None)
+
+    if not session:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "未找到该域名的登录会话，请先点击「手动登录」"},
+        )
+
+    try:
+        auth_state_path = get_auth_state_path(req.start_url)
+        await session["context"].storage_state(path=auth_state_path)
+        logger.info(f"[auth/manual-login] Auth state saved for {domain}: {auth_state_path}")
+
+        auth_info = get_auth_state_info(req.start_url)
+
+        return {
+            "success": True,
+            "message": "认证状态已保存",
+            "auth_state": auth_info,
+        }
+    except Exception as e:
+        logger.error(f"[auth/manual-login] Failed to save auth state: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": f"保存认证状态失败: {str(e)}"},
+        )
+    finally:
+        try:
+            await session["browser"].close()
+            await session["pw"].stop()
+        except Exception:
+            pass
+
 
 def _step_model_to_traces(step_model: dict) -> list:
     """
@@ -985,8 +1317,7 @@ async def analyze_testcase(req: TestCaseAnalyzeRequest):
                 {"role": "system", "content": _ANALYZE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
-            temperature=0.3,
-            max_tokens=1500,
+            **_openai_completion_params(OPENAI_MODEL, 0.3, 1500),
         )
 
         raw = response.choices[0].message.content.strip()

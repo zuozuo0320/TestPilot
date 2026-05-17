@@ -16,21 +16,45 @@ export class NavigationPage {
   }
 
   /**
+   * 确保页面已加载到目标站点，避免在 about:blank 上查找菜单元素。
+   * 如果当前页面是 about:blank，则自动导航到 baseURL（由 playwright.config.ts 配置）。
+   */
+  private async ensurePageLoaded(): Promise<void> {
+    const url = this.page.url();
+    if (url === 'about:blank' || url === '') {
+      await this.page.goto('/');
+      await this.page.waitForLoadState('networkidle');
+    }
+  }
+
+  /**
    * 获取当前页面中第一个可见的精确文本节点，避免命中折叠菜单里的隐藏副本。
    * @param text 需要精确匹配的文本
    */
   async getVisibleExactText(text: string): Promise<Locator> {
-    const candidates = this.page.getByText(text, { exact: true });
-    const count = await candidates.count();
+    const exactCandidates = this.page.getByText(text, { exact: true });
+    const exactCount = await exactCandidates.count();
 
-    for (let index = 0; index < count; index += 1) {
-      const candidate = candidates.nth(index);
+    for (let index = 0; index < exactCount; index += 1) {
+      const candidate = exactCandidates.nth(index);
       if (await candidate.isVisible()) {
         return candidate;
       }
     }
 
-    return candidates.first();
+    const menuCandidates = this.page
+      .locator('.el-menu-item, .el-submenu__title, [role="menuitem"], [class*="menu"]')
+      .filter({ hasText: text });
+    const menuCount = await menuCandidates.count();
+
+    for (let index = 0; index < menuCount; index += 1) {
+      const candidate = menuCandidates.nth(index);
+      if (await candidate.isVisible()) {
+        return candidate;
+      }
+    }
+
+    return exactCandidates.first();
   }
 
   /**
@@ -38,6 +62,7 @@ export class NavigationPage {
    * @param menuName 菜单项文本
    */
   async goToMenu(menuName: string): Promise<void> {
+    await this.ensurePageLoaded();
     const menuItem = await this.getVisibleExactText(menuName);
     await expect(menuItem).toBeVisible();
     await menuItem.click();
@@ -49,6 +74,7 @@ export class NavigationPage {
    * @param menuPath 菜单路径数组，例如 ['任务管理', '资产探知']
    */
   async goToMenuPath(menuPath: string[]): Promise<void> {
+    await this.ensurePageLoaded();
     for (const menuName of menuPath) {
       const menuItem = await this.getVisibleExactText(menuName);
       await expect(menuItem).toBeVisible();

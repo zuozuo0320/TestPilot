@@ -12,7 +12,7 @@ from typing import Optional
 
 from openai import OpenAI
 
-from config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+import config as cfg
 from raw_locator_guard import (
     build_generation_script_from_recording,
     build_step_model_from_recording,
@@ -23,10 +23,33 @@ logger = logging.getLogger(__name__)
 
 def _build_client() -> OpenAI:
     """构建 OpenAI 客户端"""
-    kwargs = {"api_key": OPENAI_API_KEY}
-    if OPENAI_BASE_URL:
-        kwargs["base_url"] = OPENAI_BASE_URL
+    kwargs = {"api_key": cfg.OPENAI_API_KEY}
+    if cfg.OPENAI_BASE_URL:
+        kwargs["base_url"] = cfg.OPENAI_BASE_URL
     return OpenAI(**kwargs)
+
+
+def _normalize_reasoning_effort(value: str) -> str:
+    if value in {"low", "medium", "high"}:
+        return value
+    return "medium"
+
+
+def _is_reasoning_model(model: str) -> bool:
+    name = (model or "").lower()
+    return name.startswith(("o1", "o3", "o4")) or any(item in name for item in ("gpt-5", "reasoning"))
+
+
+def _completion_params(model: str, temperature: float, max_tokens: int) -> dict:
+    if _is_reasoning_model(model):
+        return {
+            "reasoning_effort": _normalize_reasoning_effort(cfg.OPENAI_REASONING_EFFORT),
+            "max_completion_tokens": max_tokens,
+        }
+    return {
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
 
 
 # ── 系统提示词 ──
@@ -252,13 +275,12 @@ def _call_llm(system_prompt: str, user_prompt: str, scenario_desc: str, start_ur
         try:
             client = _build_client()
             response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=cfg.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.1,
-                max_tokens=8192,
+                **_completion_params(cfg.OPENAI_MODEL, 0.1, 8192),
             )
 
             content = response.choices[0].message.content.strip()

@@ -70,6 +70,10 @@ type cloneTaskRequest struct {
 	TaskName string `json:"task_name" binding:"required,min=1,max=128"`
 }
 
+type renameTaskRequest struct {
+	TaskName string `json:"task_name" binding:"required,min=1,max=128"`
+}
+
 type finishRecordingRequest struct {
 	RecordingID       uint   `json:"recording_id" binding:"required,min=1"`
 	RawScriptContent  string `json:"raw_script_content" binding:"required,min=1"`
@@ -469,6 +473,26 @@ func (a *API) cloneTask(c *gin.Context) {
 		return
 	}
 	response.Created(c, task)
+}
+
+// renameTask 更新任务名称
+func (a *API) renameTask(c *gin.Context) {
+	user := currentUser(c)
+	taskID, ok := parseUintParam(c, "taskID")
+	if !ok {
+		return
+	}
+
+	var req renameTaskRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+
+	if err := a.aiScriptSvc.RenameTask(c.Request.Context(), user.ID, taskID, req.TaskName); err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, nil)
 }
 
 // startRecording 启动录制

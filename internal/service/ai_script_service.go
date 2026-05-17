@@ -1400,6 +1400,42 @@ func discardTaskSkipReason(status string) string {
 	}
 }
 
+// RenameTask 更新任务名称
+func (s *AIScriptService) RenameTask(ctx context.Context, userID, taskID uint, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return ErrBadRequest(CodeParamsError, "任务名称不能为空")
+	}
+	if len(newName) > 128 {
+		return ErrBadRequest(CodeParamsError, "任务名称不能超过 128 个字符")
+	}
+
+	task, err := s.repo.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound(CodeNotFound, "任务不存在")
+		}
+		return ErrInternal(CodeInternal, err)
+	}
+
+	if task.TaskStatus == model.AITaskStatusDiscarded {
+		return ErrBadRequest(CodeParamsError, "已废弃的任务不可修改名称")
+	}
+
+	if err := s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
+		"task_name": newName,
+	}); err != nil {
+		return ErrInternal(CodeInternal, err)
+	}
+
+	s.logger.InfoContext(ctx, "task renamed",
+		"task_id", taskID,
+		"user_id", userID,
+		"new_name", newName,
+	)
+	return nil
+}
+
 // CloneTask 复制任务配置生成新任务
 func (s *AIScriptService) CloneTask(ctx context.Context, userID, taskID uint, newTaskName string) (*model.AIScriptTask, error) {
 	task, err := s.repo.GetTask(ctx, taskID)

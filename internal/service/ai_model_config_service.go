@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -23,6 +24,28 @@ type AIModelConfigService struct {
 	executorURL    string // executor 内部地址（如 http://host.docker.internal:8100）
 	executorAPIKey string // executor API Key
 	logger         *slog.Logger
+}
+
+// AIModelOption 上游模型选项
+type AIModelOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ListAIModelsInput 拉取上游模型列表入参
+type ListAIModelsInput struct {
+	Provider string `json:"provider"`
+	APIKey   string `json:"api_key"`
+	BaseURL  string `json:"base_url"`
+}
+
+func normalizeAIModelStrength(strength string) string {
+	switch strength {
+	case "low", "medium", "high":
+		return strength
+	default:
+		return "medium"
+	}
 }
 
 // NewAIModelConfigService 构造函数
@@ -73,21 +96,23 @@ func (s *AIModelConfigService) GetActive(ctx context.Context) (*model.AIModelCon
 
 // CreateInput 创建模型配置入参
 type CreateAIModelInput struct {
-	Provider string `json:"provider" binding:"required"`
-	Name     string `json:"name" binding:"required"`
-	ModelID  string `json:"model_id" binding:"required"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key" binding:"required"`
+	Provider      string `json:"provider" binding:"required"`
+	Name          string `json:"name" binding:"required"`
+	ModelID       string `json:"model_id" binding:"required"`
+	ModelStrength string `json:"model_strength"`
+	BaseURL       string `json:"base_url"`
+	APIKey        string `json:"api_key" binding:"required"`
 }
 
 // Create 创建模型配置
 func (s *AIModelConfigService) Create(ctx context.Context, input CreateAIModelInput) (*model.AIModelConfig, error) {
 	cfg := &model.AIModelConfig{
-		Provider: input.Provider,
-		Name:     input.Name,
-		ModelID:  input.ModelID,
-		BaseURL:  input.BaseURL,
-		APIKey:   input.APIKey,
+		Provider:      input.Provider,
+		Name:          input.Name,
+		ModelID:       input.ModelID,
+		ModelStrength: normalizeAIModelStrength(input.ModelStrength),
+		BaseURL:       input.BaseURL,
+		APIKey:        input.APIKey,
 	}
 	if err := s.repo.Create(ctx, cfg, nil); err != nil {
 		return nil, fmt.Errorf("创建模型配置失败: %w", err)
@@ -98,11 +123,12 @@ func (s *AIModelConfigService) Create(ctx context.Context, input CreateAIModelIn
 
 // UpdateAIModelInput 更新模型配置入参
 type UpdateAIModelInput struct {
-	Provider string `json:"provider"`
-	Name     string `json:"name"`
-	ModelID  string `json:"model_id"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
+	Provider      string `json:"provider"`
+	Name          string `json:"name"`
+	ModelID       string `json:"model_id"`
+	ModelStrength string `json:"model_strength"`
+	BaseURL       string `json:"base_url"`
+	APIKey        string `json:"api_key"`
 }
 
 // Update 更新模型配置
@@ -122,6 +148,9 @@ func (s *AIModelConfigService) Update(ctx context.Context, id uint, input Update
 	}
 	if input.ModelID != "" {
 		cfg.ModelID = input.ModelID
+	}
+	if input.ModelStrength != "" {
+		cfg.ModelStrength = normalizeAIModelStrength(input.ModelStrength)
 	}
 	if input.BaseURL != "" {
 		cfg.BaseURL = input.BaseURL
@@ -190,11 +219,12 @@ func (s *AIModelConfigService) Activate(ctx context.Context, id uint) (*model.AI
 }
 
 // TestConnection 通过 executor 测试 LLM API 连通性
-func (s *AIModelConfigService) TestConnection(ctx context.Context, apiKey, baseURL, modelID string) (map[string]string, error) {
+func (s *AIModelConfigService) TestConnection(ctx context.Context, provider, apiKey, baseURL, modelID string) (map[string]string, error) {
 	if s.executorURL == "" {
 		return nil, fmt.Errorf("executor URL 未配置")
 	}
 	payload := map[string]string{
+		"provider": provider,
 		"api_key":  apiKey,
 		"base_url": baseURL,
 		"model":    modelID,
@@ -229,15 +259,66 @@ func (s *AIModelConfigService) TestConnection(ctx context.Context, apiKey, baseU
 	return result, nil
 }
 
+// ListModels 通过 executor 拉取上游模型列表
+func (s *AIModelConfigService) ListModels(ctx context.Context, input ListAIModelsInput) ([]AIModelOption, error) {
+	if s.executorURL == "" {
+		return nil, fmt.Errorf("executor URL 未配置")
+	}
+	payload := map[string]string{
+		"provider": input.Provider,
+		"api_key":  input.APIKey,
+		"base_url": input.BaseURL,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求失败: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", s.executorURL+"/config/model/list", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if s.executorAPIKey != "" {
+		req.Header.Set("X-API-Key", s.executorAPIKey)
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("无法连接 executor: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+	var result struct {
+		Status  string          `json:"status"`
+		Message string          `json:"message"`
+		Models  []AIModelOption `json:"models"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if result.Message == "" {
+			result.Message = fmt.Sprintf("获取模型列表失败 (HTTP %d)", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("%s", result.Message)
+	}
+	return result.Models, nil
+}
+
 // syncToExecutor 将模型配置推送到 executor /config/model 端点
 func (s *AIModelConfigService) syncToExecutor(cfg *model.AIModelConfig) error {
 	if s.executorURL == "" {
 		return fmt.Errorf("executor URL 未配置")
 	}
 	payload := map[string]string{
-		"api_key":  cfg.APIKey,
-		"base_url": cfg.BaseURL,
-		"model":    cfg.ModelID,
+		"api_key":          cfg.APIKey,
+		"base_url":         cfg.BaseURL,
+		"model":            cfg.ModelID,
+		"reasoning_effort": normalizeAIModelStrength(cfg.ModelStrength),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

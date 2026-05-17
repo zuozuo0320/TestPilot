@@ -89,6 +89,7 @@ func (a *API) deleteAIModelConfig(c *gin.Context) {
 func (a *API) testAIModelConnection(c *gin.Context) {
 	var input struct {
 		ConfigID uint   `json:"config_id"`
+		Provider string `json:"provider"`
 		APIKey   string `json:"api_key"`
 		BaseURL  string `json:"base_url"`
 		ModelID  string `json:"model_id"`
@@ -99,6 +100,8 @@ func (a *API) testAIModelConnection(c *gin.Context) {
 	}
 	// 如果未传 api_key 但有 config_id，从数据库获取已存的 key
 	apiKey := input.APIKey
+	provider := input.Provider
+	baseURL := input.BaseURL
 	if apiKey == "" && input.ConfigID > 0 {
 		existing, err := a.aiModelConfigSvc.GetByID(c.Request.Context(), input.ConfigID)
 		if err != nil {
@@ -106,17 +109,68 @@ func (a *API) testAIModelConnection(c *gin.Context) {
 			return
 		}
 		apiKey = existing.APIKey
+		if provider == "" {
+			provider = existing.Provider
+		}
+		if baseURL == "" {
+			baseURL = existing.BaseURL
+		}
 	}
 	if apiKey == "" {
 		response.Error(c, 400, service.CodeParamsError, "请输入 API Key")
 		return
 	}
-	result, err := a.aiModelConfigSvc.TestConnection(c.Request.Context(), apiKey, input.BaseURL, input.ModelID)
+	result, err := a.aiModelConfigSvc.TestConnection(c.Request.Context(), provider, apiKey, baseURL, input.ModelID)
 	if err != nil {
 		response.Error(c, 400, service.CodeParamsError, err.Error())
 		return
 	}
 	response.OK(c, result)
+}
+
+// listAIModelOptions 拉取上游模型列表
+func (a *API) listAIModelOptions(c *gin.Context) {
+	var input struct {
+		ConfigID uint   `json:"config_id"`
+		Provider string `json:"provider"`
+		APIKey   string `json:"api_key"`
+		BaseURL  string `json:"base_url"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.Error(c, 400, service.CodeParamsError, "参数错误: "+err.Error())
+		return
+	}
+	apiKey := input.APIKey
+	provider := input.Provider
+	baseURL := input.BaseURL
+	if apiKey == "" && input.ConfigID > 0 {
+		existing, err := a.aiModelConfigSvc.GetByID(c.Request.Context(), input.ConfigID)
+		if err != nil {
+			response.Error(c, 400, service.CodeParamsError, "找不到已有配置")
+			return
+		}
+		apiKey = existing.APIKey
+		if provider == "" {
+			provider = existing.Provider
+		}
+		if baseURL == "" {
+			baseURL = existing.BaseURL
+		}
+	}
+	if apiKey == "" {
+		response.Error(c, 400, service.CodeParamsError, "请输入 API Key")
+		return
+	}
+	models, err := a.aiModelConfigSvc.ListModels(c.Request.Context(), service.ListAIModelsInput{
+		Provider: provider,
+		APIKey:   apiKey,
+		BaseURL:  baseURL,
+	})
+	if err != nil {
+		response.Error(c, 400, service.CodeParamsError, err.Error())
+		return
+	}
+	response.OK(c, models)
 }
 
 // activateAIModel 启用指定模型
