@@ -1030,6 +1030,21 @@ async def auth_invalidate(start_url: str):
     return {"message": f"Auth state invalidated for {start_url}"}
 
 
+@app.post("/auth/refresh")
+async def auth_refresh(start_url: str):
+    """主动探测并刷新指定 URL 的认证状态"""
+    from auth_manager import get_auth_state_info, refresh_auth_state
+    loop = asyncio.get_event_loop()
+    refresh_result = await loop.run_in_executor(None, refresh_auth_state, start_url)
+    auth_info = get_auth_state_info(start_url)
+    return {
+        "success": refresh_result["success"],
+        "error": refresh_result.get("error", ""),
+        "checked_at": refresh_result.get("checked_at"),
+        "auth_state": auth_info,
+    }
+
+
 class AuthLoginRequest(BaseModel):
     """手动触发自动登录，获取目标站点 Token"""
     start_url: str

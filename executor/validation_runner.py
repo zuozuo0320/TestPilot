@@ -92,6 +92,29 @@ export default defineConfig({
     return project_dir
 
 
+def _build_validation_auth_failure(start_time: float, reason: str) -> dict:
+    duration_ms = int((time.time() - start_time) * 1000)
+    return {
+        "success": False,
+        "total_step_count": 0,
+        "passed_step_count": 0,
+        "failed_step_no": None,
+        "fail_reason": reason,
+        "assertion_summary": [],
+        "duration_ms": duration_ms,
+        "logs": [{"level": "ERROR", "message": reason}],
+        "screenshots": [],
+        "error_message": reason,
+    }
+
+
+def _refresh_auth_state_for_validation(start_url: str) -> tuple[bool, str, str]:
+    from auth_manager import refresh_auth_state
+
+    result = refresh_auth_state(start_url)
+    return result["success"], result["auth_state_path"], result.get("error", "")
+
+
 def run_validation(
     task_id: int,
     script_version_id: int,
@@ -161,18 +184,13 @@ def run_validation(
             cleaned_content,
         )
 
-        # 如果有有效的 auth_state，通过 config 全局注入
-        try:
-            from auth_manager import has_valid_auth_state, get_auth_state_path
-            auth_state_path = get_auth_state_path(start_url)
-            if has_valid_auth_state(start_url):
-                abs_path = os.path.abspath(auth_state_path).replace("\\", "/")
-                _update_config_storage_state(project_dir, abs_path)
-                logger.info(f"Injected storageState into config: {abs_path}")
-            else:
-                _update_config_storage_state(project_dir, None)
-        except Exception as e:
-            logger.warning(f"Failed to inject auth state: {e}")
+        auth_ok, auth_state_path, auth_error = _refresh_auth_state_for_validation(start_url)
+        if not auth_ok:
+            _update_config_storage_state(project_dir, None)
+            return _build_validation_auth_failure(start_time, auth_error)
+        abs_path = os.path.abspath(auth_state_path).replace("\\", "/")
+        _update_config_storage_state(project_dir, abs_path)
+        logger.info(f"Injected storageState into config: {abs_path}")
 
         # 写入脚本文件
         script_file = tests_dir / f"task_{task_id}_v{script_version_id}.spec.ts"
@@ -546,24 +564,17 @@ def _run_v1_project_validation(
     if results_dir.exists():
         shutil.rmtree(results_dir, ignore_errors=True)
 
-    # auth_state 注入
-    try:
-        from auth_manager import has_valid_auth_state, get_auth_state_path
-        auth_state_path = get_auth_state_path(start_url)
-        if has_valid_auth_state(start_url):
-            abs_path = os.path.abspath(auth_state_path).replace("\\", "/")
-            _update_config_storage_state(workspace_root, abs_path)
-            # 同步 auth state 到项目级 auth_states/default.json
-            # auth.fixture.ts 引用 default.json，其 storageState 优先级高于 config
-            project_auth_dir = workspace_root / "auth_states"
-            project_auth_dir.mkdir(exist_ok=True)
-            project_default = project_auth_dir / "default.json"
-            shutil.copy2(auth_state_path, str(project_default))
-            logger.info(f"[v1-validation] auth_state 同步至项目: {project_default}")
-        else:
-            _update_config_storage_state(workspace_root, None)
-    except Exception as e:
-        logger.warning(f"[v1-validation] auth_state 注入失败: {e}")
+    auth_ok, auth_state_path, auth_error = _refresh_auth_state_for_validation(start_url)
+    if not auth_ok:
+        _update_config_storage_state(workspace_root, None)
+        return _build_validation_auth_failure(start_time, auth_error)
+    abs_path = os.path.abspath(auth_state_path).replace("\\", "/")
+    _update_config_storage_state(workspace_root, abs_path)
+    project_auth_dir = workspace_root / "auth_states"
+    project_auth_dir.mkdir(exist_ok=True)
+    project_default = project_auth_dir / "default.json"
+    shutil.copy2(auth_state_path, str(project_default))
+    logger.info(f"[v1-validation] auth_state 同步至项目: {project_default}")
 
     # BASE_URL 自动同步：从 start_url 提取 origin 写入 .env
     try:

@@ -16,6 +16,15 @@ from config import AUTH_STATE_DIR, AUTH_STATE_MAX_AGE_HOURS
 
 logger = logging.getLogger(__name__)
 
+LOGIN_URL_KEYWORDS = (
+    "/login",
+    "/signin",
+    "/sign-in",
+    "/auth/login",
+    "login?",
+    "redirect=login",
+)
+
 
 def _domain_from_url(url: str) -> str:
     """从 URL 提取域名（含端口）作为 auth_state 文件名"""
@@ -131,6 +140,88 @@ def invalidate_auth_state(start_url: str):
         logger.info(f"No auth_state to invalidate for {start_url}")
 
 
+def page_requires_login(page) -> bool:
+    """根据 URL、密码框和登录文案判断当前页面是否需要重新登录"""
+    current_url = (page.url or "").lower()
+    if any(keyword in current_url for keyword in LOGIN_URL_KEYWORDS):
+        return True
+
+    try:
+        password_inputs = page.locator("input[type='password']")
+        for index in range(min(password_inputs.count(), 3)):
+            if password_inputs.nth(index).is_visible(timeout=500):
+                return True
+    except Exception:
+        pass
+
+    try:
+        body_text = page.locator("body").inner_text(timeout=1000).lower()
+        has_login_text = any(text in body_text for text in ("登录", "登陆", "login", "sign in"))
+        has_password_text = any(text in body_text for text in ("密码", "password"))
+        if has_login_text and has_password_text:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def refresh_auth_state(start_url: str) -> dict:
+    """使用已保存的 storageState 打开目标站点，确认可用后刷新保存认证状态"""
+    from playwright.sync_api import sync_playwright
+
+    auth_state_path = os.path.abspath(get_auth_state_path(start_url))
+    if not os.path.exists(auth_state_path):
+        return {
+            "success": False,
+            "auth_state_path": auth_state_path,
+            "error": "认证状态缺失，请在 Token 管理中完成手动登录后再执行验证",
+            "checked_at": int(time.time()),
+        }
+
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            try:
+                context = browser.new_context(
+                    storage_state=auth_state_path,
+                    ignore_https_errors=True,
+                )
+                try:
+                    page = context.new_page()
+                    page.goto(start_url, wait_until="domcontentloaded", timeout=30000)
+                    page.wait_for_timeout(2000)
+                    if page_requires_login(page):
+                        return {
+                            "success": False,
+                            "auth_state_path": auth_state_path,
+                            "error": "认证状态已失效，请在 Token 管理中重新手动登录后再执行验证",
+                            "checked_at": int(time.time()),
+                        }
+                    context.storage_state(path=auth_state_path)
+                    logger.info(f"Auth state refreshed: {auth_state_path}")
+                    return {
+                        "success": True,
+                        "auth_state_path": auth_state_path,
+                        "error": "",
+                        "checked_at": int(time.time()),
+                    }
+                finally:
+                    context.close()
+            finally:
+                browser.close()
+    except Exception as e:
+        return {
+            "success": False,
+            "auth_state_path": auth_state_path,
+            "error": f"认证状态预检失败，请确认目标站点可访问或重新登录 Token: {e}",
+            "checked_at": int(time.time()),
+        }
+
+
 def get_auth_state_info(start_url: str) -> dict:
     """获取 auth_state 的详细信息（用于 API 查询）"""
     path = get_auth_state_path(start_url)
@@ -140,11 +231,14 @@ def get_auth_state_info(start_url: str) -> dict:
             "valid": False,
             "file_path": None,
             "file_age_hours": None,
+            "max_age_hours": AUTH_STATE_MAX_AGE_HOURS,
+            "remaining_hours": None,
             "cookie_count": 0,
         }
 
     file_age_hours = (time.time() - os.path.getmtime(path)) / 3600
     valid = has_valid_auth_state(start_url)
+    remaining_hours = max(0, AUTH_STATE_MAX_AGE_HOURS - file_age_hours)
 
     cookie_count = 0
     try:
@@ -159,5 +253,7 @@ def get_auth_state_info(start_url: str) -> dict:
         "valid": valid,
         "file_path": path,
         "file_age_hours": round(file_age_hours, 1),
+        "max_age_hours": AUTH_STATE_MAX_AGE_HOURS,
+        "remaining_hours": round(remaining_hours, 1),
         "cookie_count": cookie_count,
     }
