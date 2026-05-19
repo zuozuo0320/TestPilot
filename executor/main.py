@@ -204,6 +204,28 @@ async def _cleanup_stale_sessions():
             logger.info(f"Cleaned up stale codegen session {sid}")
 
 
+def _terminate_codegen_process(pid: int):
+    """终止 Playwright codegen 进程树，避免重新录制时旧浏览器继续占用会话"""
+    import signal
+    import subprocess as _sp
+
+    if not pid:
+        return
+
+    try:
+        if os.name == "nt":
+            _sp.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
+                check=False,
+            )
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except Exception as e:
+        logger.warning(f"Failed to terminate codegen process {pid}: {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(_cleanup_stale_sessions())
@@ -839,6 +861,10 @@ async def _run_codegen_v2(
         else:
             logger.info(f"[codegen:{session_id}] Valid auth state found, will load it")
 
+        if _codegen_sessions.get(session_id, {}).get("status") == "cancelled":
+            logger.info(f"[codegen:{session_id}] Cancelled before process start")
+            return
+
         cmd = [
             _npx_command(),
             "-y",
@@ -880,6 +906,10 @@ async def _run_codegen_v2(
             started_at = time.time()
             returncode = await loop.run_in_executor(None, proc.wait)
             elapsed_seconds = time.time() - started_at
+
+        if _codegen_sessions.get(session_id, {}).get("status") == "cancelled":
+            logger.info(f"[codegen:{session_id}] Session cancelled, skip output collection")
+            return
 
         logger.info(f"[codegen:{session_id}] Process exited, reading output file")
 
@@ -969,6 +999,30 @@ async def poll_codegen(session_id: str):
     }
 
 
+@app.delete("/recording/codegen/{session_id}")
+async def cancel_codegen(session_id: str):
+    """取消 Playwright Codegen 录制并终止浏览器进程"""
+    session = _codegen_sessions.get(session_id)
+    if not session:
+        return {"success": True, "message": "session not found"}
+
+    session["status"] = "cancelled"
+    session["error"] = "录制已取消"
+    pid = session.get("pid")
+    if pid:
+        _terminate_codegen_process(int(pid))
+
+    output_file = session.get("output_file")
+    if output_file and os.path.exists(output_file):
+        try:
+            os.remove(output_file)
+        except Exception as e:
+            logger.warning(f"Failed to remove codegen output file {output_file}: {e}")
+
+    logger.info(f"[codegen:{session_id}] Cancelled")
+    return {"success": True, "message": "codegen cancelled"}
+
+
 @app.get("/recording/codegen/task/{task_id}/pending")
 async def get_pending_script(task_id: int):
     """获取指定任务的待提交录制脚本（页面刷新后恢复用）"""
@@ -1037,6 +1091,7 @@ async def auth_refresh(start_url: str):
     loop = asyncio.get_event_loop()
     refresh_result = await loop.run_in_executor(None, refresh_auth_state, start_url)
     auth_info = get_auth_state_info(start_url)
+    auth_info["valid"] = refresh_result["success"]
     return {
         "success": refresh_result["success"],
         "error": refresh_result.get("error", ""),
@@ -1138,7 +1193,15 @@ async def auth_manual_login_start(req: ManualLoginRequest):
             headless=False,
             args=["--disable-blink-features=AutomationControlled"],
         )
-        context = await browser.new_context(ignore_https_errors=True)
+        auth_state_path = get_auth_state_path(req.start_url)
+        context_options = {"ignore_https_errors": True}
+        if os.path.exists(auth_state_path):
+            context_options["storage_state"] = auth_state_path
+        try:
+            context = await browser.new_context(**context_options)
+        except Exception as context_error:
+            logger.warning(f"[auth/manual-login] Failed to reuse auth state: {context_error}")
+            context = await browser.new_context(ignore_https_errors=True)
         page = await context.new_page()
         await page.goto(req.start_url, wait_until="domcontentloaded", timeout=30000)
 
@@ -1170,7 +1233,7 @@ async def auth_manual_login_complete(req: ManualLoginRequest):
     """
     用户确认登录完成后，保存浏览器的 storageState 并关闭浏览器。
     """
-    from auth_manager import get_auth_state_path, get_auth_state_info
+    from auth_manager import get_auth_state_path, get_auth_state_info, refresh_auth_state
 
     domain = req.start_url.split("//")[-1].split("/")[0]
     session = _manual_login_sessions.pop(domain, None)
@@ -1186,7 +1249,18 @@ async def auth_manual_login_complete(req: ManualLoginRequest):
         await session["context"].storage_state(path=auth_state_path)
         logger.info(f"[auth/manual-login] Auth state saved for {domain}: {auth_state_path}")
 
+        loop = asyncio.get_event_loop()
+        refresh_result = await loop.run_in_executor(None, refresh_auth_state, req.start_url)
         auth_info = get_auth_state_info(req.start_url)
+        auth_info["valid"] = refresh_result["success"]
+
+        if not refresh_result["success"]:
+            return {
+                "success": False,
+                "message": "认证状态保存后校验失败",
+                "error": refresh_result.get("error", "认证状态不可用，请重新登录"),
+                "auth_state": auth_info,
+            }
 
         return {
             "success": True,
