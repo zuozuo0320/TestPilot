@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -179,6 +180,11 @@ def _build_codegen_failure_message(
 def _npx_command() -> str:
     """按平台返回可直接执行的 npx 命令。"""
     return "npx.cmd" if os.name == "nt" else "npx"
+
+
+def _playwright_cmd_prefix() -> list:
+    """返回直接调用 Python playwright CLI 的命令前缀，跳过 npx 解析开销。"""
+    return [sys.executable, "-m", "playwright"]
 
 
 async def _cleanup_stale_sessions():
@@ -741,11 +747,8 @@ async def _run_codegen(
         else:
             logger.info(f"[codegen:{session_id}] Valid auth state found, will load it")
 
-        # ── 构建 codegen 命令 ──
-        cmd = [
-            _npx_command(),
-            "-y",
-            "playwright",
+        # 使用 Python playwright CLI 直接启动，避免 npx 解析带来的 3~5 秒延迟。
+        cmd = _playwright_cmd_prefix() + [
             "codegen",
             "--ignore-https-errors",
             "--target",
@@ -836,23 +839,39 @@ async def _run_codegen_v2(
         auth_state_path = os.path.abspath(get_auth_state_path(start_url))
 
         # 认证态优先复用，失效时再尝试自动登录，尽量减少录制前的人工操作。
+        # 超时保护：auto_login 最多等 AUTO_LOGIN_TIMEOUT_SEC 秒，超时则跳过直接启动录制。
+        AUTO_LOGIN_TIMEOUT_SEC = 15
         if not has_valid_auth_state(start_url):
             logger.info(f"[codegen:{session_id}] No valid auth state, attempting auto login")
             _codegen_sessions[session_id]["status"] = "logging_in"
 
             login_cfg = build_login_config(start_url, auth_config)
             if login_cfg.username and login_cfg.login_url:
-                result = await auto_login(start_url, login_cfg)
-                if not result["success"]:
-                    logger.error(
-                        f"[codegen:{session_id}] Auto login failed: {result['error']}"
+                login_start = time.time()
+                try:
+                    result = await asyncio.wait_for(
+                        auto_login(start_url, login_cfg),
+                        timeout=AUTO_LOGIN_TIMEOUT_SEC,
                     )
-                    logger.info(f"[codegen:{session_id}] Proceeding without auth state")
-                else:
-                    logger.info(
-                        f"[codegen:{session_id}] Auto login succeeded "
-                        f"(attempts={result['attempts']})"
+                    login_elapsed = round(time.time() - login_start, 1)
+                    if not result["success"]:
+                        logger.error(
+                            f"[codegen:{session_id}] Auto login failed "
+                            f"({login_elapsed}s): {result['error']}"
+                        )
+                        logger.info(f"[codegen:{session_id}] Proceeding without auth state")
+                    else:
+                        logger.info(
+                            f"[codegen:{session_id}] Auto login succeeded "
+                            f"({login_elapsed}s, attempts={result['attempts']})"
+                        )
+                except asyncio.TimeoutError:
+                    login_elapsed = round(time.time() - login_start, 1)
+                    logger.warning(
+                        f"[codegen:{session_id}] Auto login timed out after "
+                        f"{login_elapsed}s, proceeding without auth state"
                     )
+                _codegen_sessions[session_id]["login_elapsed"] = login_elapsed
             else:
                 logger.info(
                     f"[codegen:{session_id}] No login config provided, "
@@ -865,10 +884,8 @@ async def _run_codegen_v2(
             logger.info(f"[codegen:{session_id}] Cancelled before process start")
             return
 
-        cmd = [
-            _npx_command(),
-            "-y",
-            "playwright",
+        # 使用 Python playwright CLI 直接启动，避免 npx 解析带来的 3~5 秒延迟。
+        cmd = _playwright_cmd_prefix() + [
             "codegen",
             "--ignore-https-errors",
             "--target",

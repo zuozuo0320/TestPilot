@@ -1476,8 +1476,19 @@ func (s *AIScriptService) StartRecording(ctx context.Context, userID, taskID uin
 	if task.GenerationMode != model.AIGenerationModeRecordingEnhanced {
 		return nil, ErrConflict(CodeConflict, "仅录制增强模式支持录制")
 	}
-	if task.TaskStatus != model.AITaskStatusPendingExecute && task.TaskStatus != model.AITaskStatusGenerateFailed {
-		return nil, ErrConflict(CodeConflict, fmt.Sprintf("当前状态 %s 不允许开始录制", task.TaskStatus))
+	allowedForRecording := map[string]bool{
+		model.AITaskStatusDraft:             true,
+		model.AITaskStatusPendingExecute:    true,
+		model.AITaskStatusGenerateFailed:    true,
+		model.AITaskStatusGenerateSuccess:   true,
+		model.AITaskStatusPendingConfirm:    true,
+		model.AITaskStatusPendingRevalidate: true,
+		model.AITaskStatusConfirmed:         true,
+		model.AITaskStatusDiscarded:         true,
+		model.AITaskStatusManualReview:      true,
+	}
+	if !allowedForRecording[task.TaskStatus] {
+		return nil, ErrConflict(CodeConflict, "脚本正在生成中，请等待完成后再发起录制")
 	}
 
 	// #4 并发录制互斥检查：同一任务只允许一个活跃录制
