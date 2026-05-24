@@ -246,6 +246,12 @@ type TestCase struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 
+	// 需求智生模块溯源字段（AI 生成的用例入库后回填）
+	SourceAIGenerated       bool `json:"source_ai_generated" gorm:"not null;default:false"`
+	SourceRequirementDocID  uint `json:"source_requirement_doc_id" gorm:"not null;default:0;index:idx_tc_source_doc"`
+	SourceGenTaskID         uint `json:"source_gen_task_id" gorm:"not null;default:0;index:idx_tc_source_task"`
+	SourceSkillID           uint `json:"source_skill_id" gorm:"not null;default:0"`
+
 	// 虚拟字段：用例评审模块关联摘要
 	InReview           bool   `json:"in_review" gorm:"-"`
 	CurrentReviewID    uint   `json:"current_review_id" gorm:"-"`
@@ -625,6 +631,12 @@ func AutoMigrate(db *gorm.DB) error {
 
 		// AI 模型配置
 		&AIModelConfig{},
+
+		// 需求智生模块
+		&RequirementDoc{},
+		&RequirementGenTask{},
+		&RequirementGenResult{},
+		&AISkill{},
 	)
 }
 

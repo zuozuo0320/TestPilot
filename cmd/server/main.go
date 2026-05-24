@@ -177,6 +177,10 @@ func main() {
 	caseReviewDefectRepo := repository.NewCaseReviewDefectRepo(db)
 	tagRepo := repository.NewTagRepo(db)
 	aiModelConfigRepo := repository.NewAIModelConfigRepo(db)
+	reqDocRepo := repository.NewRequirementDocRepo(db)
+	reqGenTaskRepo := repository.NewRequirementGenTaskRepo(db)
+	reqGenResultRepo := repository.NewRequirementGenResultRepo(db)
+	aiSkillRepo := repository.NewAISkillRepo(db)
 
 	// 2. Service 层
 	mockExecutor := execution.NewMockExecutor(logger, cfg.RunFailRate)
@@ -204,6 +208,9 @@ func main() {
 	caseReviewRuleSvc := service.NewCaseReviewRuleService(caseReviewRepo, testCaseRepo, caseReviewDefectRepo, caseReviewDefectSvc, txMgr, logger)
 	tagSvc := service.NewTagService(tagRepo, auditRepo, txMgr, logger)
 	aiModelConfigSvc := service.NewAIModelConfigService(aiModelConfigRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, logger)
+	reqDocSvc := service.NewRequirementDocService(logger, reqDocRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey)
+	reqGenTaskSvc := service.NewRequirementGenTaskService(logger, reqGenTaskRepo, reqGenResultRepo, reqDocRepo, aiSkillRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey)
+	aiSkillSvc := service.NewAISkillService(logger, aiSkillRepo, txMgr)
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{
@@ -233,6 +240,9 @@ func main() {
 		CaseReviewDefectService:     caseReviewDefectSvc,
 		TagService:                  tagSvc,
 		AIModelConfigService:        aiModelConfigSvc,
+		ReqDocService:               reqDocSvc,
+		ReqGenTaskService:           reqGenTaskSvc,
+		AISkillService:              aiSkillSvc,
 		ExecutorURL:                 cfg.ExecutorURL,
 		ExecutorAPIKey:              cfg.ExecutorAPIKey,
 	}, cfg.CORSAllowOrigins)

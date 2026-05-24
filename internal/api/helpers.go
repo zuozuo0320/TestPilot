@@ -142,6 +142,27 @@ func parseAllowedOrigins(raw string) []string {
 	return origins
 }
 
+// internalAPIKeyAuth 内部接口 API Key 鉴权中间件。
+// Executor 回调时在 Authorization header 携带 Bearer <API_KEY>，
+// 与配置的 ExecutorAPIKey 进行比对。
+func (a *API) internalAPIKeyAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		header := c.GetHeader("Authorization")
+		if header == "" {
+			response.Error(c, http.StatusUnauthorized, service.CodeReqInternalTokenInvalid, "missing authorization header")
+			c.Abort()
+			return
+		}
+		token := strings.TrimPrefix(header, "Bearer ")
+		if token == header || token != a.executorAPIKey {
+			response.Error(c, http.StatusUnauthorized, service.CodeReqInternalTokenInvalid, "invalid api key")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func (a *API) isAllowedOrigin(origin string) bool {
 	if origin == "" {
 		return false

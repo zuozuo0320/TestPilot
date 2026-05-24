@@ -53,6 +53,21 @@ func ErrInternal(code int, err error) *BizError {
 	return &BizError{Status: 500, Code: code, Message: "internal server error"}
 }
 
+// ErrTooManyRequests 429 并发/频率超限
+func ErrTooManyRequests(code int, message string) *BizError {
+	return &BizError{Status: 429, Code: code, Message: message}
+}
+
+// ErrPreconditionFailed 412 前置条件不满足
+func ErrPreconditionFailed(code int, message string) *BizError {
+	return &BizError{Status: 412, Code: code, Message: message}
+}
+
+// ErrServiceUnavailable 503 服务不可用
+func ErrServiceUnavailable(code int, message string) *BizError {
+	return &BizError{Status: 503, Code: code, Message: message}
+}
+
 // ========== 统一 6 位数字错误码定义 ==========
 // 格式: [服务2位][模块2位][序号2位]
 // 通用码: 2xxxxx=成功, 4xxxxx=客户端错误, 5xxxxx=服务端错误
@@ -128,6 +143,43 @@ const (
 	// 14: AI 模型配置模块
 	CodeAIModelNotFound = 140001
 	CodeAIModelIsActive = 140002
+
+	// 15: 需求智生模块
+	// 1501xx: 需求文档
+	CodeReqDocNotFound      = 150101 // 需求文档不存在
+	CodeReqDocFormatInvalid = 150102 // 需求文档格式不支持
+	CodeReqDocTooLarge      = 150103 // 需求文档过大
+	CodeReqDocParseFailed   = 150104 // 需求文档解析失败
+	CodeReqDocParsing       = 150105 // 需求文档解析中，请稍候
+	CodeReqDocDeleted       = 150106 // 需求文档已删除
+
+	// 1502xx: 生成任务
+	CodeReqGenTaskNotFound        = 150201 // 生成任务不存在
+	CodeReqGenTaskStatusInvalid   = 150202 // 生成任务状态不允许此操作
+	CodeReqGenProjectQuotaExceed  = 150203 // 项目并发任务超限
+	CodeReqGenLLMCallFailed       = 150204 // LLM 调用失败
+	CodeReqGenNoActiveModel       = 150205 // 激活模型未配置
+	CodeReqGenGlobalQuotaExceed   = 150206 // 全局并发任务超限
+	CodeReqGenExecutorUnavailable = 150207 // Executor 不可用
+	CodeReqGenSkillRouterFailed   = 150208 // Skill 路由分析失败
+	CodeReqGenNoSkillRecommended  = 150209 // 未匹配到适用的 Skill
+
+	// 1503xx: Skill 管理
+	CodeReqSkillNotFound       = 150301 // Skill 不存在
+	CodeReqSkillKeyExists      = 150302 // Skill key 已存在
+	CodeReqSkillSystemNoDelete = 150303 // 系统 Skill 不可删除
+	CodeReqSkillVersionConflict = 150304 // Skill 已被他人修改，请刷新重试
+	CodeReqSkillPromptInvalid  = 150305 // Skill 提示词不符合规范
+
+	// 1504xx: AI 产物
+	CodeReqResultAlreadyAdopted = 150401 // 产物已被采纳，不可重复采纳
+	CodeReqResultNotFound       = 150402 // 产物不存在
+	CodeReqResultDiscarded      = 150403 // 产物已丢弃
+	CodeReqResultVersionConflict = 150404 // 产物已变更，请刷新
+
+	// 1509xx: 内部回调
+	CodeReqInternalTokenInvalid = 150901 // 内部 token 鉴权失败
+	CodeReqCallbackIgnored      = 150902 // 回调任务已为终态，忽略
 )
 
 // ========== 预定义错误（向后兼容） ==========

@@ -1450,6 +1450,43 @@ async def analyze_testcase(req: TestCaseAnalyzeRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+# ── 需求智生端点 ──
+
+from requirement_gen import (
+    ParseDocRequest, GenerateRequest, SkillRouterRequest,
+    parse_doc_async, generate_cases_async, route_skills,
+)
+
+
+@app.post("/requirement-gen/parse-doc")
+async def requirement_gen_parse_doc(req: ParseDocRequest):
+    """异步文档解析：收到请求后立即返回，后台解析完成后回调 Go 后端"""
+    asyncio.create_task(parse_doc_async(req))
+    return {"status": "accepted", "doc_id": req.doc_id}
+
+
+@app.post("/requirement-gen/generate")
+async def requirement_gen_generate(req: GenerateRequest):
+    """异步 LLM 用例生成：收到请求后立即返回，完成后回调 Go 后端"""
+    asyncio.create_task(generate_cases_async(req))
+    return {"status": "accepted", "task_id": req.task_id}
+
+
+@app.post("/requirement-gen/skill-router")
+async def requirement_gen_skill_router(req: SkillRouterRequest):
+    """Skill 智能路由：同步分析需求文本，返回推荐的 Skill 列表"""
+    try:
+        loop = asyncio.get_event_loop()
+        recommended = await loop.run_in_executor(None, route_skills, req)
+        return {"status": "ok", "recommended_skills": recommended}
+    except Exception as e:
+        logger.error(f"Skill router failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Skill 路由分析失败: {str(e)}"},
+        )
+
+
 if __name__ == "__main__":
     logger.info(f"Starting executor service on port {SERVICE_PORT}")
     uvicorn.run(

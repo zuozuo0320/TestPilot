@@ -40,6 +40,9 @@ type Dependencies struct {
 	CaseReviewDefectService     *service.CaseReviewDefectService
 	TagService                  *service.TagService
 	AIModelConfigService        *service.AIModelConfigService
+	ReqDocService               *service.RequirementDocService
+	ReqGenTaskService           *service.RequirementGenTaskService
+	AISkillService              *service.AISkillService
 	ExecutorURL                 string
 	ExecutorAPIKey              string
 }
@@ -73,6 +76,9 @@ type API struct {
 	caseReviewDefectSvc     *service.CaseReviewDefectService
 	tagSvc                  *service.TagService
 	aiModelConfigSvc        *service.AIModelConfigService
+	reqDocSvc               *service.RequirementDocService
+	reqGenTaskSvc           *service.RequirementGenTaskService
+	aiSkillSvc              *service.AISkillService
 	executorURL             string
 	executorAPIKey          string
 }
@@ -107,6 +113,9 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		caseReviewDefectSvc:     deps.CaseReviewDefectService,
 		tagSvc:                  deps.TagService,
 		aiModelConfigSvc:        deps.AIModelConfigService,
+		reqDocSvc:               deps.ReqDocService,
+		reqGenTaskSvc:           deps.ReqGenTaskService,
+		aiSkillSvc:              deps.AISkillService,
 		executorURL:             deps.ExecutorURL,
 		executorAPIKey:          deps.ExecutorAPIKey,
 	}
@@ -309,6 +318,35 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	tags.PUT("/:tagID", a.updateTag)
 	tags.DELETE("/:tagID", a.deleteTag)
 
+	// ---- 需求智生 ----
+	// 需求文档
+	reqDocs := auth.Group("/projects/:projectID/requirement-docs")
+	reqDocs.POST("/upload", a.uploadRequirementDoc)
+	reqDocs.POST("/paste", a.pasteRequirementDoc)
+	reqDocs.GET("", a.listRequirementDocs)
+	reqDocs.GET("/:docID", a.getRequirementDoc)
+	reqDocs.DELETE("/:docID", a.deleteRequirementDoc)
+
+	// 生成任务 & 产物
+	reqGen := auth.Group("/projects/:projectID/requirement-gen")
+	reqGen.POST("/tasks", a.createGenTask)
+	reqGen.GET("/tasks", a.listGenTasks)
+	reqGen.GET("/tasks/:taskID", a.getGenTask)
+	reqGen.GET("/tasks/:taskID/results", a.listGenResults)
+	reqGen.POST("/tasks/:taskID/close", a.closeGenTask)
+	reqGen.POST("/smart-generate", a.smartGenerate)
+	reqGen.POST("/results/:resultID/adopt", a.adoptGenResult)
+	reqGen.POST("/results/:resultID/discard", a.discardGenResult)
+
+	// Skill 管理
+	aiSkills := auth.Group("/projects/:projectID/ai-skills")
+	aiSkills.GET("", a.listAISkills)
+	aiSkills.POST("", a.createAISkill)
+	aiSkills.GET("/:skillID", a.getAISkill)
+	aiSkills.PUT("/:skillID", a.updateAISkill)
+	aiSkills.DELETE("/:skillID", a.deleteAISkill)
+	aiSkills.POST("/:skillID/toggle", a.toggleAISkill)
+
 	// ---- AI 模型配置（仅 admin） ----
 	aiModelConfig := auth.Group("/ai-model-configs")
 	aiModelConfig.GET("", a.listAIModelConfigs)
@@ -319,6 +357,16 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	aiModelConfig.PUT("/:configID", a.updateAIModelConfig)
 	aiModelConfig.DELETE("/:configID", a.deleteAIModelConfig)
 	aiModelConfig.POST("/:configID/activate", a.activateAIModel)
+
+	// ========== 内部接口（Executor 回调，API Key 鉴权） ==========
+	internal := r.Group("/internal")
+	internal.Use(a.internalAPIKeyAuth())
+
+	// 需求文档解析回调
+	internal.POST("/requirement-docs/:docID/parse-callback", a.parseCallbackRequirementDoc)
+	// 生成任务回调
+	internal.POST("/requirement-gen/tasks/:taskID/callback", a.genTaskCallback)
+	internal.POST("/requirement-gen/tasks/:taskID/heartbeat", a.genTaskHeartbeat)
 
 	return r
 }
