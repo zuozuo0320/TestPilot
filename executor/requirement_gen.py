@@ -92,8 +92,29 @@ def _extract_text_from_md(path: str) -> str:
     return _extract_text_from_txt(path)
 
 
+def _extract_text_from_docx_zip(path: str) -> str:
+    """从 docx 的底层 zip XML 中提取纯文本（兜底方案）"""
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    text_parts: list[str] = []
+    with zipfile.ZipFile(path, "r") as z:
+        for name in z.namelist():
+            if not name.startswith("word/") or not name.endswith(".xml"):
+                continue
+            try:
+                tree = ET.parse(z.open(name))
+            except ET.ParseError:
+                continue
+            for elem in tree.iter(f"{ns}t"):
+                if elem.text:
+                    text_parts.append(elem.text)
+    return "\n".join(text_parts)
+
+
 def _extract_text_from_docx(path: str) -> str:
-    """从 docx 提取文本（需要 python-docx）"""
+    """从 docx 提取文本（需要 python-docx，失败则用 zip XML 兜底）"""
     try:
         from docx import Document
         doc = Document(path)
@@ -102,6 +123,9 @@ def _extract_text_from_docx(path: str) -> str:
     except ImportError:
         logger.warning("python-docx not installed, falling back to raw read")
         return _extract_text_from_txt(path)
+    except Exception as e:
+        logger.warning("python-docx failed (%s), falling back to zip XML extraction", e)
+        return _extract_text_from_docx_zip(path)
 
 
 def _extract_text_from_pdf(path: str) -> str:
@@ -140,6 +164,22 @@ EXTRACTORS = {
 }
 
 
+def _resolve_doc_path(path: str) -> str:
+    candidates = [path]
+    if not os.path.isabs(path):
+        executor_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(executor_dir)
+        candidates.extend([
+            os.path.join(project_root, path),
+            os.path.join(os.getcwd(), path),
+        ])
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
+
+
 async def parse_doc_async(req: ParseDocRequest):
     """异步执行文档解析并回调 Go 后端"""
     callback_base = req.callback_url or BACKEND_INTERNAL_URL
@@ -160,9 +200,8 @@ async def parse_doc_async(req: ParseDocRequest):
         if not extractor:
             raise ValueError(f"不支持的文件格式: {req.file_format}")
 
-        content = await asyncio.get_event_loop().run_in_executor(
-            None, extractor, req.file_path
-        )
+        doc_path = _resolve_doc_path(req.file_path)
+        content = await asyncio.get_event_loop().run_in_executor(None, extractor, doc_path)
 
         if not content or not content.strip():
             raise ValueError("文档内容为空，无法解析出有效文本")

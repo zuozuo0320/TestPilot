@@ -254,10 +254,10 @@ func (s *RequirementDocService) MarkParsed(ctx context.Context, docID uint, cont
 		[]string{model.DocParseStatusParsing},
 		model.DocParseStatusParsed,
 		map[string]interface{}{
-			"raw_content":        content,
-			"word_count":         wordCount,
+			"raw_content":         content,
+			"word_count":          wordCount,
 			"original_word_count": originalCount,
-			"truncated":          truncated,
+			"truncated":           truncated,
 		},
 	)
 	if err != nil {
@@ -293,11 +293,13 @@ func (s *RequirementDocService) MarkParseFailed(ctx context.Context, docID uint,
 func (s *RequirementDocService) DispatchParse(ctx context.Context, doc *model.RequirementDoc) error {
 	if s.executorURL == "" {
 		s.logger.Warn("executor URL 未配置，跳过文档解析派发", "doc_id", doc.ID)
-		return nil
+		return fmt.Errorf("executor url is empty")
 	}
 
 	// CAS: not_parsed → parsing
-	_ = s.MarkParsingStarted(ctx, doc.ID)
+	if err := s.MarkParsingStarted(ctx, doc.ID); err != nil {
+		return fmt.Errorf("mark parsing started: %w", err)
+	}
 
 	payload := map[string]interface{}{
 		"doc_id":      doc.ID,
@@ -319,6 +321,10 @@ func (s *RequirementDocService) DispatchParse(ctx context.Context, doc *model.Re
 		return fmt.Errorf("dispatch parse: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("executor dispatch status: %d", resp.StatusCode)
+	}
 
 	s.logger.Info("文档解析已派发", "doc_id", doc.ID, "status", resp.StatusCode)
 	return nil
