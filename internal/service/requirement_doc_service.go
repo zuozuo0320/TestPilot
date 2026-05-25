@@ -330,6 +330,30 @@ func (s *RequirementDocService) DispatchParse(ctx context.Context, doc *model.Re
 	return nil
 }
 
+// RetryUnparsedDocs 重新派发所有 not_parsed 状态的文档解析
+func (s *RequirementDocService) RetryUnparsedDocs(ctx context.Context, projectID uint) (int, error) {
+	docs, _, err := s.docRepo.ListPaged(ctx, projectID, repository.RequirementDocFilter{
+		ParseStatus: model.DocParseStatusNotParsed,
+		Page:        1,
+		PageSize:    100,
+	})
+	if err != nil {
+		return 0, ErrInternal(CodeInternal, err)
+	}
+
+	dispatched := 0
+	for i := range docs {
+		if err := s.DispatchParse(ctx, &docs[i]); err != nil {
+			s.logger.Warn("重试派发文档解析失败", "doc_id", docs[i].ID, "error", err)
+			continue
+		}
+		dispatched++
+	}
+
+	s.logger.Info("批量重试文档解析完成", "project_id", projectID, "total", len(docs), "dispatched", dispatched)
+	return dispatched, nil
+}
+
 // GetFileExtension 从文件名获取扩展名（不含点号，小写）
 func GetFileExtension(filename string) string {
 	ext := filepath.Ext(filename)

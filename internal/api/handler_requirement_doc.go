@@ -12,6 +12,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -116,8 +117,11 @@ func (a *API) uploadRequirementDoc(c *gin.Context) {
 	}
 
 	// 异步派发文档解析（非阻塞，失败不影响创建响应）
+	// 注意：必须使用 context.Background()，handler 返回后 request context 会被取消
 	go func() {
-		_ = a.reqDocSvc.DispatchParse(c.Request.Context(), doc)
+		if err := a.reqDocSvc.DispatchParse(context.Background(), doc); err != nil {
+			a.logger.Error("异步派发文档解析失败", "error", err, "doc_id", doc.ID)
+		}
 	}()
 
 	response.Created(c, doc)
@@ -262,6 +266,32 @@ func (a *API) deleteRequirementDoc(c *gin.Context) {
 	}
 
 	response.OK(c, nil)
+}
+
+// retryParseRequirementDocs 重试所有未解析文档
+// @Summary 重试未解析文档
+// @Tags 需求智生-文档
+// @Produce json
+// @Param projectID path int true "项目ID"
+// @Success 200 {object} response.Result
+// @Router /api/v1/projects/{projectID}/requirement-docs/retry-parse [post]
+func (a *API) retryParseRequirementDocs(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+
+	dispatched, err := a.reqDocSvc.RetryUnparsedDocs(c.Request.Context(), projectID)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+
+	response.OK(c, gin.H{"dispatched": dispatched})
 }
 
 // parseCallbackRequirementDoc Executor 解析回调（内部接口）

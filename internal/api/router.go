@@ -326,6 +326,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	reqDocs.GET("", a.listRequirementDocs)
 	reqDocs.GET("/:docID", a.getRequirementDoc)
 	reqDocs.DELETE("/:docID", a.deleteRequirementDoc)
+	reqDocs.POST("/retry-parse", a.retryParseRequirementDocs)
 
 	// 生成任务 & 产物
 	reqGen := auth.Group("/projects/:projectID/requirement-gen")

@@ -143,9 +143,10 @@ func (a *API) listGenTasks(c *gin.Context) {
 	pageSize := parsePositiveIntWithDefault(c.Query("page_size"), 20)
 
 	tasks, total, err := a.reqGenTaskSvc.ListPaged(c.Request.Context(), projectID, repository.RequirementGenTaskFilter{
-		Status:   c.Query("status"),
-		Page:     page,
-		PageSize: pageSize,
+		Status:           c.Query("status"),
+		RequirementDocID: uint(parsePositiveIntWithDefault(c.Query("requirement_doc_id"), 0)),
+		Page:             page,
+		PageSize:         pageSize,
 	})
 	if err != nil {
 		response.HandleError(c, err)
