@@ -1,22 +1,26 @@
 // handler_requirement_doc.go — 需求文档 HTTP Handler
 //
 // 外部 API（前端调用）：
-//   POST   /projects/:projectID/requirement-docs/upload     上传文件
-//   POST   /projects/:projectID/requirement-docs/paste      粘贴文本
-//   GET    /projects/:projectID/requirement-docs            文档列表
-//   GET    /projects/:projectID/requirement-docs/:docID     文档详情
-//   DELETE /projects/:projectID/requirement-docs/:docID     删除文档
+//
+//	POST   /projects/:projectID/requirement-docs/upload     上传文件
+//	POST   /projects/:projectID/requirement-docs/paste      粘贴文本
+//	GET    /projects/:projectID/requirement-docs            文档列表
+//	GET    /projects/:projectID/requirement-docs/:docID     文档详情
+//	DELETE /projects/:projectID/requirement-docs/:docID     删除文档
 //
 // 内部 API（Executor 回调）：
-//   POST   /internal/requirement-docs/:docID/parse-callback 解析回调
+//
+//	POST   /internal/requirement-docs/:docID/parse-callback 解析回调
 package api
 
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,8 +42,8 @@ type pasteDocRequest struct {
 // parseCallbackRequest 解析回调请求
 type parseCallbackRequest struct {
 	Status  string `json:"status" binding:"required,oneof=parsed parse_failed"`
-	Content string `json:"content"`       // status=parsed 时必填
-	Error   string `json:"error"`         // status=parse_failed 时必填
+	Content string `json:"content"` // status=parsed 时必填
+	Error   string `json:"error"`   // status=parse_failed 时必填
 }
 
 // ========== Handler 方法 ==========
@@ -88,7 +92,8 @@ func (a *API) uploadRequirementDoc(c *gin.Context) {
 	}
 
 	// 保存文件到磁盘
-	saveName := fmt.Sprintf("%d_%d_%s", projectID, time.Now().UnixMilli(), header.Filename)
+	safeFilename := sanitizeUploadFilename(header.Filename, ext)
+	saveName := fmt.Sprintf("%d_%d_%s", projectID, time.Now().UnixMilli(), safeFilename)
 	saveDir := filepath.Join("uploads", "requirement-docs", fmt.Sprintf("%d", projectID))
 	if err := os.MkdirAll(saveDir, 0o755); err != nil {
 		a.logger.Error("创建上传目录失败", "error", err, "dir", saveDir)
@@ -96,8 +101,22 @@ func (a *API) uploadRequirementDoc(c *gin.Context) {
 		return
 	}
 	savePath := filepath.Join(saveDir, saveName)
-	if err := c.SaveUploadedFile(header, savePath); err != nil {
-		a.logger.Error("保存上传文件失败", "error", err, "path", savePath)
+	dst, err := os.Create(savePath)
+	if err != nil {
+		a.logger.Error("创建上传文件失败", "error", err, "path", savePath)
+		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "文件保存失败")
+		return
+	}
+	if _, err := io.Copy(dst, file); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(savePath)
+		a.logger.Error("写入上传文件失败", "error", err, "path", savePath)
+		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "文件保存失败")
+		return
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(savePath)
+		a.logger.Error("关闭上传文件失败", "error", err, "path", savePath)
 		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "文件保存失败")
 		return
 	}
@@ -329,4 +348,24 @@ func (a *API) parseCallbackRequirementDoc(c *gin.Context) {
 	}
 
 	response.OK(c, nil)
+}
+
+func sanitizeUploadFilename(filename string, ext string) string {
+	base := filepath.Base(strings.TrimSpace(filename))
+	replacer := strings.NewReplacer(
+		"\\", "_",
+		"/", "_",
+		":", "_",
+		"*", "_",
+		"?", "_",
+		"\"", "_",
+		"<", "_",
+		">", "_",
+		"|", "_",
+	)
+	base = strings.Trim(replacer.Replace(base), ". ")
+	if base == "" {
+		base = "requirement_doc." + ext
+	}
+	return base
 }

@@ -229,8 +229,10 @@ _DEFAULT_SYSTEM_PROMPT = """你是一名资深测试工程师，擅长从软件�
 请根据用户提供的需求文本，生成结构化的测试用例列表。
 
 输出要求：
-1. 返回一个 JSON 数组，每个元素代表一条测试用例
-2. 每条用例包含以下字段：
+1. 只返回一个 JSON 对象，不要使用 Markdown 代码块，不要包含任何说明文字
+2. JSON 对象必须包含 cases 数组，summary 可选
+3. cases 数组中的每个元素代表一条测试用例
+4. 每条用例包含以下字段：
    - title: 用例标题（简明概括，20-60字）
    - level: 优先级（P0/P1/P2/P3）
    - precondition: 前置条件（可选）
@@ -240,7 +242,8 @@ _DEFAULT_SYSTEM_PROMPT = """你是一名资深测试工程师，擅长从软件�
    - tags_suggested: 建议标签，逗号分隔字符串（可选）
    - ai_confidence: AI 置信度 0.0-1.0
 
-请只返回 JSON，不要包含其他说明文字。"""
+示例格式：
+{"cases":[{"title":"示例用例","level":"P2","precondition":"","steps":[{"action":"执行操作","expected":"验证结果"}],"postcondition":"","remark":"","tags_suggested":"","ai_confidence":0.8}],"summary":{}}"""
 
 
 def _build_user_prompt(req: GenerateRequest) -> str:
@@ -251,9 +254,12 @@ def _build_user_prompt(req: GenerateRequest) -> str:
     prompt = prompt.replace("{{requirement_text}}", req.requirement_text)
     prompt = prompt.replace("{{max_cases}}", str(req.max_cases))
     prompt = prompt.replace("{{default_level}}", req.default_level)
+    prompt = prompt.replace("{{extra_prompt}}", req.extra_prompt or "无")
+    prompt = prompt.replace("{{existing_tags}}", "无")
+    prompt = prompt.replace("{{project_context}}", "无")
+    prompt = prompt.replace("{{few_shot_examples}}", "")
 
-    # 追加额外提示
-    if req.extra_prompt:
+    if req.extra_prompt and "{{extra_prompt}}" not in req.prompt_template:
         prompt += f"\n\n用户补充要求：{req.extra_prompt}"
 
     return prompt
@@ -270,6 +276,66 @@ def _openai_params(model: str, temperature: float = 0.3, max_tokens: int = 8000)
         params["temperature"] = temperature
         params["max_tokens"] = max_tokens
     return params
+
+
+def _create_generate_completion(model: str, user_prompt: str):
+    kwargs = {"api_key": OPENAI_API_KEY}
+    if OPENAI_BASE_URL:
+        kwargs["base_url"] = OPENAI_BASE_URL
+
+    client = OpenAI(**kwargs)
+    return client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        **_openai_params(model),
+    )
+
+
+def _extract_chat_content(response) -> str:
+    if isinstance(response, str):
+        return response.strip()
+
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        if choices:
+            first = choices[0]
+            message = first.get("message", {}) if isinstance(first, dict) else {}
+            content = message.get("content") if isinstance(message, dict) else None
+            if content is None and isinstance(first, dict):
+                content = first.get("text")
+            if content is not None:
+                return str(content).strip()
+        for key in ("content", "text", "output_text"):
+            if response.get(key) is not None:
+                return str(response[key]).strip()
+
+    choices = getattr(response, "choices", None) or []
+    if choices:
+        first = choices[0]
+        message = getattr(first, "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        if content is None and isinstance(message, dict):
+            content = message.get("content")
+        if content is None:
+            content = getattr(first, "text", None)
+        if content is not None:
+            return str(content).strip()
+
+    for key in ("content", "text", "output_text"):
+        content = getattr(response, key, None)
+        if content is not None:
+            return str(content).strip()
+
+    raise ValueError(f"无法读取 LLM 响应内容: {type(response).__name__}")
+
+
+def _extract_chat_usage(response):
+    if isinstance(response, dict):
+        return response.get("usage")
+    return getattr(response, "usage", None)
 
 
 def _parse_llm_response(raw: str) -> list:
@@ -365,11 +431,11 @@ def route_skills(req: SkillRouterRequest) -> list[dict]:
         **_openai_params(model, temperature=0.2, max_tokens=2000),
     )
 
-    raw_content = response.choices[0].message.content.strip()
-    usage = response.usage
+    raw_content = _extract_chat_content(response)
+    usage = _extract_chat_usage(response)
     logger.info(
-        f"Skill router done: prompt_tokens={usage.prompt_tokens if usage else 0}, "
-        f"completion_tokens={usage.completion_tokens if usage else 0}"
+        f"Skill router done: prompt_tokens={getattr(usage, 'prompt_tokens', 0) if usage else 0}, "
+        f"completion_tokens={getattr(usage, 'completion_tokens', 0) if usage else 0}"
     )
 
     # 解析 JSON
@@ -419,25 +485,12 @@ async def generate_cases_async(req: GenerateRequest):
         model = req.model_override or OPENAI_MODEL
         user_prompt = _build_user_prompt(req)
 
-        kwargs = {"api_key": OPENAI_API_KEY}
-        if OPENAI_BASE_URL:
-            kwargs["base_url"] = OPENAI_BASE_URL
-
-        client = OpenAI(**kwargs)
-
         logger.info(f"LLM generation starting: task_id={req.task_id}, model={model}, max_cases={req.max_cases}")
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            **_openai_params(model),
-        )
+        response = await asyncio.to_thread(_create_generate_completion, model, user_prompt)
 
-        raw_content = response.choices[0].message.content.strip()
-        usage = response.usage
+        raw_content = _extract_chat_content(response)
+        usage = _extract_chat_usage(response)
 
         cases = _parse_llm_response(raw_content)
         duration_ms = int((time.time() - start_time) * 1000)
@@ -468,8 +521,8 @@ async def generate_cases_async(req: GenerateRequest):
         payload = {
             "status": "success",
             "generated_count": len(results),
-            "prompt_tokens": usage.prompt_tokens if usage else 0,
-            "completion_tokens": usage.completion_tokens if usage else 0,
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
+            "completion_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
             "duration_ms": duration_ms,
             "results": results,
         }

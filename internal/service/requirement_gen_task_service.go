@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -826,6 +827,19 @@ func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenT
 	if err := s.MarkRunning(context.Background(), task.ID, "executor-local", fmt.Sprintf("dispatch-%d", task.ID)); err != nil {
 		return fmt.Errorf("mark running before dispatch: %w", err)
 	}
+	markDispatchFailed := func(dispatchErr error) error {
+		reason := fmt.Sprintf("派发生成任务到 Executor 失败: %v", dispatchErr)
+		if len([]rune(reason)) > 1000 {
+			reason = string([]rune(reason)[:1000])
+		}
+		if failErr := s.CallbackFail(context.Background(), CallbackFailInput{
+			TaskID:     task.ID,
+			FailReason: reason,
+		}); failErr != nil {
+			s.logger.Error("标记派发失败任务失败", "error", failErr, "task_id", task.ID)
+		}
+		return dispatchErr
+	}
 
 	// 获取文档内容
 	requirementText := ""
@@ -848,7 +862,7 @@ func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenT
 
 	req, err := http.NewRequest(http.MethodPost, s.executorURL+"/requirement-gen/generate", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create dispatch request: %w", err)
+		return markDispatchFailed(fmt.Errorf("create dispatch request: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", s.executorAPIKey)
@@ -856,9 +870,13 @@ func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenT
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		s.logger.Error("派发生成任务失败", "error", err, "task_id", task.ID)
-		return fmt.Errorf("dispatch generate: %w", err)
+		return markDispatchFailed(fmt.Errorf("dispatch generate: %w", err))
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return markDispatchFailed(fmt.Errorf("executor returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))))
+	}
 
 	s.logger.Info("生成任务已派发", "task_id", task.ID, "status", resp.StatusCode)
 	return nil
