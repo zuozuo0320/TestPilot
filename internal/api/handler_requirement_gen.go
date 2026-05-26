@@ -1,17 +1,20 @@
 // handler_requirement_gen.go — 需求智生-生成任务 & 产物 HTTP Handler
 //
 // 外部 API（前端调用）：
-//   POST   /projects/:projectID/requirement-gen/tasks           创建生成任务
-//   GET    /projects/:projectID/requirement-gen/tasks           任务列表
-//   GET    /projects/:projectID/requirement-gen/tasks/:taskID   任务详情
-//   GET    /projects/:projectID/requirement-gen/tasks/:taskID/results  产物列表
-//   POST   /projects/:projectID/requirement-gen/results/:resultID/adopt   采纳
-//   POST   /projects/:projectID/requirement-gen/results/:resultID/discard 丢弃
-//   POST   /projects/:projectID/requirement-gen/tasks/:taskID/close       关闭任务
+//
+//	POST   /projects/:projectID/requirement-gen/tasks           创建生成任务
+//	GET    /projects/:projectID/requirement-gen/tasks           任务列表
+//	GET    /projects/:projectID/requirement-gen/tasks/:taskID   任务详情
+//	DELETE /projects/:projectID/requirement-gen/tasks/:taskID   删除任务
+//	GET    /projects/:projectID/requirement-gen/tasks/:taskID/results  产物列表
+//	POST   /projects/:projectID/requirement-gen/results/:resultID/adopt   采纳
+//	POST   /projects/:projectID/requirement-gen/results/:resultID/discard 丢弃
+//	POST   /projects/:projectID/requirement-gen/tasks/:taskID/close       关闭任务
 //
 // 内部 API（Executor 回调）：
-//   POST   /internal/requirement-gen/tasks/:taskID/callback  任务完成回调
-//   POST   /internal/requirement-gen/tasks/:taskID/heartbeat 心跳
+//
+//	POST   /internal/requirement-gen/tasks/:taskID/callback  任务完成回调
+//	POST   /internal/requirement-gen/tasks/:taskID/heartbeat 心跳
 package api
 
 import (
@@ -185,6 +188,37 @@ func (a *API) getGenTask(c *gin.Context) {
 	}
 
 	response.OK(c, task)
+}
+
+// deleteGenTask 删除生成任务
+// @Summary 删除需求智生任务
+// @Tags 需求智生-任务
+// @Produce json
+// @Param projectID path int true "项目ID"
+// @Param taskID path int true "任务ID"
+// @Success 200 {object} response.Result
+// @Router /api/v1/projects/{projectID}/requirement-gen/tasks/{taskID} [delete]
+func (a *API) deleteGenTask(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseUintParam(c, "projectID")
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	taskID, ok := parseUintParam(c, "taskID")
+	if !ok {
+		return
+	}
+
+	err := a.reqGenTaskSvc.Delete(c.Request.Context(), projectID, taskID)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+
+	response.OK(c, nil)
 }
 
 // listGenResults 产物列表

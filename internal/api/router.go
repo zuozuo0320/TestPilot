@@ -333,6 +333,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	reqGen.POST("/tasks", a.createGenTask)
 	reqGen.GET("/tasks", a.listGenTasks)
 	reqGen.GET("/tasks/:taskID", a.getGenTask)
+	reqGen.DELETE("/tasks/:taskID", a.deleteGenTask)
 	reqGen.GET("/tasks/:taskID/results", a.listGenResults)
 	reqGen.POST("/tasks/:taskID/close", a.closeGenTask)
 	reqGen.POST("/smart-generate", a.smartGenerate)

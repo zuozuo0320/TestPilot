@@ -37,6 +37,7 @@ type RequirementGenTaskRepository interface {
 	FindByIDForUpdate(ctx context.Context, tx *gorm.DB, id uint) (*model.RequirementGenTask, error)
 	Update(ctx context.Context, task *model.RequirementGenTask) error
 	UpdateFields(ctx context.Context, tx *gorm.DB, id uint, fields map[string]interface{}) error
+	DeleteByID(ctx context.Context, tx *gorm.DB, id uint) error
 	ListPaged(ctx context.Context, projectID uint, f RequirementGenTaskFilter) ([]model.RequirementGenTask, int64, error)
 
 	// CAS 状态推进：UPDATE ... WHERE status IN (?) AND lock_version = ?
@@ -114,6 +115,11 @@ func (r *requirementGenTaskRepo) UpdateFields(ctx context.Context, tx *gorm.DB, 
 		Model(&model.RequirementGenTask{}).
 		Where("id = ?", id).
 		Updates(fields).Error
+}
+
+// DeleteByID 按 ID 删除生成任务
+func (r *requirementGenTaskRepo) DeleteByID(ctx context.Context, tx *gorm.DB, id uint) error {
+	return r.getDB(tx).WithContext(ctx).Delete(&model.RequirementGenTask{}, id).Error
 }
 
 // ListPaged 分页查询生成任务列表

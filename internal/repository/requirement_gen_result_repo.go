@@ -42,6 +42,9 @@ type RequirementGenResultRepository interface {
 	// 批量标记丢弃（用于任务关闭时丢弃所有 pending 产物）
 	BatchDiscardByTaskID(ctx context.Context, tx *gorm.DB, taskID uint, discardedBy uint) (int64, error)
 
+	// 按任务 ID 删除产物
+	DeleteByTaskID(ctx context.Context, tx *gorm.DB, taskID uint) error
+
 	// 统计：按任务 ID 查询各状态数量
 	CountByTaskID(ctx context.Context, taskID uint) (total int64, adopted int64, discarded int64, err error)
 
@@ -150,6 +153,13 @@ func (r *requirementGenResultRepo) BatchDiscardByTaskID(ctx context.Context, tx 
 			"lock_version": gorm.Expr("lock_version + 1"),
 		})
 	return result.RowsAffected, result.Error
+}
+
+// DeleteByTaskID 按任务 ID 删除产物
+func (r *requirementGenResultRepo) DeleteByTaskID(ctx context.Context, tx *gorm.DB, taskID uint) error {
+	return r.getDB(tx).WithContext(ctx).
+		Where("task_id = ?", taskID).
+		Delete(&model.RequirementGenResult{}).Error
 }
 
 // CountByTaskID 按任务 ID 统计各状态产物数量

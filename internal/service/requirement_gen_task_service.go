@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -246,6 +247,31 @@ func (s *RequirementGenTaskService) ListPaged(ctx context.Context, projectID uin
 	return s.taskRepo.ListPaged(ctx, projectID, f)
 }
 
+// Delete 删除生成任务及其未入库的产物快照。
+func (s *RequirementGenTaskService) Delete(ctx context.Context, projectID, taskID uint) error {
+	task, err := s.taskRepo.FindByID(ctx, taskID)
+	if err != nil {
+		return ErrNotFound(CodeReqGenTaskNotFound, "生成任务不存在")
+	}
+	if task.ProjectID != projectID {
+		return ErrNotFound(CodeReqGenTaskNotFound, "生成任务不存在")
+	}
+
+	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
+		if deleteErr := s.resultRepo.DeleteByTaskID(ctx, tx, taskID); deleteErr != nil {
+			return deleteErr
+		}
+		return s.taskRepo.DeleteByID(ctx, tx, taskID)
+	})
+	if err != nil {
+		s.logger.Error("删除生成任务失败", "error", err, "task_id", taskID, "project_id", projectID)
+		return ErrInternal(CodeInternal, err)
+	}
+
+	s.logger.Info("生成任务已删除", "task_id", taskID, "project_id", projectID, "status", task.Status)
+	return nil
+}
+
 // ========== 状态推进 ==========
 
 // MarkRunning 标记任务开始执行（PENDING → RUNNING）
@@ -287,6 +313,10 @@ func (s *RequirementGenTaskService) Heartbeat(ctx context.Context, taskID uint) 
 func (s *RequirementGenTaskService) CallbackSuccess(ctx context.Context, input CallbackSuccessInput) error {
 	task, err := s.taskRepo.FindByID(ctx, input.TaskID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			s.logger.Warn("回调忽略：任务不存在，可能已被删除", "task_id", input.TaskID)
+			return nil
+		}
 		return ErrNotFound(CodeReqGenTaskNotFound, "生成任务不存在")
 	}
 	// 幂等：已为终态则忽略
@@ -348,6 +378,10 @@ func (s *RequirementGenTaskService) CallbackSuccess(ctx context.Context, input C
 func (s *RequirementGenTaskService) CallbackFail(ctx context.Context, input CallbackFailInput) error {
 	task, err := s.taskRepo.FindByID(ctx, input.TaskID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			s.logger.Warn("失败回调忽略：任务不存在，可能已被删除", "task_id", input.TaskID)
+			return nil
+		}
 		return ErrNotFound(CodeReqGenTaskNotFound, "生成任务不存在")
 	}
 	// 幂等：已为终态则忽略
@@ -558,7 +592,7 @@ type SmartGenerateInput struct {
 
 // SmartGenerateResult 智能生成的返回结果
 type SmartGenerateResult struct {
-	RecommendedSkills []SkillRecommendation      `json:"recommended_skills"`
+	RecommendedSkills []SkillRecommendation       `json:"recommended_skills"`
 	CreatedTasks      []*model.RequirementGenTask `json:"created_tasks"`
 }
 
@@ -789,7 +823,9 @@ func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenT
 	}
 
 	// CAS: pending → running
-	_ = s.MarkRunning(context.Background(), task.ID, "executor-local", fmt.Sprintf("dispatch-%d", task.ID))
+	if err := s.MarkRunning(context.Background(), task.ID, "executor-local", fmt.Sprintf("dispatch-%d", task.ID)); err != nil {
+		return fmt.Errorf("mark running before dispatch: %w", err)
+	}
 
 	// 获取文档内容
 	requirementText := ""
