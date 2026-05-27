@@ -64,19 +64,35 @@ class SkillRouterResult(BaseModel):
     reason: str  # 推荐理由
 
 
+class SkillItem(BaseModel):
+    """单个 Skill 信息，用于多 Skill 生成"""
+    skill_name: str
+    prompt_template: str
+    output_schema: str = ""
+
+
 class GenerateRequest(BaseModel):
-    """用例生成请求"""
+    """用例生成请求，支持多 Skill 合并生成"""
     task_id: int
     project_id: int
     requirement_text: str       # 需求原文
-    skill_name: str
-    prompt_template: str        # Skill 的 prompt 模板
-    output_schema: str          # 输出格式标识
+    skill_name: str = ""        # 兼容旧接口：单 Skill 名称
+    prompt_template: str = ""   # 兼容旧接口：单 Skill prompt
+    output_schema: str = ""     # 兼容旧接口：单 Skill 输出格式
+    skills: list[SkillItem] = []  # 多 Skill 列表（优先使用）
     max_cases: int = 30
     default_level: str = "P2"
     extra_prompt: str = ""
     model_override: Optional[str] = None
     callback_url: Optional[str] = None
+
+    def get_skills(self) -> list[SkillItem]:
+        """获取 Skill 列表，兼容单 Skill 和多 Skill 模式"""
+        if self.skills:
+            return self.skills
+        if self.prompt_template:
+            return [SkillItem(skill_name=self.skill_name, prompt_template=self.prompt_template, output_schema=self.output_schema)]
+        return []
 
 
 # ─── 文档解析 ───
@@ -246,20 +262,20 @@ _DEFAULT_SYSTEM_PROMPT = """你是一名资深测试工程师，擅长从软件�
 {"cases":[{"title":"示例用例","level":"P2","precondition":"","steps":[{"action":"执行操作","expected":"验证结果"}],"postcondition":"","remark":"","tags_suggested":"","ai_confidence":0.8}],"summary":{}}"""
 
 
-def _build_user_prompt(req: GenerateRequest) -> str:
+def _build_user_prompt_for_skill(skill: SkillItem, req: GenerateRequest, max_cases: int) -> str:
     """构建用户 Prompt：将 Skill 模板中的占位符替换为实际值"""
-    prompt = req.prompt_template
+    prompt = skill.prompt_template
 
     # 替换标准占位符
     prompt = prompt.replace("{{requirement_text}}", req.requirement_text)
-    prompt = prompt.replace("{{max_cases}}", str(req.max_cases))
+    prompt = prompt.replace("{{max_cases}}", str(max_cases))
     prompt = prompt.replace("{{default_level}}", req.default_level)
     prompt = prompt.replace("{{extra_prompt}}", req.extra_prompt or "无")
     prompt = prompt.replace("{{existing_tags}}", "无")
     prompt = prompt.replace("{{project_context}}", "无")
     prompt = prompt.replace("{{few_shot_examples}}", "")
 
-    if req.extra_prompt and "{{extra_prompt}}" not in req.prompt_template:
+    if req.extra_prompt and "{{extra_prompt}}" not in skill.prompt_template:
         prompt += f"\n\n用户补充要求：{req.extra_prompt}"
 
     return prompt
@@ -278,20 +294,44 @@ def _openai_params(model: str, temperature: float = 0.3, max_tokens: int = 8000)
     return params
 
 
-def _create_generate_completion(model: str, user_prompt: str):
+def _create_generate_completion(model: str, user_prompt: str, max_retries: int = 4) -> str:
+    """调用 LLM 生成用例，stream 模式收集内容，连接断开时自动重试"""
     kwargs = {"api_key": OPENAI_API_KEY}
     if OPENAI_BASE_URL:
         kwargs["base_url"] = OPENAI_BASE_URL
 
     client = OpenAI(**kwargs)
-    return client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        **_openai_params(model),
-    )
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                stream=True,
+                **_openai_params(model),
+            )
+            collected = []
+            for chunk in response:
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        collected.append(delta.content)
+            result = "".join(collected).strip()
+            if result:
+                return result
+            raise ValueError("LLM 返回空内容")
+        except Exception as e:
+            last_err = e
+            logger.warning(f"LLM 调用失败 (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                import time as _time
+                wait = 5 * (2 ** (attempt - 1))  # 5s, 10s, 20s
+                logger.info(f"等待 {wait}s 后重试...")
+                _time.sleep(wait)
+    raise last_err  # type: ignore[misc]
 
 
 def _extract_chat_content(response) -> str:
@@ -422,20 +462,43 @@ def route_skills(req: SkillRouterRequest) -> list[dict]:
 
     logger.info(f"Skill router starting: model={model}, candidates={len(req.skills)}")
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _SKILL_ROUTER_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        **_openai_params(model, temperature=0.2, max_tokens=2000),
-    )
-
-    raw_content = _extract_chat_content(response)
-    usage = _extract_chat_usage(response)
+    raw_content = ""
+    prompt_tokens = 0
+    completion_tokens = 0
+    max_retries = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _SKILL_ROUTER_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                stream=True,
+                **_openai_params(model, temperature=0.2, max_tokens=2000),
+            )
+            collected_content = []
+            for chunk in response:
+                if chunk.usage:
+                    prompt_tokens = getattr(chunk.usage, "prompt_tokens", 0)
+                    completion_tokens = getattr(chunk.usage, "completion_tokens", 0)
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        collected_content.append(delta.content)
+            raw_content = "".join(collected_content).strip()
+            if raw_content:
+                break
+        except Exception as e:
+            logger.warning(f"Skill router LLM 调用失败 (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                import time as _time
+                _time.sleep(3)
+            else:
+                raise
     logger.info(
-        f"Skill router done: prompt_tokens={getattr(usage, 'prompt_tokens', 0) if usage else 0}, "
-        f"completion_tokens={getattr(usage, 'completion_tokens', 0) if usage else 0}"
+        f"Skill router done: prompt_tokens={prompt_tokens}, "
+        f"completion_tokens={completion_tokens}"
     )
 
     # 解析 JSON
@@ -483,46 +546,53 @@ async def generate_cases_async(req: GenerateRequest):
 
     try:
         model = req.model_override or OPENAI_MODEL
-        user_prompt = _build_user_prompt(req)
+        skills = req.get_skills()
+        skill_count = len(skills)
+        per_skill_max = max(req.max_cases // skill_count, 5) if skill_count > 0 else req.max_cases
 
-        logger.info(f"LLM generation starting: task_id={req.task_id}, model={model}, max_cases={req.max_cases}")
+        logger.info(f"LLM generation starting: task_id={req.task_id}, model={model}, skills={skill_count}, per_skill={per_skill_max}")
 
-        response = await asyncio.to_thread(_create_generate_completion, model, user_prompt)
+        # 串行调用每个 Skill 生成用例，合并结果
+        results = []
+        seq_no = 1
+        for idx, skill in enumerate(skills):
+            logger.info(f"  Skill {idx+1}/{skill_count}: {skill.skill_name}")
+            user_prompt = _build_user_prompt_for_skill(skill, req, per_skill_max)
+            try:
+                raw_content = await asyncio.to_thread(_create_generate_completion, model, user_prompt)
+            except Exception as skill_err:
+                logger.error(f"  Skill {idx+1}/{skill_count} 生成失败，跳过: {skill_err}")
+                continue
+            cases = _parse_llm_response(raw_content)
+            for case in cases[:per_skill_max]:
+                steps = case.get("steps", [])
+                steps_json = json.dumps(steps, ensure_ascii=False) if isinstance(steps, list) else str(steps)
+                results.append({
+                    "seq_no": seq_no,
+                    "title": case.get("title", f"用例 {seq_no}"),
+                    "level": case.get("level", req.default_level),
+                    "precondition": case.get("precondition", ""),
+                    "steps": steps_json,
+                    "postcondition": case.get("postcondition", ""),
+                    "remark": case.get("remark", ""),
+                    "tags_suggested": case.get("tags_suggested", ""),
+                    "ai_confidence": float(case.get("ai_confidence", 0.8)),
+                    "raw_json": json.dumps(case, ensure_ascii=False),
+                })
+                seq_no += 1
+            logger.info(f"  Skill {idx+1} done: +{min(len(cases), per_skill_max)} cases, total={len(results)}")
 
-        raw_content = _extract_chat_content(response)
-        usage = _extract_chat_usage(response)
-
-        cases = _parse_llm_response(raw_content)
         duration_ms = int((time.time() - start_time) * 1000)
 
-        # 构建回调产物
-        results = []
-        for i, case in enumerate(cases[:req.max_cases]):
-            steps = case.get("steps", [])
-            if isinstance(steps, list):
-                steps_json = json.dumps(steps, ensure_ascii=False)
-            else:
-                steps_json = str(steps)
-
-            results.append({
-                "seq_no": i + 1,
-                "title": case.get("title", f"用例 {i+1}"),
-                "level": case.get("level", req.default_level),
-                "precondition": case.get("precondition", ""),
-                "steps": steps_json,
-                "postcondition": case.get("postcondition", ""),
-                "remark": case.get("remark", ""),
-                "tags_suggested": case.get("tags_suggested", ""),
-                "ai_confidence": float(case.get("ai_confidence", 0.8)),
-                "raw_json": json.dumps(case, ensure_ascii=False),
-            })
+        if not results:
+            raise RuntimeError("所有 Skill 生成均失败，无可用结果")
 
         # 成功回调
         payload = {
             "status": "success",
             "generated_count": len(results),
-            "prompt_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
-            "completion_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
             "duration_ms": duration_ms,
             "results": results,
         }

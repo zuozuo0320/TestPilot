@@ -223,7 +223,7 @@ func (s *RequirementGenTaskService) Create(ctx context.Context, input CreateGenT
 
 	// 异步派发到 Executor（非阻塞，失败不影响创建结果）
 	go func() {
-		if err := s.dispatchGenerate(task, doc, skill); err != nil {
+		if err := s.dispatchGenerate(task, doc, []*model.AISkill{skill}); err != nil {
 			s.logger.Error("派发生成任务到 Executor 失败", "error", err, "task_id", task.ID)
 		}
 	}()
@@ -689,7 +689,10 @@ func (s *RequirementGenTaskService) SmartGenerate(ctx context.Context, input Sma
 		"recommended_count", len(recommended),
 	)
 
-	// 4. 规范化参数
+	// 4. 脱离 HTTP context，防止客户端断连导致后续 DB 写入失败
+	ctx = context.WithoutCancel(ctx)
+
+	// 5. 规范化参数
 	maxCases := input.MaxCasesPerSkill
 	if maxCases <= 0 {
 		maxCases = defaultMaxCases
@@ -702,65 +705,81 @@ func (s *RequirementGenTaskService) SmartGenerate(ctx context.Context, input Sma
 		defaultLevel = "P2"
 	}
 
-	// 5. 为每个推荐的 Skill 创建生成任务
+	// 6. 收集所有推荐 Skill，创建一条合并任务
 	result := &SmartGenerateResult{
 		RecommendedSkills: make([]SkillRecommendation, 0, len(recommended)),
-		CreatedTasks:      make([]*model.RequirementGenTask, 0, len(recommended)),
+		CreatedTasks:      make([]*model.RequirementGenTask, 0, 1),
 	}
 
+	var matchedSkills []*model.AISkill
 	for _, rec := range recommended {
 		skill, ok := skillMap[uint(rec.SkillID)]
 		if !ok {
 			s.logger.Warn("推荐的 Skill 不在候选列表中", "skill_id", rec.SkillID)
 			continue
 		}
-
 		result.RecommendedSkills = append(result.RecommendedSkills, SkillRecommendation{
 			SkillID:  uint(rec.SkillID),
 			SkillKey: rec.SkillKey,
 			Reason:   rec.Reason,
 		})
-
-		// 组合任务名称
-		taskName := input.TaskNamePrefix
-		if taskName == "" {
-			taskName = doc.Title
-		}
-		taskName = taskName + " - " + skill.Name
-
-		task := &model.RequirementGenTask{
-			ProjectID:        input.ProjectID,
-			RequirementDocID: input.RequirementDocID,
-			SkillID:          skill.ID,
-			AIModelConfigID:  input.AIModelConfigID,
-			AIModelSnapshot:  input.AIModelSnapshot,
-			TaskName:         taskName,
-			TargetModuleID:   input.TargetModuleID,
-			DefaultLevel:     defaultLevel,
-			MaxCases:         maxCases,
-			ExtraPrompt:      input.ExtraPrompt,
-			Status:           model.GenTaskStatusPending,
-			CreatedBy:        input.CreatedBy,
-		}
-
-		if err := s.taskRepo.Create(ctx, task); err != nil {
-			s.logger.Error("批量创建任务失败", "error", err, "skill_id", skill.ID)
-			continue
-		}
-
-		result.CreatedTasks = append(result.CreatedTasks, task)
-
-		// 异步派发到 Executor
-		go func(t *model.RequirementGenTask, d *model.RequirementDoc, sk *model.AISkill) {
-			if dispatchErr := s.dispatchGenerate(t, d, sk); dispatchErr != nil {
-				s.logger.Error("派发生成任务到 Executor 失败", "error", dispatchErr, "task_id", t.ID)
-			}
-		}(task, doc, skill)
+		matchedSkills = append(matchedSkills, skill)
 	}
 
-	s.logger.Info("智能生成任务批量创建完成",
+	if len(matchedSkills) == 0 {
+		return nil, ErrBadRequest(CodeReqGenNoSkillRecommended, "AI 未匹配到适用的 Skill，请检查需求文档内容")
+	}
+
+	// 构建 Skill 快照 JSON
+	type skillSnapshotItem struct {
+		SkillID  uint   `json:"skill_id"`
+		SkillKey string `json:"skill_key"`
+		Name     string `json:"name"`
+	}
+	snapshotItems := make([]skillSnapshotItem, 0, len(matchedSkills))
+	for _, sk := range matchedSkills {
+		snapshotItems = append(snapshotItems, skillSnapshotItem{SkillID: sk.ID, SkillKey: sk.SkillKey, Name: sk.Name})
+	}
+	snapshotJSON, _ := json.Marshal(snapshotItems)
+
+	// 任务名称不带 Skill 后缀
+	taskName := input.TaskNamePrefix
+	if taskName == "" {
+		taskName = doc.Title
+	}
+
+	task := &model.RequirementGenTask{
+		ProjectID:        input.ProjectID,
+		RequirementDocID: input.RequirementDocID,
+		SkillID:          matchedSkills[0].ID,
+		AIModelConfigID:  input.AIModelConfigID,
+		AIModelSnapshot:  input.AIModelSnapshot,
+		TaskName:         taskName,
+		TargetModuleID:   input.TargetModuleID,
+		DefaultLevel:     defaultLevel,
+		MaxCases:         maxCases,
+		ExtraPrompt:      input.ExtraPrompt,
+		SkillSnapshot:    string(snapshotJSON),
+		Status:           model.GenTaskStatusPending,
+		CreatedBy:        input.CreatedBy,
+	}
+
+	if err := s.taskRepo.Create(ctx, task); err != nil {
+		s.logger.Error("创建智能生成任务失败", "error", err)
+		return nil, ErrInternal(CodeInternal, err)
+	}
+	result.CreatedTasks = append(result.CreatedTasks, task)
+
+	// 异步派发到 Executor（传所有匹配 Skill）
+	go func(t *model.RequirementGenTask, d *model.RequirementDoc, sks []*model.AISkill) {
+		if dispatchErr := s.dispatchGenerate(t, d, sks); dispatchErr != nil {
+			s.logger.Error("派发生成任务到 Executor 失败", "error", dispatchErr, "task_id", t.ID)
+		}
+	}(task, doc, matchedSkills)
+
+	s.logger.Info("智能生成任务创建完成",
 		"project_id", input.ProjectID, "doc_id", input.RequirementDocID,
-		"recommended", len(result.RecommendedSkills), "created", len(result.CreatedTasks),
+		"recommended", len(result.RecommendedSkills), "task_id", task.ID,
 	)
 
 	return result, nil
@@ -816,8 +835,8 @@ func (s *RequirementGenTaskService) callSkillRouter(requirementText string, cand
 
 // ========== 内部方法 ==========
 
-// dispatchGenerate 将生成任务派发给 Executor 异步执行
-func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenTask, doc *model.RequirementDoc, skill *model.AISkill) error {
+// dispatchGenerate 将生成任务派发给 Executor 异步执行，支持多 Skill 合并生成
+func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenTask, doc *model.RequirementDoc, skills []*model.AISkill) error {
 	if s.executorURL == "" {
 		s.logger.Warn("executor URL 未配置，跳过生成任务派发", "task_id", task.ID)
 		return nil
@@ -847,13 +866,26 @@ func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenT
 		requirementText = *doc.RawContent
 	}
 
+	// 构建多 Skill 列表
+	type skillItem struct {
+		SkillName      string `json:"skill_name"`
+		PromptTemplate string `json:"prompt_template"`
+		OutputSchema   string `json:"output_schema"`
+	}
+	skillItems := make([]skillItem, 0, len(skills))
+	for _, sk := range skills {
+		skillItems = append(skillItems, skillItem{
+			SkillName:      sk.Name,
+			PromptTemplate: sk.PromptTemplate,
+			OutputSchema:   sk.OutputSchema,
+		})
+	}
+
 	payload := map[string]interface{}{
 		"task_id":          task.ID,
 		"project_id":       task.ProjectID,
 		"requirement_text": requirementText,
-		"skill_name":       skill.Name,
-		"prompt_template":  skill.PromptTemplate,
-		"output_schema":    skill.OutputSchema,
+		"skills":           skillItems,
 		"max_cases":        task.MaxCases,
 		"default_level":    task.DefaultLevel,
 		"extra_prompt":     task.ExtraPrompt,

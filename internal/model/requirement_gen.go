@@ -58,11 +58,11 @@ type RequirementDoc struct {
 	ProjectID         uint           `json:"project_id" gorm:"not null;index:idx_rd_project_created;index:idx_rd_project_status"`
 	Title             string         `json:"title" gorm:"size:200;not null"`
 	SourceType        string         `json:"source_type" gorm:"size:20;not null"`           // upload_file / paste_text
-	FileFormat        string         `json:"file_format" gorm:"size:20;not null"`            // docx / pdf / md / txt / text
+	FileFormat        string         `json:"file_format" gorm:"size:20;not null"`           // docx / pdf / md / txt / text
 	FilePath          string         `json:"file_path" gorm:"size:500;not null;default:''"` // 原始文件相对路径
 	FileSize          int64          `json:"file_size" gorm:"not null;default:0"`
-	RawContent        *string        `json:"raw_content" gorm:"type:longtext"`            // 解析后纯文本
-	WordCount         int            `json:"word_count" gorm:"not null;default:0"`         // 截断后字数
+	RawContent        *string        `json:"raw_content" gorm:"type:longtext"`              // 解析后纯文本
+	WordCount         int            `json:"word_count" gorm:"not null;default:0"`          // 截断后字数
 	OriginalWordCount int            `json:"original_word_count" gorm:"not null;default:0"` // 截断前原始字数
 	Truncated         bool           `json:"truncated" gorm:"not null;default:false"`
 	ParseStatus       string         `json:"parse_status" gorm:"size:20;not null;default:not_parsed;index:idx_rd_project_status;index:idx_rd_parse_stuck"`
@@ -102,7 +102,8 @@ type RequirementGenTask struct {
 	TargetModuleID   uint   `json:"target_module_id" gorm:"not null;default:0"`
 	DefaultLevel     string `json:"default_level" gorm:"size:10;not null;default:P2"`
 	MaxCases         int    `json:"max_cases" gorm:"not null;default:30"`
-	ExtraPrompt      string `json:"extra_prompt" gorm:"type:text"` // 用户补充上下文
+	ExtraPrompt      string `json:"extra_prompt" gorm:"type:text"`   // 用户补充上下文
+	SkillSnapshot    string `json:"skill_snapshot" gorm:"type:text"` // 所有匹配 Skill 的 JSON 快照
 	ParentTaskID     uint   `json:"parent_task_id" gorm:"not null;default:0;index:idx_rgt_parent"`
 
 	Status     string `json:"status" gorm:"size:20;not null;default:PENDING;index:idx_rgt_project_status;index:idx_rgt_status_heartbeat"`
@@ -162,7 +163,7 @@ type RequirementGenResult struct {
 	Title         string  `json:"title" gorm:"size:200;not null"`
 	Level         string  `json:"level" gorm:"size:10;not null;default:P2"`
 	Precondition  string  `json:"precondition" gorm:"type:text"`
-	Steps         string  `json:"steps" gorm:"type:longtext"`      // JSON 数组
+	Steps         string  `json:"steps" gorm:"type:longtext"` // JSON 数组
 	Postcondition string  `json:"postcondition" gorm:"type:text"`
 	Remark        string  `json:"remark" gorm:"type:text"`
 	TagsSuggested string  `json:"tags_suggested" gorm:"size:500;not null;default:''"` // 逗号分隔
@@ -202,7 +203,7 @@ type AISkill struct {
 	ProjectID      uint           `json:"project_id" gorm:"not null;default:0;uniqueIndex:uk_skill_project_key"` // 0=系统内置
 	SkillKey       string         `json:"skill_key" gorm:"size:50;not null;uniqueIndex:uk_skill_project_key"`
 	Name           string         `json:"name" gorm:"size:100;not null"`
-	Scope          string         `json:"scope" gorm:"size:20;not null"`     // functional/api/compat/security/custom
+	Scope          string         `json:"scope" gorm:"size:20;not null"` // functional/api/compat/security/custom
 	Description    string         `json:"description" gorm:"size:500;not null;default:''"`
 	PromptTemplate string         `json:"prompt_template,omitempty" gorm:"type:longtext;not null"` // 含占位符的提示词模板
 	OutputSchema   string         `json:"output_schema" gorm:"size:50;not null;default:standard_case_v1"`
