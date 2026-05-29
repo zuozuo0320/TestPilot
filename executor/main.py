@@ -1454,7 +1454,7 @@ async def analyze_testcase(req: TestCaseAnalyzeRequest):
 
 from requirement_gen import (
     ParseDocRequest, GenerateRequest, SkillRouterRequest,
-    parse_doc_async, generate_cases_async, route_skills,
+    parse_doc_async, generate_cases_async, generate_cases_sync, route_skills,
 )
 
 
@@ -1467,7 +1467,13 @@ async def requirement_gen_parse_doc(req: ParseDocRequest):
 
 @app.post("/requirement-gen/generate")
 async def requirement_gen_generate(req: GenerateRequest):
-    """异步 LLM 用例生成：收到请求后立即返回，完成后回调 Go 后端"""
+    """LLM 用例生成。
+
+    - sync=True（方案 B，worker 池驱动）：同步阻塞执行，跑完直接返回完整结果；
+    - sync=False（兼容旧模式）：后台异步执行 + 回调 Go 后端。
+    """
+    if req.sync:
+        return await generate_cases_sync(req)
     asyncio.create_task(generate_cases_async(req))
     return {"status": "accepted", "task_id": req.task_id}
 

@@ -16,6 +16,7 @@ import (
 	"testpilot/internal/migration"
 	"testpilot/internal/model"
 	pkgauth "testpilot/internal/pkg/auth"
+	"testpilot/internal/queue"
 	"testpilot/internal/repository"
 	"testpilot/internal/seed"
 	"testpilot/internal/service"
@@ -153,6 +154,22 @@ func main() {
 		logger.Warn("redis unavailable, continue without cache", "error", err)
 	}
 
+	// ========== 异步任务队列（Asynq）==========
+	// 复用 Redis 实例（独立 DB index 隔离），构建生成任务入队器与 worker 池。
+	// Redis 不可用时 genQueueClient/genQueueServer 为 nil，Service 自动降级为本地执行。
+	var genQueueClient *queue.Client
+	var genQueueServer *queue.Server
+	genTimeout := time.Duration(cfg.ExecutorGenTimeoutSec) * time.Second
+	if redisClient != nil {
+		redisCfg := queue.RedisConfig{Addr: cfg.RedisAddr, Password: cfg.RedisPassword, DB: cfg.AsynqRedisDB}
+		genQueueClient = queue.NewClient(redisCfg, queue.ClientOptions{
+			MaxRetry:  cfg.GenMaxRetry,
+			Timeout:   genTimeout + 60*time.Second, // 任务超时略大于 HTTP 超时，确保 HTTP 先超时返回
+			Retention: 24 * time.Hour,
+		}, logger)
+		genQueueServer = queue.NewServer(redisCfg, cfg.GenWorkerConcurrency, logger)
+	}
+
 	// ========== 三层架构构建 ==========
 
 	// 1. Repository 层
@@ -209,7 +226,12 @@ func main() {
 	tagSvc := service.NewTagService(tagRepo, auditRepo, txMgr, logger)
 	aiModelConfigSvc := service.NewAIModelConfigService(aiModelConfigRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, logger)
 	reqDocSvc := service.NewRequirementDocService(logger, reqDocRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey)
-	reqGenTaskSvc := service.NewRequirementGenTaskService(logger, reqGenTaskRepo, reqGenResultRepo, reqDocRepo, aiSkillRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey)
+	// 入队器注入：Redis 不可用时传真正的 nil 接口（避免 typed-nil 陷阱），Service 降级本地执行
+	var genEnqueuer service.GenTaskEnqueuer
+	if genQueueClient != nil {
+		genEnqueuer = genQueueClient
+	}
+	reqGenTaskSvc := service.NewRequirementGenTaskService(logger, reqGenTaskRepo, reqGenResultRepo, reqDocRepo, aiSkillRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, genEnqueuer, genTimeout)
 	aiSkillSvc := service.NewAISkillService(logger, aiSkillRepo, txMgr)
 
 	// 3. API 层
@@ -253,6 +275,17 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	// 启动需求智生 worker 池（消费队列任务，并发由 GenWorkerConcurrency 控制）
+	if genQueueServer != nil {
+		if startErr := genQueueServer.Start(func(ctx context.Context, taskID uint) error {
+			return reqGenTaskSvc.RunGenerate(ctx, taskID)
+		}); startErr != nil {
+			logger.Error("启动需求智生 worker 失败", "error", startErr)
+		} else {
+			logger.Info("需求智生 worker 已启动", "concurrency", cfg.GenWorkerConcurrency)
+		}
+	}
+
 	// ========== 优雅关停 ==========
 	go func() {
 		logger.Info("server starting", "addr", cfg.HTTPAddr())
@@ -272,6 +305,14 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)
+	}
+
+	// 关停 worker：停止拉取新任务，等待在途任务完成（超时后未完成任务退回队列）
+	if genQueueServer != nil {
+		genQueueServer.Shutdown()
+	}
+	if genQueueClient != nil {
+		_ = genQueueClient.Close()
 	}
 	logger.Info("server stopped")
 }

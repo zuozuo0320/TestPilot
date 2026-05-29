@@ -30,11 +30,16 @@ import (
 // ========== 配置常量 ==========
 
 const (
-	defaultProjectConcurrentLimit = 3   // 项目并发任务上限
-	defaultGlobalConcurrentLimit  = 20  // 全局并发任务上限
-	defaultMaxCases               = 30  // 默认最大生成条数
-	maxAllowedCases               = 100 // 用户可配置最大值
+	defaultMaxCases = 30  // 默认最大生成条数
+	maxAllowedCases = 100 // 用户可配置最大值
 )
+
+// GenTaskEnqueuer 生成任务入队器接口。
+// 通过依赖倒置解耦 Service 与具体队列实现（queue.Client），便于单测替身。
+type GenTaskEnqueuer interface {
+	// EnqueueGenerate 将指定任务入队，由 worker 池异步消费执行。
+	EnqueueGenerate(ctx context.Context, taskID uint) error
+}
 
 // RequirementGenTaskService 需求智生-生成任务业务逻辑层
 type RequirementGenTaskService struct {
@@ -46,7 +51,9 @@ type RequirementGenTaskService struct {
 	txMgr          *repository.TxManager
 	executorURL    string
 	executorAPIKey string
-	httpClient     *http.Client
+	enqueuer       GenTaskEnqueuer // 任务入队器（nil 时降级为本地执行）
+	genHTTPClient  *http.Client    // Executor 同步生成专用客户端（长超时）
+	workerNodeID   string          // worker 节点标识，写入任务 executor_node_id
 }
 
 // NewRequirementGenTaskService 创建生成任务 Service
@@ -59,6 +66,8 @@ func NewRequirementGenTaskService(
 	txMgr *repository.TxManager,
 	executorURL string,
 	executorAPIKey string,
+	enqueuer GenTaskEnqueuer,
+	genTimeout time.Duration,
 ) *RequirementGenTaskService {
 	return &RequirementGenTaskService{
 		logger:         logger.With("module", "requirement_gen_task"),
@@ -69,7 +78,9 @@ func NewRequirementGenTaskService(
 		txMgr:          txMgr,
 		executorURL:    strings.TrimRight(executorURL, "/"),
 		executorAPIKey: executorAPIKey,
-		httpClient:     &http.Client{Timeout: 30 * time.Second},
+		enqueuer:       enqueuer,
+		genHTTPClient:  &http.Client{Timeout: genTimeout},
+		workerNodeID:   "queue-worker",
 	}
 }
 
@@ -160,28 +171,10 @@ func (s *RequirementGenTaskService) Create(ctx context.Context, input CreateGenT
 		return nil, ErrNotFound(CodeReqSkillNotFound, "Skill 不存在")
 	}
 
-	// 3. 校验项目并发配额
-	activeCount, err := s.taskRepo.CountActiveByProject(ctx, input.ProjectID)
-	if err != nil {
-		s.logger.Error("查询项目活跃任务数失败", "error", err, "project_id", input.ProjectID)
-		return nil, ErrInternal(CodeInternal, err)
-	}
-	if activeCount >= int64(defaultProjectConcurrentLimit) {
-		return nil, ErrTooManyRequests(CodeReqGenProjectQuotaExceed,
-			fmt.Sprintf("项目并发任务已达上限(%d)，请等待现有任务完成后再创建", defaultProjectConcurrentLimit))
-	}
+	// 3. 并发控制改由队列 worker 池承担：超出 worker 并发的任务在队列排队，
+	//    不再因活跃任务数超限而拒绝创建（方案 B：配额从拒绝改为排队）。
 
-	// 4. 校验全局并发配额
-	globalCount, err := s.taskRepo.CountActiveGlobal(ctx)
-	if err != nil {
-		s.logger.Error("查询全局活跃任务数失败", "error", err)
-		return nil, ErrInternal(CodeInternal, err)
-	}
-	if globalCount >= int64(defaultGlobalConcurrentLimit) {
-		return nil, ErrTooManyRequests(CodeReqGenGlobalQuotaExceed, "系统繁忙，请稍后重试")
-	}
-
-	// 5. 规范化参数
+	// 4. 规范化参数
 	maxCases := input.MaxCases
 	if maxCases <= 0 {
 		maxCases = defaultMaxCases
@@ -221,12 +214,8 @@ func (s *RequirementGenTaskService) Create(ctx context.Context, input CreateGenT
 		"max_cases", maxCases,
 	)
 
-	// 异步派发到 Executor（非阻塞，失败不影响创建结果）
-	go func() {
-		if err := s.dispatchGenerate(task, doc, []*model.AISkill{skill}); err != nil {
-			s.logger.Error("派发生成任务到 Executor 失败", "error", err, "task_id", task.ID)
-		}
-	}()
+	// 入队，由 worker 池受控并发消费（失败时降级为本地执行）
+	s.enqueueOrFallback(ctx, task.ID)
 
 	return task, nil
 }
@@ -770,12 +759,8 @@ func (s *RequirementGenTaskService) SmartGenerate(ctx context.Context, input Sma
 	}
 	result.CreatedTasks = append(result.CreatedTasks, task)
 
-	// 异步派发到 Executor（传所有匹配 Skill）
-	go func(t *model.RequirementGenTask, d *model.RequirementDoc, sks []*model.AISkill) {
-		if dispatchErr := s.dispatchGenerate(t, d, sks); dispatchErr != nil {
-			s.logger.Error("派发生成任务到 Executor 失败", "error", dispatchErr, "task_id", t.ID)
-		}
-	}(task, doc, matchedSkills)
+	// 入队，由 worker 池受控并发消费（失败时降级为本地执行）
+	s.enqueueOrFallback(ctx, task.ID)
 
 	s.logger.Info("智能生成任务创建完成",
 		"project_id", input.ProjectID, "doc_id", input.RequirementDocID,
@@ -833,40 +818,243 @@ func (s *RequirementGenTaskService) callSkillRouter(requirementText string, cand
 	return routerResp.RecommendedSkills, nil
 }
 
-// ========== 内部方法 ==========
+// ========== 内部方法（队列 worker 驱动） ==========
 
-// dispatchGenerate 将生成任务派发给 Executor 异步执行，支持多 Skill 合并生成
-func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenTask, doc *model.RequirementDoc, skills []*model.AISkill) error {
+// enqueueOrFallback 将任务入队；若入队器不可用或入队失败，则降级为本地异步执行，
+// 保证 Redis/队列异常时生成链路仍可工作。
+func (s *RequirementGenTaskService) enqueueOrFallback(ctx context.Context, taskID uint) {
+	if s.enqueuer != nil {
+		if err := s.enqueuer.EnqueueGenerate(ctx, taskID); err != nil {
+			s.logger.Error("任务入队失败，降级为本地执行", "error", err, "task_id", taskID)
+			go s.runGenerateDetached(taskID)
+		}
+		return
+	}
+	// 未配置队列：降级为本地异步执行
+	go s.runGenerateDetached(taskID)
+}
+
+// runGenerateDetached 脱离请求上下文在本地执行生成任务（降级路径）。
+func (s *RequirementGenTaskService) runGenerateDetached(taskID uint) {
+	ctx := context.Background()
+	if err := s.RunGenerate(ctx, taskID); err != nil {
+		s.logger.Error("本地执行生成任务失败", "error", err, "task_id", taskID)
+		s.failTask(ctx, taskID, fmt.Sprintf("本地执行失败: %v", err))
+	}
+}
+
+// RunGenerate 由队列 worker（或降级路径）调用，同步驱动单个生成任务执行。
+//
+// 流程：加载任务/文档/Skill → CAS 置 RUNNING + 心跳 → 同步调用 Executor 生成 → 写库。
+//
+// 返回值语义（决定队列是否重试）：
+//   - nil：任务已处理完毕或无需处理（已终态/已删除/业务失败已落库），不重试。
+//   - error：可恢复错误（Executor 网络/超时、写库失败），触发队列重试。
+func (s *RequirementGenTaskService) RunGenerate(ctx context.Context, taskID uint) error {
+	// 1. 加载任务
+	task, err := s.taskRepo.FindByID(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			s.logger.Warn("队列任务忽略：任务不存在，可能已删除", "task_id", taskID)
+			return nil
+		}
+		return fmt.Errorf("load gen task: %w", err)
+	}
+	// 2. 幂等：已为终态则跳过
+	if task.IsTerminal() {
+		s.logger.Info("队列任务忽略：任务已为终态", "task_id", taskID, "status", task.Status)
+		return nil
+	}
 	if s.executorURL == "" {
-		s.logger.Warn("executor URL 未配置，跳过生成任务派发", "task_id", task.ID)
+		s.logger.Warn("executor URL 未配置，标记任务失败", "task_id", taskID)
+		s.failTask(ctx, taskID, "Executor 未配置")
 		return nil
 	}
 
-	// CAS: pending → running
-	if err := s.MarkRunning(context.Background(), task.ID, "executor-local", fmt.Sprintf("dispatch-%d", task.ID)); err != nil {
-		return fmt.Errorf("mark running before dispatch: %w", err)
+	// 3. CAS 置 RUNNING（允许 PENDING/RUNNING 重入，支持 worker 重试）
+	now := time.Now()
+	affected, err := s.taskRepo.CASStatus(ctx, taskID,
+		[]string{model.GenTaskStatusPending, model.GenTaskStatusRunning},
+		task.LockVersion,
+		model.GenTaskStatusRunning,
+		map[string]interface{}{
+			"started_at":        now,
+			"last_heartbeat_at": now,
+			"executor_node_id":  s.workerNodeID,
+			"request_id":        fmt.Sprintf("queue-%d", taskID),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("cas running: %w", err)
 	}
-	markDispatchFailed := func(dispatchErr error) error {
-		reason := fmt.Sprintf("派发生成任务到 Executor 失败: %v", dispatchErr)
-		if len([]rune(reason)) > 1000 {
-			reason = string([]rune(reason)[:1000])
+	if affected == 0 {
+		// lock_version 冲突或状态已变：重新判断是否已终态
+		if fresh, ferr := s.taskRepo.FindByID(ctx, taskID); ferr == nil && fresh.IsTerminal() {
+			return nil
 		}
-		if failErr := s.CallbackFail(context.Background(), CallbackFailInput{
-			TaskID:     task.ID,
-			FailReason: reason,
-		}); failErr != nil {
-			s.logger.Error("标记派发失败任务失败", "error", failErr, "task_id", task.ID)
-		}
-		return dispatchErr
+		s.logger.Warn("CAS 置 RUNNING 冲突，稍后重试", "task_id", taskID)
+		return fmt.Errorf("cas running conflict for task %d", taskID)
 	}
 
-	// 获取文档内容
+	// 4. 加载需求文档
+	doc, err := s.docRepo.FindByID(ctx, task.RequirementDocID)
+	if err != nil {
+		s.failTask(ctx, taskID, fmt.Sprintf("加载需求文档失败: %v", err))
+		return nil
+	}
+
+	// 5. 重建 Skill 列表（从快照或单 Skill）
+	skills, err := s.loadSkillsForTask(ctx, task)
+	if err != nil {
+		s.failTask(ctx, taskID, fmt.Sprintf("加载 Skill 失败: %v", err))
+		return nil
+	}
+
+	// 6. 启动后台心跳，执行期间保持任务存活标记
+	stopHeartbeat := s.startHeartbeat(taskID)
+	defer stopHeartbeat()
+
+	// 7. 同步调用 Executor 生成
+	genResp, err := s.callExecutorGenerate(ctx, task, doc, skills)
+	if err != nil {
+		// 网络/超时等可恢复错误：任务保持 RUNNING，返回 error 触发队列重试
+		s.logger.Error("调用 Executor 生成失败，将重试", "error", err, "task_id", taskID)
+		return fmt.Errorf("call executor generate: %w", err)
+	}
+
+	// 8. Executor 返回业务失败：标记 FAILED，不重试
+	if genResp.Status != "success" {
+		reason := genResp.FailReason
+		if reason == "" {
+			reason = "Executor 生成失败"
+		}
+		s.failTask(ctx, taskID, reason)
+		return nil
+	}
+
+	// 9. 成功：写入产物 + 推进 SUCCESS（CallbackSuccess 内含终态幂等守卫）
+	results := make([]CallbackResultItem, 0, len(genResp.Results))
+	for _, item := range genResp.Results {
+		results = append(results, CallbackResultItem{
+			SeqNo:         item.SeqNo,
+			Title:         item.Title,
+			Level:         item.Level,
+			Precondition:  item.Precondition,
+			Steps:         item.Steps,
+			Postcondition: item.Postcondition,
+			Remark:        item.Remark,
+			TagsSuggested: item.TagsSuggested,
+			AIConfidence:  item.AIConfidence,
+			RawJSON:       item.RawJSON,
+		})
+	}
+	if err := s.CallbackSuccess(ctx, CallbackSuccessInput{
+		TaskID:           taskID,
+		GeneratedCount:   genResp.GeneratedCount,
+		PromptTokens:     genResp.PromptTokens,
+		CompletionTokens: genResp.CompletionTokens,
+		DurationMs:       genResp.DurationMs,
+		Results:          results,
+	}); err != nil {
+		// 写库失败：返回 error 触发重试（幂等守卫保证不会重复落库）
+		return fmt.Errorf("write generate result: %w", err)
+	}
+	return nil
+}
+
+// failTask 标记任务失败的便捷封装，截断过长原因并忽略回调内部错误。
+func (s *RequirementGenTaskService) failTask(ctx context.Context, taskID uint, reason string) {
+	if len([]rune(reason)) > 1000 {
+		reason = string([]rune(reason)[:1000])
+	}
+	if err := s.CallbackFail(ctx, CallbackFailInput{TaskID: taskID, FailReason: reason}); err != nil {
+		s.logger.Error("标记任务失败回调失败", "error", err, "task_id", taskID)
+	}
+}
+
+// loadSkillsForTask 根据任务的 SkillSnapshot（多 Skill）或 SkillID（单 Skill）重建完整 Skill 列表。
+func (s *RequirementGenTaskService) loadSkillsForTask(ctx context.Context, task *model.RequirementGenTask) ([]*model.AISkill, error) {
+	// 优先使用 SkillSnapshot 中的 skill_id 列表（智能生成多 Skill 场景）
+	if task.SkillSnapshot != "" {
+		var snapshot []struct {
+			SkillID uint `json:"skill_id"`
+		}
+		if err := json.Unmarshal([]byte(task.SkillSnapshot), &snapshot); err == nil && len(snapshot) > 0 {
+			skills := make([]*model.AISkill, 0, len(snapshot))
+			for _, item := range snapshot {
+				sk, ferr := s.skillRepo.FindByID(ctx, item.SkillID)
+				if ferr != nil {
+					s.logger.Warn("快照 Skill 加载失败，跳过", "skill_id", item.SkillID, "error", ferr)
+					continue
+				}
+				skills = append(skills, sk)
+			}
+			if len(skills) > 0 {
+				return skills, nil
+			}
+		}
+	}
+	// 回退到单 Skill
+	sk, err := s.skillRepo.FindByID(ctx, task.SkillID)
+	if err != nil {
+		return nil, fmt.Errorf("skill not found: %w", err)
+	}
+	return []*model.AISkill{sk}, nil
+}
+
+// startHeartbeat 启动后台心跳 goroutine，定期刷新任务心跳时间，返回停止函数。
+// worker 同步执行期间保持心跳，便于 FindStuckRunning 区分真正僵死（worker 崩溃）的任务。
+func (s *RequirementGenTaskService) startHeartbeat(taskID uint) func() {
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				if err := s.taskRepo.UpdateHeartbeat(context.Background(), taskID); err != nil {
+					s.logger.Warn("更新任务心跳失败", "task_id", taskID, "error", err)
+				}
+			}
+		}
+	}()
+	return func() { close(stop) }
+}
+
+// executorGenerateResponse Executor 同步生成响应（与旧回调 payload 同构）
+type executorGenerateResponse struct {
+	Status           string               `json:"status"`
+	GeneratedCount   int                  `json:"generated_count"`
+	PromptTokens     int                  `json:"prompt_tokens"`
+	CompletionTokens int                  `json:"completion_tokens"`
+	DurationMs       int64                `json:"duration_ms"`
+	FailReason       string               `json:"fail_reason"`
+	Results          []executorResultItem `json:"results"`
+}
+
+// executorResultItem Executor 返回的单条产物
+type executorResultItem struct {
+	SeqNo         int     `json:"seq_no"`
+	Title         string  `json:"title"`
+	Level         string  `json:"level"`
+	Precondition  string  `json:"precondition"`
+	Steps         string  `json:"steps"`
+	Postcondition string  `json:"postcondition"`
+	Remark        string  `json:"remark"`
+	TagsSuggested string  `json:"tags_suggested"`
+	AIConfidence  float64 `json:"ai_confidence"`
+	RawJSON       string  `json:"raw_json"`
+}
+
+// callExecutorGenerate 同步调用 Executor 生成接口，阻塞等待生成结果返回。
+func (s *RequirementGenTaskService) callExecutorGenerate(ctx context.Context, task *model.RequirementGenTask, doc *model.RequirementDoc, skills []*model.AISkill) (*executorGenerateResponse, error) {
 	requirementText := ""
 	if doc.RawContent != nil {
 		requirementText = *doc.RawContent
 	}
 
-	// 构建多 Skill 列表
 	type skillItem struct {
 		SkillName      string `json:"skill_name"`
 		PromptTemplate string `json:"prompt_template"`
@@ -889,27 +1077,30 @@ func (s *RequirementGenTaskService) dispatchGenerate(task *model.RequirementGenT
 		"max_cases":        task.MaxCases,
 		"default_level":    task.DefaultLevel,
 		"extra_prompt":     task.ExtraPrompt,
+		"sync":             true, // 同步模式：Executor 跑完直接返回结果
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequest(http.MethodPost, s.executorURL+"/requirement-gen/generate", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.executorURL+"/requirement-gen/generate", bytes.NewReader(body))
 	if err != nil {
-		return markDispatchFailed(fmt.Errorf("create dispatch request: %w", err))
+		return nil, fmt.Errorf("create generate request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", s.executorAPIKey)
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.genHTTPClient.Do(req)
 	if err != nil {
-		s.logger.Error("派发生成任务失败", "error", err, "task_id", task.ID)
-		return markDispatchFailed(fmt.Errorf("dispatch generate: %w", err))
+		return nil, fmt.Errorf("do generate request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return markDispatchFailed(fmt.Errorf("executor returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))))
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("executor returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
-	s.logger.Info("生成任务已派发", "task_id", task.ID, "status", resp.StatusCode)
-	return nil
+	var genResp executorGenerateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
+		return nil, fmt.Errorf("decode executor response: %w", err)
+	}
+	return &genResp, nil
 }

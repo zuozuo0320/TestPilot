@@ -26,6 +26,10 @@ type Config struct {
 	RedisAddr          string
 	RedisPassword      string
 	RedisDB            int
+	AsynqRedisDB          int // Asynq 专用 Redis DB（与缓存隔离）
+	GenWorkerConcurrency  int // 需求智生 worker 并发数（核心并发闸门）
+	GenMaxRetry           int // 生成任务最大重试次数
+	ExecutorGenTimeoutSec int // Executor 同步生成超时（秒）
 	AutoSeed           bool
 	AutoSeedDemo       bool
 	RunFailRate        float64
@@ -54,6 +58,10 @@ func Load() Config {
 		RedisAddr:          getEnv("REDIS_ADDR", "127.0.0.1:6379"),
 		RedisPassword:      getEnv("REDIS_PASSWORD", ""),
 		RedisDB:            getEnvInt("REDIS_DB", 0),
+		AsynqRedisDB:          getEnvInt("ASYNQ_REDIS_DB", 1),
+		GenWorkerConcurrency:  getEnvInt("GEN_WORKER_CONCURRENCY", 5),
+		GenMaxRetry:           getEnvInt("GEN_MAX_RETRY", 3),
+		ExecutorGenTimeoutSec: getEnvInt("EXECUTOR_GEN_TIMEOUT_SEC", 600),
 		AutoSeed:           getEnvBool("AUTO_SEED", false),
 		AutoSeedDemo:       getEnvBool("AUTO_SEED_DEMO", false),
 		RunFailRate:        getEnvFloat("RUN_FAIL_RATE", 0.25),

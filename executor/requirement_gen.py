@@ -85,6 +85,7 @@ class GenerateRequest(BaseModel):
     extra_prompt: str = ""
     model_override: Optional[str] = None
     callback_url: Optional[str] = None
+    sync: bool = False  # True=同步返回结果（worker 池驱动）；False=后台异步+回调（兼容旧模式）
 
     def get_skills(self) -> list[SkillItem]:
         """获取 Skill 列表，兼容单 Skill 和多 Skill 模式"""
@@ -518,15 +519,89 @@ def route_skills(req: SkillRouterRequest) -> list[dict]:
     return filtered
 
 
+def _build_generation_results(req: GenerateRequest) -> dict:
+    """同步执行多 Skill LLM 生成，返回结果 payload（不回调、不心跳）。
+
+    供同步接口（方案 B：worker 池驱动）与异步回调模式共用。
+    返回的 payload 与 Go 回调接口契约同构，含 status / generated_count / results 等字段。
+    """
+    start_time = time.time()
+    model = req.model_override or OPENAI_MODEL
+    skills = req.get_skills()
+    skill_count = len(skills)
+    per_skill_max = max(req.max_cases // skill_count, 5) if skill_count > 0 else req.max_cases
+
+    logger.info(f"LLM generation starting: task_id={req.task_id}, model={model}, skills={skill_count}, per_skill={per_skill_max}")
+
+    # 串行调用每个 Skill 生成用例，合并结果
+    results = []
+    seq_no = 1
+    for idx, skill in enumerate(skills):
+        logger.info(f"  Skill {idx+1}/{skill_count}: {skill.skill_name}")
+        user_prompt = _build_user_prompt_for_skill(skill, req, per_skill_max)
+        try:
+            raw_content = _create_generate_completion(model, user_prompt)
+        except Exception as skill_err:
+            logger.error(f"  Skill {idx+1}/{skill_count} 生成失败，跳过: {skill_err}")
+            continue
+        cases = _parse_llm_response(raw_content)
+        for case in cases[:per_skill_max]:
+            steps = case.get("steps", [])
+            steps_json = json.dumps(steps, ensure_ascii=False) if isinstance(steps, list) else str(steps)
+            results.append({
+                "seq_no": seq_no,
+                "title": case.get("title", f"用例 {seq_no}"),
+                "level": case.get("level", req.default_level),
+                "precondition": case.get("precondition", ""),
+                "steps": steps_json,
+                "postcondition": case.get("postcondition", ""),
+                "remark": case.get("remark", ""),
+                "tags_suggested": case.get("tags_suggested", ""),
+                "ai_confidence": float(case.get("ai_confidence", 0.8)),
+                "raw_json": json.dumps(case, ensure_ascii=False),
+            })
+            seq_no += 1
+        logger.info(f"  Skill {idx+1} done: +{min(len(cases), per_skill_max)} cases, total={len(results)}")
+
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    if not results:
+        return {
+            "status": "failed",
+            "fail_reason": "所有 Skill 生成均失败，无可用结果",
+            "generated_count": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "duration_ms": duration_ms,
+            "results": [],
+        }
+
+    return {
+        "status": "success",
+        "generated_count": len(results),
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "duration_ms": duration_ms,
+        "results": results,
+    }
+
+
+async def generate_cases_sync(req: GenerateRequest) -> dict:
+    """同步生成接口入口（方案 B）：在线程池执行阻塞的 LLM 生成，返回结果给调用方（Go worker）。
+
+    并发由 Go worker 池的 Concurrency 控制，Executor 端不再 fire-and-forget。
+    """
+    logger.info(f"Sync generation request: task_id={req.task_id}")
+    return await asyncio.to_thread(_build_generation_results, req)
+
+
 async def generate_cases_async(req: GenerateRequest):
-    """异步执行 LLM 生成用例并回调 Go 后端"""
+    """异步执行 LLM 生成用例并回调 Go 后端（兼容旧的 fire-and-forget 模式）"""
     callback_base = req.callback_url or BACKEND_INTERNAL_URL
     callback_url = f"{callback_base}/internal/requirement-gen/tasks/{req.task_id}/callback"
     heartbeat_url = f"{callback_base}/internal/requirement-gen/tasks/{req.task_id}/heartbeat"
 
     headers = {"Authorization": f"Bearer {EXECUTOR_API_KEY}", "Content-Type": "application/json"}
-
-    start_time = time.time()
 
     # 启动心跳任务
     heartbeat_running = True
@@ -545,64 +620,15 @@ async def generate_cases_async(req: GenerateRequest):
     heartbeat_task = asyncio.create_task(heartbeat_loop())
 
     try:
-        model = req.model_override or OPENAI_MODEL
-        skills = req.get_skills()
-        skill_count = len(skills)
-        per_skill_max = max(req.max_cases // skill_count, 5) if skill_count > 0 else req.max_cases
-
-        logger.info(f"LLM generation starting: task_id={req.task_id}, model={model}, skills={skill_count}, per_skill={per_skill_max}")
-
-        # 串行调用每个 Skill 生成用例，合并结果
-        results = []
-        seq_no = 1
-        for idx, skill in enumerate(skills):
-            logger.info(f"  Skill {idx+1}/{skill_count}: {skill.skill_name}")
-            user_prompt = _build_user_prompt_for_skill(skill, req, per_skill_max)
-            try:
-                raw_content = await asyncio.to_thread(_create_generate_completion, model, user_prompt)
-            except Exception as skill_err:
-                logger.error(f"  Skill {idx+1}/{skill_count} 生成失败，跳过: {skill_err}")
-                continue
-            cases = _parse_llm_response(raw_content)
-            for case in cases[:per_skill_max]:
-                steps = case.get("steps", [])
-                steps_json = json.dumps(steps, ensure_ascii=False) if isinstance(steps, list) else str(steps)
-                results.append({
-                    "seq_no": seq_no,
-                    "title": case.get("title", f"用例 {seq_no}"),
-                    "level": case.get("level", req.default_level),
-                    "precondition": case.get("precondition", ""),
-                    "steps": steps_json,
-                    "postcondition": case.get("postcondition", ""),
-                    "remark": case.get("remark", ""),
-                    "tags_suggested": case.get("tags_suggested", ""),
-                    "ai_confidence": float(case.get("ai_confidence", 0.8)),
-                    "raw_json": json.dumps(case, ensure_ascii=False),
-                })
-                seq_no += 1
-            logger.info(f"  Skill {idx+1} done: +{min(len(cases), per_skill_max)} cases, total={len(results)}")
-
-        duration_ms = int((time.time() - start_time) * 1000)
-
-        if not results:
-            raise RuntimeError("所有 Skill 生成均失败，无可用结果")
-
-        # 成功回调
-        payload = {
-            "status": "success",
-            "generated_count": len(results),
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "duration_ms": duration_ms,
-            "results": results,
-        }
+        # 复用同步生成核心逻辑（在线程池执行，避免阻塞事件循环）
+        payload = await asyncio.to_thread(_build_generation_results, req)
 
         async with httpx.AsyncClient(timeout=30.0) as http_client:
             resp = await http_client.post(callback_url, json=payload, headers=headers)
             logger.info(
-                f"Generate callback success: task_id={req.task_id}, "
-                f"generated={len(results)}, duration={duration_ms}ms, "
-                f"status={resp.status_code}"
+                f"Generate callback done: task_id={req.task_id}, "
+                f"status_field={payload.get('status')}, generated={payload.get('generated_count')}, "
+                f"http_status={resp.status_code}"
             )
 
     except Exception as e:
