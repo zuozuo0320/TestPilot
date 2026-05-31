@@ -24,14 +24,3 @@ SELECT 0, 'functional_testcase', '通用功能测试', 'functional',
    1, 1, 1, 0, 0, NOW(), NOW()
 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM `ai_skills` WHERE `project_id` = 0 AND `skill_key` = 'functional_testcase');
-
-INSERT INTO `ai_skills`
-  (`project_id`, `skill_key`, `name`, `scope`, `description`, `prompt_template`, `output_schema`,
-   `is_system`, `is_active`, `sort_order`, `lock_version`, `created_by`, `created_at`, `updated_at`)
-SELECT 0, 'api_testcase', '接口测试', 'api',
-   '面向 HTTP/RPC 接口契约校验：参数边界 + 状态码 + 鉴权场景',
-   '你是一名 API 测试专家。请基于下方"接口描述"生成接口测试用例草稿，供人工审阅采纳。\n\n【任务目标】\n- 针对每个接口，覆盖：合法请求、必填缺失、字段类型错误、长度边界、未鉴权、越权访问、并发场景\n- 总数不超过 {{max_cases}} 条\n- 用例默认级别 {{default_level}}\n\n【输出要求】\n- 严格输出符合 standard_case_v1 的 JSON 对象\n- 禁止任何 JSON 之外的文字\n- cases[].seq_no 从 1 起连续递增\n- 每条 step 的 action 字段必须包含以下结构化信息（用换行分隔）：\n    Method: {GET/POST/PUT/DELETE/...}\n    URL: {path 含路径参数}\n    Headers: {关键 header，如 Authorization}\n    Body: {请求体 JSON 或表单字段}\n- 每条 step 的 expected 字段必须包含：\n    Status: {期望 HTTP 状态码}\n    Body: {关键字段断言}\n    Side-effect: {对系统状态的副作用}\n\n【业务上下文】\n{{project_context}}\n\n【约束】\n- tags_suggested 仅能从以下标签中选取：{{existing_tags}}\n- 用户额外指引：{{extra_prompt}}\n\n【生成原则】\n1. 接口描述是唯一事实源。未声明的 header / 字段 / 错误码不允许凭空补全\n2. 必填字段每个都要单独有一条"缺失该字段"的异常用例\n3. 状态码覆盖至少 200 / 4xx / 401 / 403 / 500（若文档支持）\n4. 鉴权场景必测：未带 token、过期 token、其他用户 token\n5. 若接口描述不足（缺少错误码定义、字段类型），在 summary.uncovered_risks 中说明\n\n【接口描述】\n{{requirement_text}}\n\n{{few_shot_examples}}',
-   'standard_case_v1',
-   1, 1, 2, 0, 0, NOW(), NOW()
-FROM DUAL
-WHERE NOT EXISTS (SELECT 1 FROM `ai_skills` WHERE `project_id` = 0 AND `skill_key` = 'api_testcase');

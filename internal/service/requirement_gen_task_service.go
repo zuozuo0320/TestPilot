@@ -48,6 +48,8 @@ type RequirementGenTaskService struct {
 	resultRepo     repository.RequirementGenResultRepository
 	docRepo        repository.RequirementDocRepository
 	skillRepo      repository.AISkillRepository
+	tagRepo        repository.TagRepository
+	projectRepo    repository.ProjectRepository
 	txMgr          *repository.TxManager
 	executorURL    string
 	executorAPIKey string
@@ -63,6 +65,8 @@ func NewRequirementGenTaskService(
 	resultRepo repository.RequirementGenResultRepository,
 	docRepo repository.RequirementDocRepository,
 	skillRepo repository.AISkillRepository,
+	tagRepo repository.TagRepository,
+	projectRepo repository.ProjectRepository,
 	txMgr *repository.TxManager,
 	executorURL string,
 	executorAPIKey string,
@@ -75,6 +79,8 @@ func NewRequirementGenTaskService(
 		resultRepo:     resultRepo,
 		docRepo:        docRepo,
 		skillRepo:      skillRepo,
+		tagRepo:        tagRepo,
+		projectRepo:    projectRepo,
 		txMgr:          txMgr,
 		executorURL:    strings.TrimRight(executorURL, "/"),
 		executorAPIKey: executorAPIKey,
@@ -1069,6 +1075,28 @@ func (s *RequirementGenTaskService) callExecutorGenerate(ctx context.Context, ta
 		})
 	}
 
+	// 取项目现有标签名，作为生成约束（AI 只能从中选取 tags_suggested）。
+	// 查询失败不阻断生成，仅记日志后使用空列表。
+	existingTags := make([]string, 0)
+	if tags, err := s.tagRepo.ListOptions(ctx, task.ProjectID, ""); err != nil {
+		s.logger.Warn("加载项目标签失败，existing_tags 置空", "error", err, "project_id", task.ProjectID)
+	} else {
+		for _, t := range tags {
+			existingTags = append(existingTags, t.Name)
+		}
+	}
+
+	// 取项目名/描述作为业务上下文。查询失败不阻断生成，仅记日志后留空。
+	projectContext := ""
+	if project, err := s.projectRepo.FindByID(ctx, task.ProjectID); err != nil {
+		s.logger.Warn("加载项目信息失败，project_context 置空", "error", err, "project_id", task.ProjectID)
+	} else if project != nil {
+		projectContext = "项目：" + project.Name
+		if strings.TrimSpace(project.Description) != "" {
+			projectContext += "\n描述：" + project.Description
+		}
+	}
+
 	payload := map[string]interface{}{
 		"task_id":          task.ID,
 		"project_id":       task.ProjectID,
@@ -1077,6 +1105,8 @@ func (s *RequirementGenTaskService) callExecutorGenerate(ctx context.Context, ta
 		"max_cases":        task.MaxCases,
 		"default_level":    task.DefaultLevel,
 		"extra_prompt":     task.ExtraPrompt,
+		"existing_tags":    existingTags,
+		"project_context":  projectContext,
 		"sync":             true, // 同步模式：Executor 跑完直接返回结果
 	}
 	body, _ := json.Marshal(payload)

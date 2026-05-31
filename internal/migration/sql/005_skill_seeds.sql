@@ -111,7 +111,7 @@ INSERT INTO `ai_skills`
    `is_system`, `is_active`, `sort_order`, `lock_version`, `created_by`, `created_at`, `updated_at`)
 SELECT 0, 'security_testcase', '安全测试', 'security',
    '基于 OWASP Top 10 和常见安全漏洞模式生成安全测试用例',
-   '你是一名应用安全测试专家（熟悉 OWASP Top 10 2025）。请基于下方"需求文本"生成安全测试用例草稿。
+   '你是一名应用安全测试专家（熟悉 OWASP Top 10）。请基于下方"需求文本"生成安全测试用例草稿。
 
 【任务目标】
 - 从需求中识别攻击面，按安全威胁分类生成用例
@@ -175,7 +175,7 @@ SELECT 0, 'compatibility_testcase', '兼容性测试', 'compat',
 
 【兼容性维度矩阵】
 1. 浏览器：Chrome(latest) / Firefox(latest) / Safari(latest) / Edge(latest) / 移动端 WebView
-2. 操作系统：Windows 10/11、macOS 14+、iOS 17+、Android 13+
+2. 操作系统：Windows、macOS、iOS、Android（覆盖主流稳定版本及近两个大版本）
 3. 屏幕分辨率：1920x1080、1366x768、375x812(iPhone)、390x844、768x1024(iPad)
 4. 网络环境：WiFi、4G/5G、弱网(2G/3G)、断网后恢复、高延迟
 5. 语言/时区：中文简体、英文、日文（如适用）；东八区、UTC、美西时区
@@ -255,57 +255,6 @@ SELECT 0, 'performance_scenario', '性能测试', 'performance',
    1, 1, 7, 0, 0, NOW(), NOW()
 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM `ai_skills` WHERE `project_id` = 0 AND `skill_key` = 'performance_scenario');
-
--- ============================================================
--- 8. E2E 用户旅程 Skill
--- ============================================================
-INSERT INTO `ai_skills`
-  (`project_id`, `skill_key`, `name`, `scope`, `description`, `prompt_template`, `output_schema`,
-   `is_system`, `is_active`, `sort_order`, `lock_version`, `created_by`, `created_at`, `updated_at`)
-SELECT 0, 'e2e_user_journey', '端到端业务流程测试', 'e2e',
-   '站在终端用户视角，设计跨功能模块的端到端业务流程验证用例',
-   '你是一名用户体验测试专家。请基于下方"需求文本"生成端到端用户旅程测试用例草稿。
-
-【任务目标】
-- 站在终端用户视角，设计完整的业务流程验证用例
-- 每条用例是一个完整的用户故事（从进入系统到完成目标并离开）
-- 覆盖主要角色的主要使用场景
-- 总数不超过 {{max_cases}} 条
-- 用例默认级别 {{default_level}}
-
-【输出要求】
-- 严格输出 standard_case_v1 JSON
-- 禁止 JSON 之外的任何文字
-- title 格式："[角色] [完成目标]"，如"新用户完成首次下单全流程"
-- steps 应包含完整的操作链路（5-15步），从进入页面到最终确认
-- precondition 必须明确前置数据和账户状态
-
-【E2E 场景设计原则】
-1. 用户角色：为每个主要角色设计至少 1 条完整旅程
-2. 关键路径优先：先覆盖核心业务流（注册→选品→下单→支付→收货）
-3. 跨模块串联：用例应跨越 2 个以上功能模块
-4. 数据贯穿：前序步骤的输出是后序步骤的输入
-5. 异常中断与恢复：中途断网/超时/取消后重新操作
-6. 多角色协作：如"申请人提交→审批人审核→申请人查看结果"
-
-【约束】
-- tags_suggested 仅能从以下标签中选取：{{existing_tags}}
-- 用户额外指引：{{extra_prompt}}
-
-【生成原则】
-1. 需求文本是唯一事实源
-2. 每条用例必须是可从头到尾执行的独立场景，不依赖其他用例的中间结果
-3. steps 中包含页面导航和数据验证，不只是点击操作
-4. 在 summary 中列出识别到的角色和关键旅程图
-
-【需求文本】
-{{requirement_text}}
-
-{{few_shot_examples}}',
-   'standard_case_v1',
-   1, 1, 8, 0, 0, NOW(), NOW()
-FROM DUAL
-WHERE NOT EXISTS (SELECT 1 FROM `ai_skills` WHERE `project_id` = 0 AND `skill_key` = 'e2e_user_journey');
 
 -- ============================================================
 -- 9. 异常容错测试 Skill

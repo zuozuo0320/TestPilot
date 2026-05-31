@@ -231,7 +231,7 @@ func main() {
 	if genQueueClient != nil {
 		genEnqueuer = genQueueClient
 	}
-	reqGenTaskSvc := service.NewRequirementGenTaskService(logger, reqGenTaskRepo, reqGenResultRepo, reqDocRepo, aiSkillRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, genEnqueuer, genTimeout)
+	reqGenTaskSvc := service.NewRequirementGenTaskService(logger, reqGenTaskRepo, reqGenResultRepo, reqDocRepo, aiSkillRepo, tagRepo, projectRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, genEnqueuer, genTimeout)
 	aiSkillSvc := service.NewAISkillService(logger, aiSkillRepo, txMgr)
 
 	// 3. API 层
