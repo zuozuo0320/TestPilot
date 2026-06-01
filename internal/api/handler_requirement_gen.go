@@ -18,8 +18,10 @@
 package api
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -27,6 +29,36 @@ import (
 	"testpilot/internal/repository"
 	"testpilot/internal/service"
 )
+
+type generatedStepPayload struct {
+	Action   string `json:"action"`
+	Expected string `json:"expected"`
+}
+
+func normalizeGeneratedStepsForTestCase(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	var steps []generatedStepPayload
+	if err := json.Unmarshal([]byte(trimmed), &steps); err == nil && len(steps) > 0 {
+		lines := make([]string, 0, len(steps))
+		for _, step := range steps {
+			action := strings.TrimSpace(step.Action)
+			expected := strings.TrimSpace(step.Expected)
+			if action == "" && expected == "" {
+				continue
+			}
+			lines = append(lines, action+" | "+expected)
+		}
+		if len(lines) > 0 {
+			return strings.Join(lines, "\n")
+		}
+	}
+
+	return trimmed
+}
 
 // ========== 请求结构体 ==========
 
@@ -296,7 +328,7 @@ func (a *API) adoptGenResult(c *gin.Context) {
 		Title:        result.Title,
 		Level:        result.Level,
 		Precondition: result.Precondition,
-		Steps:        result.Steps,
+		Steps:        normalizeGeneratedStepsForTestCase(result.Steps),
 		Remark:       result.Remark,
 		ModuleID:     task.TargetModuleID,
 	})

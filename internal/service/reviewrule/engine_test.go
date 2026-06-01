@@ -12,6 +12,8 @@ func buildGoodCase() *model.TestCase {
 	return &model.TestCase{
 		Title:         "登录成功后跳转首页",
 		Level:         "P1",
+		ModuleID:      1,
+		ModulePath:    "/业务流程/登录",
 		Precondition:  "用户已在注册表中，处于正常状态",
 		Postcondition: "登录后会话有效，刷新仍保持登录",
 		Steps:         "1. 打开登录页；2. 输入有效邮箱和密码；3. 点击登录按钮。预期：跳转到 /home 并看到用户名。",
@@ -42,6 +44,7 @@ func TestEvaluate_NilCase(t *testing.T) {
 		RuleStepsRequired,
 		RulePostconditionRequired,
 		RuleLevelRequired,
+		RuleModuleRequired,
 	}
 	if !hasAllFindings(report, wantRules) {
 		t.Fatalf("missing rules in findings, got=%+v, want=%v", report.Findings, wantRules)
@@ -104,6 +107,16 @@ func TestEvaluate_TableDriven(t *testing.T) {
 			name:            "level_required",
 			mutate:          func(tc *model.TestCase) { tc.Level = "" },
 			wantRuleID:      RuleLevelRequired,
+			wantSeverity:    model.ReviewSeverityMajor,
+			wantPassedFalse: true,
+		},
+		{
+			name: "module_required",
+			mutate: func(tc *model.TestCase) {
+				tc.ModuleID = 0
+				tc.ModulePath = "/未分类"
+			},
+			wantRuleID:      RuleModuleRequired,
 			wantSeverity:    model.ReviewSeverityMajor,
 			wantPassedFalse: true,
 		},

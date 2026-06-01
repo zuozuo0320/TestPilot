@@ -53,6 +53,7 @@ const (
 	RuleStepsMinLen           = "RULE_STEPS_MIN_LEN"
 	RulePostconditionRequired = "RULE_POSTCONDITION_REQUIRED"
 	RuleLevelRequired         = "RULE_LEVEL_REQUIRED"
+	RuleModuleRequired        = "RULE_MODULE_REQUIRED"
 )
 
 // 可配置阈值（Phase 1 硬编码，Phase 2 可迁入项目 settings）
@@ -80,12 +81,16 @@ func Evaluate(tc *model.TestCase) RuleReport {
 	postcondition := ""
 	steps := ""
 	level := ""
+	moduleID := uint(0)
+	modulePath := ""
 	if tc != nil {
 		title = strings.TrimSpace(tc.Title)
 		precondition = strings.TrimSpace(tc.Precondition)
 		postcondition = strings.TrimSpace(tc.Postcondition)
 		steps = strings.TrimSpace(tc.Steps)
 		level = strings.TrimSpace(tc.Level)
+		moduleID = tc.ModuleID
+		modulePath = strings.TrimSpace(tc.ModulePath)
 	}
 
 	// ---- R1: 标题必填 ----
@@ -163,6 +168,18 @@ func Evaluate(tc *model.TestCase) RuleReport {
 		})
 	}
 
+	// ---- R8: 模块目录必填 ----
+	if isModuleUnbound(moduleID, modulePath) {
+		findings = append(findings, Finding{
+			ID:       RuleModuleRequired,
+			Rule:     "模块目录必填",
+			Message:  "用例未绑定模块目录，请在用例库中归属到具体目录",
+			Severity: model.ReviewSeverityMajor,
+			Field:    "module",
+			Value:    summary(modulePath),
+		})
+	}
+
 	report := RuleReport{Findings: findings}
 	for _, f := range findings {
 		switch f.Severity {
@@ -177,6 +194,12 @@ func Evaluate(tc *model.TestCase) RuleReport {
 	// Critical 或 Major 任一存在都视为未通过（Minor 只提示）
 	report.Passed = report.CriticalCount == 0 && report.MajorCount == 0
 	return report
+}
+
+// isModuleUnbound 将历史默认值也视为未绑定，避免 /未分类 绕过目录归属规则。
+func isModuleUnbound(moduleID uint, modulePath string) bool {
+	path := strings.Trim(strings.TrimSpace(modulePath), "/")
+	return moduleID == 0 || path == "" || path == "未分类"
 }
 
 // summary 按 rune 截断字段值摘要，避免日志/响应膨胀

@@ -47,6 +47,8 @@ func newRuleSvcEnv(t *testing.T, tcOverrides ...func(*model.TestCase)) *ruleSvcE
 		Steps:         "1. 打开登录页；2. 输入合法账号密码；3. 点击登录按钮",
 		Postcondition: "停留在首页并展示欢迎词",
 		Level:         "P1",
+		ModuleID:      1,
+		ModulePath:    "/业务流程/登录",
 		Status:        model.TestCaseStatusPending,
 		Version:       "V1",
 		CreatedBy:     2, // Tester 是 Author
