@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testpilot/internal/model"
 	"testpilot/internal/repository"
 )
@@ -190,8 +191,30 @@ func (s *ModuleService) Move(ctx context.Context, id uint, newParentID uint, sor
 		return ErrInternal(CodeInternal, err)
 	}
 
+	caseCount, err := s.testCaseRepo.CountByModulePathPrefix(ctx, m.ProjectID, oldPath)
+	if err != nil {
+		return ErrInternal(CodeInternal, err)
+	}
+	if caseCount > 0 {
+		return ErrBadRequest(CodeParamsError, "目录下存在用例，不能移动")
+	}
+
 	// 2. 深度校验
 	if newParentID != 0 {
+		newParent, err := s.moduleRepo.GetByID(newParentID)
+		if err != nil {
+			return ErrNotFound(CodeNotFound, "parent module not found")
+		}
+		if newParent.ProjectID != m.ProjectID {
+			return ErrBadRequest(CodeParamsError, "parent module does not belong to project")
+		}
+		newParentPath, err := s.moduleRepo.GetFullPath(newParentID)
+		if err != nil {
+			return ErrInternal(CodeInternal, err)
+		}
+		if newParentPath == oldPath || strings.HasPrefix(newParentPath, oldPath+"/") {
+			return ErrBadRequest(CodeParamsError, "cannot move module into itself or its child module")
+		}
 		depth, err := s.moduleRepo.GetDepth(newParentID)
 		if err != nil {
 			return ErrInternal(CodeInternal, err)

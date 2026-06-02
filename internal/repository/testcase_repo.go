@@ -81,6 +81,7 @@ type TestCaseRepository interface {
 	BatchUpdateLevel(ctx context.Context, projectID uint, ids []uint, level string) (int64, error)
 	BatchMove(ctx context.Context, projectID uint, ids []uint, moduleID uint, modulePath string) (int64, error)
 	UpdateModulePathsByPrefix(ctx context.Context, projectID uint, oldPrefix, newPrefix string) error
+	CountByModulePathPrefix(ctx context.Context, projectID uint, modulePath string) (int64, error)
 	CloneCase(ctx context.Context, projectID, sourceID, userID uint) (*model.TestCase, error)
 	CountByModule(ctx context.Context, moduleID uint) (int64, error)
 	DB(ctx context.Context) *gorm.DB
@@ -458,6 +459,14 @@ func (r *testCaseRepo) UpdateModulePathsByPrefix(ctx context.Context, projectID 
 
 	// GORM 自动处理不同数据库的字符串操作（在 SQLite 中也是 REPLACE）
 	return query.Update("module_path", gorm.Expr("REPLACE(module_path, ?, ?)", oldPrefix, newPrefix)).Error
+}
+
+func (r *testCaseRepo) CountByModulePathPrefix(ctx context.Context, projectID uint, modulePath string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.TestCase{}).
+		Where("project_id = ? AND (module_path = ? OR module_path LIKE ?)", projectID, modulePath, modulePath+"/%").
+		Count(&count).Error
+	return count, err
 }
 
 func (r *testCaseRepo) CountByModule(ctx context.Context, moduleID uint) (int64, error) {
