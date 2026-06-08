@@ -72,6 +72,7 @@ type TestCaseRepository interface {
 	ListPaged(ctx context.Context, projectID uint, filter TestCaseFilter) ([]TestCaseListItem, int64, error)
 	Create(ctx context.Context, tc *model.TestCase) error
 	Updates(ctx context.Context, tc *model.TestCase, fields map[string]any) error
+	UpdatesTx(ctx context.Context, tx *gorm.DB, tc *model.TestCase, fields map[string]any) error
 	Delete(ctx context.Context, id, projectID uint) (int64, error)
 	BelongsToProject(ctx context.Context, id, projectID uint) (bool, error)
 	CountByProject(ctx context.Context, projectID uint) (int64, error)
@@ -83,7 +84,7 @@ type TestCaseRepository interface {
 	UpdateModulePathsByPrefix(ctx context.Context, projectID uint, oldPrefix, newPrefix string) error
 	CountByModulePathPrefix(ctx context.Context, projectID uint, modulePath string) (int64, error)
 	CloneCase(ctx context.Context, projectID, sourceID, userID uint) (*model.TestCase, error)
-	CountByModule(ctx context.Context, moduleID uint) (int64, error)
+	CountByModule(ctx context.Context, projectID, moduleID uint) (int64, error)
 	DB(ctx context.Context) *gorm.DB
 }
 
@@ -95,6 +96,13 @@ type testCaseRepo struct {
 // NewTestCaseRepo 创建用例仓库
 func NewTestCaseRepo(db *gorm.DB) TestCaseRepository {
 	return &testCaseRepo{db: db}
+}
+
+func (r *testCaseRepo) getDB(tx *gorm.DB) *gorm.DB {
+	if tx != nil {
+		return tx
+	}
+	return r.db
 }
 
 func (r *testCaseRepo) FindByID(ctx context.Context, id, projectID uint) (*model.TestCase, error) {
@@ -193,23 +201,19 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 				SELECT 1
 				FROM case_review_items cri
 				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
-				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
 				WHERE cri.test_case_id = test_cases.id
 				  AND cri.project_id = test_cases.project_id
 				  AND cr.status IN ('not_started', 'in_progress')
-				  AND cir.review_status = 'reviewed'
-				  AND cir.latest_result IN ('rejected', 'needs_update')
+				  AND cri.final_result IN ('rejected', 'needs_update')
 			) THEN 'draft'
 			WHEN EXISTS (
 				SELECT 1
 				FROM case_review_items cri
 				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
-				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
 				WHERE cri.test_case_id = test_cases.id
 				  AND cri.project_id = test_cases.project_id
 				  AND cr.status IN ('not_started', 'in_progress')
-				  AND cir.review_status = 'reviewed'
-				  AND cir.latest_result = 'approved'
+				  AND cri.final_result = 'approved'
 			) THEN 'active'
 			ELSE test_cases.status
 		END AS status`,
@@ -220,34 +224,28 @@ func (r *testCaseRepo) ListPaged(ctx context.Context, projectID uint, f TestCase
 				SELECT 1
 				FROM case_review_items cri
 				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
-				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
 				WHERE cri.test_case_id = test_cases.id
 				  AND cri.project_id = test_cases.project_id
 				  AND cr.status IN ('not_started', 'in_progress')
-				  AND cir.review_status = 'reviewed'
-				  AND cir.latest_result = 'rejected'
+				  AND cri.final_result = 'rejected'
 			) THEN '已驳回'
 			WHEN EXISTS (
 				SELECT 1
 				FROM case_review_items cri
 				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
-				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
 				WHERE cri.test_case_id = test_cases.id
 				  AND cri.project_id = test_cases.project_id
 				  AND cr.status IN ('not_started', 'in_progress')
-				  AND cir.review_status = 'reviewed'
-				  AND cir.latest_result = 'needs_update'
+				  AND cri.final_result = 'needs_update'
 			) THEN '打回修订'
 			WHEN EXISTS (
 				SELECT 1
 				FROM case_review_items cri
 				JOIN case_reviews cr ON cr.id = cri.review_id AND cr.project_id = test_cases.project_id
-				JOIN case_review_item_reviewers cir ON cir.review_item_id = cri.id
 				WHERE cri.test_case_id = test_cases.id
 				  AND cri.project_id = test_cases.project_id
 				  AND cr.status IN ('not_started', 'in_progress')
-				  AND cir.review_status = 'reviewed'
-				  AND cir.latest_result = 'approved'
+				  AND cri.final_result = 'approved'
 			) THEN '已通过'
 			ELSE test_cases.review_result
 		END AS review_result`,
@@ -344,7 +342,11 @@ func (r *testCaseRepo) Create(ctx context.Context, tc *model.TestCase) error {
 }
 
 func (r *testCaseRepo) Updates(ctx context.Context, tc *model.TestCase, fields map[string]any) error {
-	return r.db.WithContext(ctx).Model(tc).Updates(fields).Error
+	return r.UpdatesTx(ctx, nil, tc, fields)
+}
+
+func (r *testCaseRepo) UpdatesTx(ctx context.Context, tx *gorm.DB, tc *model.TestCase, fields map[string]any) error {
+	return r.getDB(tx).WithContext(ctx).Model(tc).Updates(fields).Error
 }
 
 func (r *testCaseRepo) Delete(ctx context.Context, id, projectID uint) (int64, error) {
@@ -469,9 +471,9 @@ func (r *testCaseRepo) CountByModulePathPrefix(ctx context.Context, projectID ui
 	return count, err
 }
 
-func (r *testCaseRepo) CountByModule(ctx context.Context, moduleID uint) (int64, error) {
+func (r *testCaseRepo) CountByModule(ctx context.Context, projectID, moduleID uint) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&model.TestCase{}).Where("module_id = ?", moduleID).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&model.TestCase{}).Where("project_id = ? AND module_id = ?", projectID, moduleID).Count(&count).Error
 	return count, err
 }
 

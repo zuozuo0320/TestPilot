@@ -17,18 +17,29 @@ import (
 // TestCaseService 用例管理服务
 type TestCaseService struct {
 	testCaseRepo    repository.TestCaseRepository
+	reviewRepo      repository.CaseReviewRepository
 	caseHistoryRepo *repository.CaseHistoryRepo
 	auditRepo       repository.AuditRepository
 	tagRepo         repository.TagRepository
+	txMgr           *repository.TxManager
 }
 
 // NewTestCaseService 创建用例服务
-func NewTestCaseService(repo repository.TestCaseRepository, historyRepo *repository.CaseHistoryRepo, auditRepo repository.AuditRepository, tagRepo repository.TagRepository) *TestCaseService {
+func NewTestCaseService(
+	repo repository.TestCaseRepository,
+	historyRepo *repository.CaseHistoryRepo,
+	auditRepo repository.AuditRepository,
+	tagRepo repository.TagRepository,
+	reviewRepo repository.CaseReviewRepository,
+	txMgr *repository.TxManager,
+) *TestCaseService {
 	return &TestCaseService{
 		testCaseRepo:    repo,
+		reviewRepo:      reviewRepo,
 		caseHistoryRepo: historyRepo,
 		auditRepo:       auditRepo,
 		tagRepo:         tagRepo,
+		txMgr:           txMgr,
 	}
 }
 
@@ -278,7 +289,26 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 		return nil, ErrBadRequest(CodeParamsError, "no fields to update")
 	}
 	updates["updated_by"] = userID
-	if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
+
+	var autoResubmitted bool
+	if s.txMgr != nil && s.reviewRepo != nil {
+		if err := s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
+			if err := s.testCaseRepo.UpdatesTx(ctx, tx, entity, updates); err != nil {
+				return err
+			}
+			resubmitted, err := s.autoResubmitReturnedReviewItems(ctx, tx, projectID, testCaseID, userID)
+			if err != nil {
+				return err
+			}
+			autoResubmitted = resubmitted
+			return nil
+		}); err != nil {
+			if isDuplicateError(err) {
+				return nil, ErrConflict(CodeConflict, "testcase already exists")
+			}
+			return nil, ErrInternal(CodeInternal, err)
+		}
+	} else if err := s.testCaseRepo.Updates(ctx, entity, updates); err != nil {
 		if isDuplicateError(err) {
 			return nil, ErrConflict(CodeConflict, "testcase already exists")
 		}
@@ -293,9 +323,65 @@ func (s *TestCaseService) Update(ctx context.Context, projectID, testCaseID, use
 			return nil, ErrInternal(CodeInternal, err)
 		}
 	}
-	_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "update", "testcase", testCaseID, "", "")
+	if autoResubmitted {
+		_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "resubmit", "testcase", testCaseID, "", "用例保存后自动重新提审")
+	} else {
+		_ = s.auditRepo.WriteLogTx(s.testCaseRepo.DB(ctx), userID, "update", "testcase", testCaseID, "", "")
+	}
 	updated, _ := s.testCaseRepo.FindByID(ctx, testCaseID, projectID)
 	return updated, nil
+}
+
+// autoResubmitReturnedReviewItems 在被打回/拒绝的用例保存后自动进入下一轮复审。
+// 只处理未关闭评审计划中的 rejected / needs_update 项；已通过项不被普通保存打断。
+func (s *TestCaseService) autoResubmitReturnedReviewItems(ctx context.Context, tx *gorm.DB, projectID, testCaseID, userID uint) (bool, error) {
+	items, err := s.reviewRepo.ListActiveItemsByTestCase(ctx, tx, projectID, testCaseID)
+	if err != nil {
+		return false, err
+	}
+
+	reviewIDs := make(map[uint]struct{})
+	resubmitted := false
+	for i := range items {
+		item := &items[i]
+		if item.FinalResult != model.ReviewResultRejected && item.FinalResult != model.ReviewResultNeedsUpdate {
+			continue
+		}
+		if err := s.reviewRepo.UpdateItem(ctx, tx, item, map[string]any{
+			"review_status":    model.ReviewItemStatusPending,
+			"final_result":     model.ReviewResultPending,
+			"current_round_no": item.CurrentRoundNo + 1,
+			"reviewed_at":      nil,
+			"latest_comment":   nil,
+			"updated_by":       userID,
+		}); err != nil {
+			return false, err
+		}
+		if err := s.reviewRepo.ResetReviewersByItemID(ctx, tx, item.ID); err != nil {
+			return false, err
+		}
+		reviewIDs[item.ReviewID] = struct{}{}
+		resubmitted = true
+	}
+
+	if !resubmitted {
+		return false, nil
+	}
+	if err := tx.WithContext(ctx).
+		Model(&model.TestCase{}).
+		Where("id = ? AND project_id = ?", testCaseID, projectID).
+		Updates(map[string]any{
+			"status":        model.TestCaseStatusPending,
+			"review_result": model.CaseReviewResultResubmit,
+		}).Error; err != nil {
+		return false, err
+	}
+	for reviewID := range reviewIDs {
+		if err := s.reviewRepo.RecalcReviewStats(ctx, tx, reviewID); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (s *TestCaseService) applyEffectiveReviewState(ctx context.Context, tc *model.TestCase) error {
@@ -305,15 +391,14 @@ func (s *TestCaseService) applyEffectiveReviewState(ctx context.Context, tc *mod
 
 	var results []string
 	err := s.testCaseRepo.DB(ctx).
-		Model(&model.CaseReviewItemReviewer{}).
-		Select("case_review_item_reviewers.latest_result").
-		Joins("JOIN case_review_items ON case_review_items.id = case_review_item_reviewers.review_item_id").
+		Model(&model.CaseReviewItem{}).
+		Select("case_review_items.final_result").
 		Joins("JOIN case_reviews ON case_reviews.id = case_review_items.review_id AND case_reviews.project_id = case_review_items.project_id").
 		Where("case_review_items.test_case_id = ? AND case_review_items.project_id = ?", tc.ID, tc.ProjectID).
 		Where("case_reviews.status IN ?", []string{model.ReviewPlanStatusNotStarted, model.ReviewPlanStatusInProgress, model.ReviewPlanStatusCompleted}).
-		Where("case_review_item_reviewers.review_status = ?", model.ReviewerStatusReviewed).
-		Where("case_review_item_reviewers.latest_result <> ''").
-		Pluck("case_review_item_reviewers.latest_result", &results).Error
+		Where("case_review_items.final_result <> ''").
+		Where("case_review_items.final_result <> ?", model.ReviewResultPending).
+		Pluck("case_review_items.final_result", &results).Error
 	if err != nil {
 		return err
 	}

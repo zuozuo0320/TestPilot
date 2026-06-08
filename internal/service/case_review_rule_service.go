@@ -8,12 +8,14 @@
 // 设计要点：
 //   - Layer 1 规则是纯函数 O(1) 耗时，无需异步；直接同步返回结果即可
 //   - Minor 等级不阻断主状态机，只会作为提示写在 Finding 列表里
-//   - 本服务不关心 Primary/Shadow 角色；那是 CaseReviewSubmitService 的职责
+//   - 本服务不自行聚合 Primary/Shadow 角色结论；自动打回复用 CaseReviewSubmitService
 package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -33,6 +35,7 @@ type CaseReviewRuleService struct {
 	testCaseRepo repository.TestCaseRepository
 	defectRepo   repository.CaseReviewDefectRepository
 	defectSvc    *CaseReviewDefectService
+	submitSvc    *CaseReviewSubmitService
 	txMgr        *repository.TxManager
 	logger       *slog.Logger
 }
@@ -43,6 +46,7 @@ func NewCaseReviewRuleService(
 	testCaseRepo repository.TestCaseRepository,
 	defectRepo repository.CaseReviewDefectRepository,
 	defectSvc *CaseReviewDefectService,
+	submitSvc *CaseReviewSubmitService,
 	txMgr *repository.TxManager,
 	logger *slog.Logger,
 ) *CaseReviewRuleService {
@@ -51,22 +55,36 @@ func NewCaseReviewRuleService(
 		testCaseRepo: testCaseRepo,
 		defectRepo:   defectRepo,
 		defectSvc:    defectSvc,
+		submitSvc:    submitSvc,
 		txMgr:        txMgr,
 		logger:       logger.With("module", "case_review_rule"),
 	}
 }
 
+const (
+	autoReviewStatusSubmitted = "submitted"
+	autoReviewStatusAlready   = "already"
+	autoReviewStatusSkipped   = "skipped"
+	autoReviewStatusError     = "error"
+	autoReviewResult          = model.ReviewResultNeedsUpdate
+	autoReviewCommentPrefix   = "【规则检查自动打回】"
+)
+
 // RunReport Handler 返回给前端的规则运行报告
 type RunReport struct {
-	ItemID        uint                 `json:"item_id"`
-	AIGateStatus  string               `json:"ai_gate_status"`
-	Passed        bool                 `json:"passed"`
-	Findings      []reviewrule.Finding `json:"findings"`
-	CriticalCount int                  `json:"critical_count"`
-	MajorCount    int                  `json:"major_count"`
-	MinorCount    int                  `json:"minor_count"`
-	DefectIDs     []uint               `json:"defect_ids"`
-	RunAt         time.Time            `json:"run_at"`
+	ItemID            uint                 `json:"item_id"`
+	AIGateStatus      string               `json:"ai_gate_status"`
+	Passed            bool                 `json:"passed"`
+	Findings          []reviewrule.Finding `json:"findings"`
+	CriticalCount     int                  `json:"critical_count"`
+	MajorCount        int                  `json:"major_count"`
+	MinorCount        int                  `json:"minor_count"`
+	DefectIDs         []uint               `json:"defect_ids"`
+	AutoReviewStatus  string               `json:"auto_review_status,omitempty"`
+	AutoReviewResult  string               `json:"auto_review_result,omitempty"`
+	AutoReviewMessage string               `json:"auto_review_message,omitempty"`
+	AutoReviewComment string               `json:"auto_review_comment,omitempty"`
+	RunAt             time.Time            `json:"run_at"`
 }
 
 // PlanItemSummary 计划级 AI 评审报告里的单条评审项摘要
@@ -80,19 +98,27 @@ type PlanItemSummary struct {
 	MajorCount    int    `json:"major_count"`
 	MinorCount    int    `json:"minor_count"`
 	DefectCount   int    `json:"defect_count"`
+	// AutoReviewStatus 表示规则失败后自动提交 needs_update 的处理结果。
+	AutoReviewStatus  string `json:"auto_review_status,omitempty"`
+	AutoReviewResult  string `json:"auto_review_result,omitempty"`
+	AutoReviewMessage string `json:"auto_review_message,omitempty"`
 	// Error 非空表示该条 item 的规则执行失败（不影响整体流程，但需要前端展示）
 	Error string `json:"error,omitempty"`
 }
 
 // PlanRunReport 计划级 AI 评审聚合报告（run-all 的响应体）
 type PlanRunReport struct {
-	ReviewID    uint              `json:"review_id"`
-	TotalCount  int               `json:"total_count"`
-	PassedCount int               `json:"passed_count"`
-	FailedCount int               `json:"failed_count"`
-	ErrorCount  int               `json:"error_count"`
-	Items       []PlanItemSummary `json:"items"`
-	RunAt       time.Time         `json:"run_at"`
+	ReviewID           uint              `json:"review_id"`
+	TotalCount         int               `json:"total_count"`
+	PassedCount        int               `json:"passed_count"`
+	FailedCount        int               `json:"failed_count"`
+	ErrorCount         int               `json:"error_count"`
+	AutoSubmittedCount int               `json:"auto_submitted_count"`
+	AutoAlreadyCount   int               `json:"auto_already_count"`
+	AutoSkippedCount   int               `json:"auto_skipped_count"`
+	AutoErrorCount     int               `json:"auto_error_count"`
+	Items              []PlanItemSummary `json:"items"`
+	RunAt              time.Time         `json:"run_at"`
 }
 
 // RunOnReview 对某个评审计划下**所有**评审项批量执行 Layer 1 规则引擎。
@@ -136,6 +162,19 @@ func (s *CaseReviewRuleService) RunOnReview(ctx context.Context, projectID, revi
 			summary.MajorCount = r.MajorCount
 			summary.MinorCount = r.MinorCount
 			summary.DefectCount = len(r.DefectIDs)
+			summary.AutoReviewStatus = r.AutoReviewStatus
+			summary.AutoReviewResult = r.AutoReviewResult
+			summary.AutoReviewMessage = r.AutoReviewMessage
+			switch r.AutoReviewStatus {
+			case autoReviewStatusSubmitted:
+				report.AutoSubmittedCount++
+			case autoReviewStatusAlready:
+				report.AutoAlreadyCount++
+			case autoReviewStatusSkipped:
+				report.AutoSkippedCount++
+			case autoReviewStatusError:
+				report.AutoErrorCount++
+			}
 			if r.Passed {
 				report.PassedCount++
 			} else {
@@ -151,6 +190,9 @@ func (s *CaseReviewRuleService) RunOnReview(ctx context.Context, projectID, revi
 		"passed", report.PassedCount,
 		"failed", report.FailedCount,
 		"error", report.ErrorCount,
+		"auto_submitted", report.AutoSubmittedCount,
+		"auto_skipped", report.AutoSkippedCount,
+		"auto_error", report.AutoErrorCount,
 	)
 	return report, nil
 }
@@ -255,6 +297,11 @@ func (s *CaseReviewRuleService) RunOnItem(ctx context.Context, projectID, review
 		return nil, err
 	}
 
+	autoOutcome := autoReviewOutcome{}
+	if !report.Passed {
+		autoOutcome = s.autoSubmitNeedsUpdate(ctx, projectID, reviewID, item, userID, report)
+	}
+
 	s.logger.Info("rule engine run success",
 		"item_id", itemID,
 		"gate_status", gateStatus,
@@ -262,16 +309,130 @@ func (s *CaseReviewRuleService) RunOnItem(ctx context.Context, projectID, review
 		"major", report.MajorCount,
 		"minor", report.MinorCount,
 		"defect_count", len(defectIDs),
+		"auto_review_status", autoOutcome.Status,
 	)
 	return &RunReport{
-		ItemID:        itemID,
-		AIGateStatus:  gateStatus,
-		Passed:        report.Passed,
-		Findings:      report.Findings,
-		CriticalCount: report.CriticalCount,
-		MajorCount:    report.MajorCount,
-		MinorCount:    report.MinorCount,
-		DefectIDs:     defectIDs,
-		RunAt:         now,
+		ItemID:            itemID,
+		AIGateStatus:      gateStatus,
+		Passed:            report.Passed,
+		Findings:          report.Findings,
+		CriticalCount:     report.CriticalCount,
+		MajorCount:        report.MajorCount,
+		MinorCount:        report.MinorCount,
+		DefectIDs:         defectIDs,
+		AutoReviewStatus:  autoOutcome.Status,
+		AutoReviewResult:  autoOutcome.Result,
+		AutoReviewMessage: autoOutcome.Message,
+		AutoReviewComment: autoOutcome.Comment,
+		RunAt:             now,
 	}, nil
+}
+
+type autoReviewOutcome struct {
+	Status  string
+	Result  string
+	Message string
+	Comment string
+}
+
+// autoSubmitNeedsUpdate 在规则阻断时复用人工评审提交链路自动打回修订。
+// 自动提交只允许当前触发用户本身就是该评审项评审人，避免规则检查绕过评审权限。
+func (s *CaseReviewRuleService) autoSubmitNeedsUpdate(ctx context.Context, projectID, reviewID uint, item *model.CaseReviewItem, userID uint, report reviewrule.RuleReport) autoReviewOutcome {
+	if s.submitSvc == nil {
+		return autoReviewOutcome{
+			Status:  autoReviewStatusSkipped,
+			Result:  autoReviewResult,
+			Message: "自动打回服务未初始化，已仅生成规则检查问题",
+		}
+	}
+
+	comment := buildAutoNeedsUpdateComment(report)
+	outcome := autoReviewOutcome{
+		Result:  autoReviewResult,
+		Comment: comment,
+	}
+
+	reviewer, err := s.reviewRepo.GetReviewer(ctx, nil, item.ID, userID)
+	if err != nil {
+		outcome.Status = autoReviewStatusSkipped
+		outcome.Message = "当前用户不是该评审项指定评审人，已跳过自动打回"
+		s.logger.Warn("skip auto needs_update because user is not reviewer",
+			"review_id", reviewID,
+			"item_id", item.ID,
+			"user_id", userID,
+		)
+		return outcome
+	}
+
+	if reviewer.ReviewStatus == model.ReviewerStatusReviewed &&
+		reviewer.LatestResult == autoReviewResult &&
+		strings.TrimSpace(reviewer.LatestComment) == comment {
+		outcome.Status = autoReviewStatusAlready
+		outcome.Message = "已存在相同的自动打回记录，本次未重复评论"
+		return outcome
+	}
+
+	_, err = s.submitSvc.SubmitReview(ctx, projectID, reviewID, item.ID, userID, SubmitReviewInput{
+		Result:  autoReviewResult,
+		Comment: comment,
+	})
+	if err != nil {
+		outcome.Status = autoReviewStatusError
+		outcome.Message = "自动打回失败，规则检查问题已生成"
+		if bizErr, ok := err.(*BizError); ok {
+			outcome.Message = "自动打回失败：" + bizErr.Message
+		}
+		s.logger.Warn("auto needs_update submit failed",
+			"review_id", reviewID,
+			"item_id", item.ID,
+			"user_id", userID,
+			"error", err,
+		)
+		return outcome
+	}
+
+	outcome.Status = autoReviewStatusSubmitted
+	outcome.Message = "已自动打回修订并提交评论"
+	return outcome
+}
+
+// buildAutoNeedsUpdateComment 生成稳定的自动打回评论，便于重复规则检查时做幂等识别。
+func buildAutoNeedsUpdateComment(report reviewrule.RuleReport) string {
+	blockingCount := report.CriticalCount + report.MajorCount
+	if blockingCount == 0 {
+		return autoReviewCommentPrefix + " 规则检查未通过。已自动打回修订，请补齐后重新提审。"
+	}
+
+	rules := make([]string, 0, min(blockingCount, 5))
+	for _, finding := range report.Findings {
+		if finding.Severity == model.ReviewSeverityMinor {
+			continue
+		}
+		rule := strings.TrimSpace(finding.Rule)
+		message := strings.TrimSpace(finding.Message)
+		if message != "" {
+			rule = rule + "：" + message
+		}
+		if rule == "" {
+			rule = finding.ID
+		}
+		rules = append(rules, rule)
+		if len(rules) >= 5 {
+			break
+		}
+	}
+
+	suffix := ""
+	if blockingCount > len(rules) {
+		suffix = "等"
+	}
+	return fmt.Sprintf(
+		"%s 发现 %d 项阻断问题（严重 %d、主要 %d）：%s%s。已自动打回修订，请补齐后重新提审。",
+		autoReviewCommentPrefix,
+		blockingCount,
+		report.CriticalCount,
+		report.MajorCount,
+		strings.Join(rules, "；"),
+		suffix,
+	)
 }

@@ -660,13 +660,13 @@ func (s *CaseReviewService) BatchReassign(ctx context.Context, projectID, review
 func (s *CaseReviewService) BatchResubmit(ctx context.Context, projectID, reviewID, userID uint, itemIDs []uint) error {
 	s.logger.Info("batch resubmit start", "review_id", reviewID, "item_count", len(itemIDs))
 
-	// 状态守卫：已关闭/已完成的计划不可修改
+	// 状态守卫：已关闭计划不可再进入重新提审流程。
 	review, err := s.reviewRepo.GetReviewByID(ctx, reviewID, projectID)
 	if err != nil {
 		return ErrNotFound(CodeReviewNotFound, "评审计划不存在")
 	}
-	if review.Status == model.ReviewPlanStatusClosed || review.Status == model.ReviewPlanStatusCompleted {
-		return ErrBadRequest(CodeReviewStatusInvalid, "已关闭或已完成的评审计划不可修改")
+	if review.Status == model.ReviewPlanStatusClosed {
+		return ErrBadRequest(CodeReviewStatusInvalid, "已关闭的评审计划不可重新提审")
 	}
 
 	// [FIX #2] 前置归属校验
@@ -678,6 +678,12 @@ func (s *CaseReviewService) BatchResubmit(ctx context.Context, projectID, review
 		for _, itemID := range itemIDs {
 			item, err := s.reviewRepo.GetItemByID(ctx, tx, itemID)
 			if err != nil {
+				continue
+			}
+			if item.FinalResult == model.ReviewResultApproved {
+				return ErrBadRequest(CodeReviewStatusInvalid, "已通过的用例不可重新提审")
+			}
+			if item.FinalResult == model.ReviewResultPending {
 				continue
 			}
 			// 重置评审项

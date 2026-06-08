@@ -20,7 +20,6 @@ package api
 import (
 	"encoding/json"
 	"log/slog"
-	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -125,10 +124,10 @@ func (a *API) createGenTask(c *gin.Context) {
 		return
 	}
 
-	// 获取当前激活模型信息（用于快照）
-	activeModel, modelErr := a.aiModelConfigSvc.GetActive(c.Request.Context())
+	// 获取当前激活模型信息（用于快照）并同步到 Executor，确保实际 LLM 调用使用系统 AI 模型配置。
+	activeModel, modelErr := a.aiModelConfigSvc.SyncActiveToExecutor(c.Request.Context())
 	if modelErr != nil {
-		response.Error(c, http.StatusBadRequest, service.CodeReqGenNoActiveModel, "未配置激活的 AI 模型")
+		response.HandleError(c, modelErr)
 		return
 	}
 
@@ -452,10 +451,10 @@ func (a *API) smartGenerate(c *gin.Context) {
 		return
 	}
 
-	// 获取当前激活模型信息
-	activeModel, modelErr := a.aiModelConfigSvc.GetActive(c.Request.Context())
+	// 获取当前激活模型信息并同步到 Executor，确保 Skill Router 使用系统 AI 模型配置。
+	activeModel, modelErr := a.aiModelConfigSvc.SyncActiveToExecutor(c.Request.Context())
 	if modelErr != nil {
-		response.Error(c, http.StatusBadRequest, service.CodeReqGenNoActiveModel, "未配置激活的 AI 模型")
+		response.HandleError(c, modelErr)
 		return
 	}
 

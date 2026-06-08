@@ -13,6 +13,7 @@ import (
 type CaseReviewRecordRepository interface {
 	Create(ctx context.Context, tx *gorm.DB, record *model.CaseReviewRecord) error
 	ListByItemID(ctx context.Context, itemID uint, roundNo *int, page, pageSize int) ([]model.CaseReviewRecord, int64, error)
+	ListByTestCaseID(ctx context.Context, projectID, testCaseID uint, page, pageSize int) ([]model.CaseReviewRecord, int64, error)
 	HasRecordsByReviewID(ctx context.Context, reviewID uint) (bool, error)
 	HasRecordsByItemIDs(ctx context.Context, itemIDs []uint) (bool, error)
 	DeleteByReviewID(ctx context.Context, tx *gorm.DB, reviewID uint) error
@@ -68,6 +69,33 @@ func (r *caseReviewRecordRepo) ListByItemID(ctx context.Context, itemID uint, ro
 	var records []model.CaseReviewRecord
 	err := listQuery.
 		Order("case_review_records.created_at ASC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Scan(&records).Error
+	return records, total, err
+}
+
+func (r *caseReviewRecordRepo) ListByTestCaseID(ctx context.Context, projectID, testCaseID uint, page, pageSize int) ([]model.CaseReviewRecord, int64, error) {
+	countQuery := r.db.WithContext(ctx).Model(&model.CaseReviewRecord{}).Where("project_id = ? AND test_case_id = ?", projectID, testCaseID)
+	var total int64
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	var records []model.CaseReviewRecord
+	err := r.db.WithContext(ctx).
+		Table("case_review_records").
+		Select("case_review_records.*, COALESCE(u.name, '') AS reviewer_name, COALESCE(u.avatar, '') AS reviewer_avatar").
+		Joins("LEFT JOIN users u ON u.id = case_review_records.reviewer_id").
+		Where("case_review_records.project_id = ? AND case_review_records.test_case_id = ?", projectID, testCaseID).
+		Order("case_review_records.created_at DESC").
 		Offset((page - 1) * pageSize).
 		Limit(pageSize).
 		Scan(&records).Error

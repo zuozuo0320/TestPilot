@@ -51,7 +51,7 @@ func (s *ModuleService) GetTree(ctx context.Context, projectID uint) (*ModuleTre
 	}
 
 	// 计算未规划用例数（module_id = 0）
-	unplannedCount, err := s.testCaseRepo.CountByModule(ctx, 0)
+	unplannedCount, err := s.testCaseRepo.CountByModule(ctx, projectID, 0)
 	if err != nil {
 		return nil, ErrInternal(CodeInternal, err)
 	}
@@ -245,6 +245,11 @@ func (s *ModuleService) Move(ctx context.Context, id uint, newParentID uint, sor
 
 // Delete 删除模块（仅空目录可删）
 func (s *ModuleService) Delete(ctx context.Context, id uint) error {
+	m, err := s.moduleRepo.GetByID(id)
+	if err != nil {
+		return ErrNotFound(CodeNotFound, "module not found")
+	}
+
 	// 校验子模块
 	children, err := s.moduleRepo.CountChildren(id)
 	if err != nil {
@@ -255,7 +260,7 @@ func (s *ModuleService) Delete(ctx context.Context, id uint) error {
 	}
 
 	// 校验用例
-	count, err := s.testCaseRepo.CountByModule(ctx, id)
+	count, err := s.testCaseRepo.CountByModule(ctx, m.ProjectID, id)
 	if err != nil {
 		return ErrInternal(CodeInternal, err)
 	}

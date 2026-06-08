@@ -34,13 +34,13 @@ func (a *API) createTestCase(c *gin.Context) {
 		return
 	}
 	tc, err := a.testCaseSvc.Create(c.Request.Context(), projectID, user.ID, service.CreateTestCaseInput{
-		Title:        strings.TrimSpace(req.Title),
-		Level:        req.Level,
-		ExecResult:   req.ExecResult,
-		ModuleID:     req.ModuleID,
-		ModulePath:   req.ModulePath,
-		Tags:         req.Tags,
-		TagIDs:       req.TagIDs,
+		Title:         strings.TrimSpace(req.Title),
+		Level:         req.Level,
+		ExecResult:    req.ExecResult,
+		ModuleID:      req.ModuleID,
+		ModulePath:    req.ModulePath,
+		Tags:          req.Tags,
+		TagIDs:        req.TagIDs,
 		Precondition:  req.Precondition,
 		Postcondition: req.Postcondition,
 		Steps:         req.Steps,
@@ -156,13 +156,13 @@ func (a *API) updateTestCase(c *gin.Context) {
 		return
 	}
 	updated, err := a.testCaseSvc.Update(c.Request.Context(), projectID, tcID, user.ID, service.UpdateTestCaseInput{
-		Title:        req.Title,
-		Level:        req.Level,
-		ExecResult:   req.ExecResult,
-		ModuleID:     req.ModuleID,
-		ModulePath:   req.ModulePath,
-		Tags:         req.Tags,
-		TagIDs:       req.TagIDs,
+		Title:         req.Title,
+		Level:         req.Level,
+		ExecResult:    req.ExecResult,
+		ModuleID:      req.ModuleID,
+		ModulePath:    req.ModulePath,
+		Tags:          req.Tags,
+		TagIDs:        req.TagIDs,
 		Precondition:  req.Precondition,
 		Postcondition: req.Postcondition,
 		Steps:         req.Steps,
@@ -388,6 +388,21 @@ func (a *API) listCaseActivities(c *gin.Context) {
 		})
 	}
 
+	var reviewRecords []model.CaseReviewRecord
+	if a.caseReviewSubmitSvc != nil {
+		reviewRecords, _, _ = a.caseReviewSubmitSvc.ListTestCaseRecords(c.Request.Context(), projectID, tcID, 1, limit)
+	}
+	for _, r := range reviewRecords {
+		activities = append(activities, activityItem{
+			ID:        20000000 + r.ID,
+			ActorName: r.ReviewerName,
+			Action:    mapReviewRecordAction(r.Result),
+			Detail:    mapReviewRecordDetail(r.Comment),
+			Icon:      mapReviewRecordIcon(r.Result),
+			CreatedAt: r.CreatedAt,
+		})
+	}
+
 	// Sort by time desc
 	sort.Slice(activities, func(i, j int) bool {
 		return activities[i].CreatedAt.After(activities[j].CreatedAt)
@@ -403,6 +418,9 @@ func (a *API) listCaseActivities(c *gin.Context) {
 	}
 	for _, h := range historyItems {
 		userIDSet[h.ChangedBy] = true
+	}
+	for _, r := range reviewRecords {
+		userIDSet[r.ReviewerID] = true
 	}
 	ids := make([]uint, 0, len(userIDSet))
 	for id := range userIDSet {
@@ -424,10 +442,16 @@ func (a *API) listCaseActivities(c *gin.Context) {
 	for _, h := range historyItems {
 		historyMap[10000000+h.ID] = h.ChangedBy
 	}
+	reviewMap := map[uint]uint{}
+	for _, r := range reviewRecords {
+		reviewMap[20000000+r.ID] = r.ReviewerID
+	}
 	for i := range activities {
 		if uid, ok := auditMap[activities[i].ID]; ok {
 			activities[i].ActorName = userMap[uid]
 		} else if uid, ok := historyMap[activities[i].ID]; ok {
+			activities[i].ActorName = userMap[uid]
+		} else if uid, ok := reviewMap[activities[i].ID]; ok && activities[i].ActorName == "" {
 			activities[i].ActorName = userMap[uid]
 		}
 		if activities[i].ActorName == "" {
@@ -508,6 +532,40 @@ func mapHistoryIcon(action string) string {
 		return "history"
 	default:
 		return "edit"
+	}
+}
+
+func mapReviewRecordAction(result string) string {
+	switch result {
+	case model.ReviewResultApproved:
+		return "通过了用例评审"
+	case model.ReviewResultRejected:
+		return "拒绝了用例评审"
+	case model.ReviewResultNeedsUpdate:
+		return "打回修订了用例评审"
+	default:
+		return "提交了用例评审"
+	}
+}
+
+func mapReviewRecordDetail(comment string) string {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return ""
+	}
+	return comment
+}
+
+func mapReviewRecordIcon(result string) string {
+	switch result {
+	case model.ReviewResultApproved:
+		return "check_circle"
+	case model.ReviewResultRejected:
+		return "block"
+	case model.ReviewResultNeedsUpdate:
+		return "edit_note"
+	default:
+		return "rate_review"
 	}
 }
 
@@ -662,6 +720,10 @@ func (a *API) analyzeTestCase(c *gin.Context) {
 	}
 	if tc == nil {
 		response.Error(c, 404, 404000, "用例不存在")
+		return
+	}
+	if _, err := a.aiModelConfigSvc.SyncActiveToExecutor(c.Request.Context()); err != nil {
+		response.HandleError(c, err)
 		return
 	}
 

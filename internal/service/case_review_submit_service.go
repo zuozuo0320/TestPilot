@@ -221,6 +221,10 @@ func (s *CaseReviewSubmitService) ListItemRecords(ctx context.Context, itemID ui
 	return s.recordRepo.ListByItemID(ctx, itemID, roundNo, page, pageSize)
 }
 
+func (s *CaseReviewSubmitService) ListTestCaseRecords(ctx context.Context, projectID, testCaseID uint, page, pageSize int) ([]model.CaseReviewRecord, int64, error) {
+	return s.recordRepo.ListByTestCaseID(ctx, projectID, testCaseID, page, pageSize)
+}
+
 // ─── 聚合规则 ───
 
 // aggregateItemResult 根据评审模式聚合评审项最终结果

@@ -185,3 +185,113 @@ func TestCaseReviewService_CreateReview_DefaultModerator(t *testing.T) {
 	assert.Equal(t, env.adminID, review.ModeratorID)
 	assert.True(t, review.AIEnabled)
 }
+
+// TestCaseReviewService_BatchResubmit_ReopensCompletedPlan
+// 已完成计划中的打回用例允许重新提审，并把计划重新打开为进行中。
+func TestCaseReviewService_BatchResubmit_ReopensCompletedPlan(t *testing.T) {
+	env := newSelfReviewEnv(t)
+
+	require.NoError(t, env.db.Model(&model.TestCase{}).
+		Where("id = ? AND project_id = ?", env.testcaseID, env.projectID).
+		Updates(map[string]any{
+			"status":        model.TestCaseStatusDraft,
+			"review_result": model.CaseReviewResultNeedsUpdate,
+		}).Error)
+
+	review := model.CaseReview{
+		ID:         200,
+		ProjectID:  env.projectID,
+		Name:       "已完成后重新提审",
+		ReviewMode: model.ReviewModeSingle,
+		Status:     model.ReviewPlanStatusCompleted,
+		CreatedBy:  env.adminID,
+		UpdatedBy:  env.adminID,
+	}
+	require.NoError(t, env.db.Create(&review).Error)
+	item := model.CaseReviewItem{
+		ID:             201,
+		ReviewID:       review.ID,
+		ProjectID:      env.projectID,
+		TestCaseID:     env.testcaseID,
+		TitleSnapshot:  "自审测试用例",
+		ReviewStatus:   model.ReviewItemStatusCompleted,
+		FinalResult:    model.ReviewResultNeedsUpdate,
+		CurrentRoundNo: 1,
+		LatestComment:  "请修订",
+		CreatedBy:      env.adminID,
+		UpdatedBy:      env.adminID,
+	}
+	require.NoError(t, env.db.Create(&item).Error)
+	require.NoError(t, env.db.Create(&model.CaseReviewItemReviewer{
+		ReviewID:      review.ID,
+		ReviewItemID:  item.ID,
+		ProjectID:     env.projectID,
+		ReviewerID:    env.adminID,
+		ReviewStatus:  model.ReviewerStatusReviewed,
+		ReviewRole:    model.ReviewRolePrimary,
+		LatestResult:  model.ReviewResultNeedsUpdate,
+		LatestComment: "请修订",
+	}).Error)
+
+	err := env.svc.BatchResubmit(env.ctx, env.projectID, review.ID, env.adminID, []uint{item.ID})
+	require.NoError(t, err)
+
+	var updatedItem model.CaseReviewItem
+	require.NoError(t, env.db.First(&updatedItem, item.ID).Error)
+	assert.Equal(t, model.ReviewItemStatusPending, updatedItem.ReviewStatus)
+	assert.Equal(t, model.ReviewResultPending, updatedItem.FinalResult)
+	assert.Equal(t, 2, updatedItem.CurrentRoundNo)
+	assert.Empty(t, updatedItem.LatestComment)
+
+	var reviewer model.CaseReviewItemReviewer
+	require.NoError(t, env.db.Where("review_item_id = ?", item.ID).First(&reviewer).Error)
+	assert.Equal(t, model.ReviewerStatusPending, reviewer.ReviewStatus)
+	assert.Empty(t, reviewer.LatestResult)
+	assert.Empty(t, reviewer.LatestComment)
+
+	var updatedReview model.CaseReview
+	require.NoError(t, env.db.First(&updatedReview, review.ID).Error)
+	assert.Equal(t, model.ReviewPlanStatusInProgress, updatedReview.Status)
+	assert.Equal(t, 1, updatedReview.PendingCount)
+
+	var updatedCase model.TestCase
+	require.NoError(t, env.db.First(&updatedCase, env.testcaseID).Error)
+	assert.Equal(t, model.TestCaseStatusPending, updatedCase.Status)
+	assert.Equal(t, model.CaseReviewResultResubmit, updatedCase.ReviewResult)
+}
+
+// TestCaseReviewService_BatchResubmit_RejectsApprovedItem
+// 已通过用例不能被普通重新提审拉回待审，避免破坏最终通过结论。
+func TestCaseReviewService_BatchResubmit_RejectsApprovedItem(t *testing.T) {
+	env := newSelfReviewEnv(t)
+
+	review := model.CaseReview{
+		ID:         210,
+		ProjectID:  env.projectID,
+		Name:       "通过用例不可重提",
+		ReviewMode: model.ReviewModeSingle,
+		Status:     model.ReviewPlanStatusCompleted,
+		CreatedBy:  env.adminID,
+		UpdatedBy:  env.adminID,
+	}
+	require.NoError(t, env.db.Create(&review).Error)
+	item := model.CaseReviewItem{
+		ID:             211,
+		ReviewID:       review.ID,
+		ProjectID:      env.projectID,
+		TestCaseID:     env.testcaseID,
+		TitleSnapshot:  "自审测试用例",
+		ReviewStatus:   model.ReviewItemStatusCompleted,
+		FinalResult:    model.ReviewResultApproved,
+		CurrentRoundNo: 1,
+		CreatedBy:      env.adminID,
+		UpdatedBy:      env.adminID,
+	}
+	require.NoError(t, env.db.Create(&item).Error)
+
+	err := env.svc.BatchResubmit(env.ctx, env.projectID, review.ID, env.adminID, []uint{item.ID})
+	require.Error(t, err)
+	bizErr, ok := err.(*BizError)
+	require.True(t, ok)
+	assert.Equal(t, CodeReviewStatusInvalid, bizErr.NumericCode())
+}

@@ -18,6 +18,7 @@ type ruleSvcEnv struct {
 	svc           *CaseReviewRuleService
 	defectSvc     *CaseReviewDefectService
 	reviewRepo    repository.CaseReviewRepository
+	recordRepo    repository.CaseReviewRecordRepository
 	defectRepo    repository.CaseReviewDefectRepository
 	testCaseRepo  repository.TestCaseRepository
 	projectID     uint
@@ -100,16 +101,19 @@ func newRuleSvcEnv(t *testing.T, tcOverrides ...func(*model.TestCase)) *ruleSvcE
 	// 装配 repo + service
 	txMgr := repository.NewTxManager(db)
 	reviewRepo := repository.NewCaseReviewRepo(db)
+	recordRepo := repository.NewCaseReviewRecordRepo(db)
 	defectRepo := repository.NewCaseReviewDefectRepo(db)
 	testCaseRepo := repository.NewTestCaseRepo(db)
 	defectSvc := NewCaseReviewDefectService(defectRepo, reviewRepo, testCaseRepo, txMgr, testLogger())
-	ruleSvc := NewCaseReviewRuleService(reviewRepo, testCaseRepo, defectRepo, defectSvc, txMgr, testLogger())
+	submitSvc := NewCaseReviewSubmitService(reviewRepo, recordRepo, testCaseRepo, txMgr, testLogger())
+	ruleSvc := NewCaseReviewRuleService(reviewRepo, testCaseRepo, defectRepo, defectSvc, submitSvc, txMgr, testLogger())
 
 	return &ruleSvcEnv{
 		ctx:           context.Background(),
 		svc:           ruleSvc,
 		defectSvc:     defectSvc,
 		reviewRepo:    reviewRepo,
+		recordRepo:    recordRepo,
 		defectRepo:    defectRepo,
 		testCaseRepo:  testCaseRepo,
 		projectID:     1,
@@ -149,6 +153,8 @@ func TestRuleService_Failed_TitleEmpty(t *testing.T) {
 	assert.Equal(t, model.AIGateStatusFailed, report.AIGateStatus)
 	assert.GreaterOrEqual(t, report.CriticalCount, 1)
 	assert.NotEmpty(t, report.DefectIDs, "失败时必须生成至少一个 Action Item")
+	assert.Equal(t, autoReviewStatusSubmitted, report.AutoReviewStatus)
+	assert.Equal(t, model.ReviewResultNeedsUpdate, report.AutoReviewResult)
 
 	// 产生的缺陷 source 必须是 ai_gate
 	defects, err := env.defectRepo.ListByItemID(env.ctx, env.itemID)
@@ -158,6 +164,81 @@ func TestRuleService_Failed_TitleEmpty(t *testing.T) {
 		assert.Equal(t, model.DefectSourceAIGate, d.Source)
 		assert.Equal(t, model.DefectStatusOpen, d.Status)
 	}
+}
+
+// TestRuleService_Failed_AutoSubmitsNeedsUpdate 校验规则失败后自动打回修订并写入评审评论
+func TestRuleService_Failed_AutoSubmitsNeedsUpdate(t *testing.T) {
+	env := newRuleSvcEnv(t, func(tc *model.TestCase) {
+		tc.Title = ""
+	})
+
+	report, err := env.svc.RunOnItem(env.ctx, env.projectID, env.reviewID, env.itemID, env.primaryUserID)
+	require.NoError(t, err)
+	require.False(t, report.Passed)
+	require.Equal(t, autoReviewStatusSubmitted, report.AutoReviewStatus)
+	require.Equal(t, model.ReviewResultNeedsUpdate, report.AutoReviewResult)
+	require.Contains(t, report.AutoReviewComment, autoReviewCommentPrefix)
+
+	item, err := env.reviewRepo.GetItemByID(env.ctx, nil, env.itemID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ReviewItemStatusCompleted, item.ReviewStatus)
+	assert.Equal(t, model.ReviewResultNeedsUpdate, item.FinalResult)
+	assert.Equal(t, report.AutoReviewComment, item.LatestComment)
+
+	tc, err := env.testCaseRepo.FindByID(env.ctx, env.testcaseID, env.projectID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TestCaseStatusDraft, tc.Status)
+	assert.Equal(t, model.CaseReviewResultNeedsUpdate, tc.ReviewResult)
+
+	records, total, err := env.recordRepo.ListByItemID(env.ctx, env.itemID, nil, 1, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, records, 1)
+	assert.Equal(t, model.ReviewResultNeedsUpdate, records[0].Result)
+	assert.Equal(t, report.AutoReviewComment, records[0].Comment)
+}
+
+// TestRuleService_Failed_NonReviewerSkipsAutoSubmit 校验非指定评审人不会被规则检查代提交评审结论
+func TestRuleService_Failed_NonReviewerSkipsAutoSubmit(t *testing.T) {
+	env := newRuleSvcEnv(t, func(tc *model.TestCase) {
+		tc.Title = ""
+	})
+
+	report, err := env.svc.RunOnItem(env.ctx, env.projectID, env.reviewID, env.itemID, env.authorUserID)
+	require.NoError(t, err)
+	require.False(t, report.Passed)
+	assert.Equal(t, autoReviewStatusSkipped, report.AutoReviewStatus)
+	assert.NotEmpty(t, report.DefectIDs)
+
+	item, err := env.reviewRepo.GetItemByID(env.ctx, nil, env.itemID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ReviewResultPending, item.FinalResult)
+	assert.Equal(t, model.AIGateStatusFailed, item.AIGateStatus)
+
+	_, total, err := env.recordRepo.ListByItemID(env.ctx, env.itemID, nil, 1, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), total)
+}
+
+// TestRuleService_Rerun_DoesNotDuplicateAutoReviewRecord 校验重复规则检查不会重复追加相同自动评论
+func TestRuleService_Rerun_DoesNotDuplicateAutoReviewRecord(t *testing.T) {
+	env := newRuleSvcEnv(t, func(tc *model.TestCase) {
+		tc.Title = ""
+	})
+
+	first, err := env.svc.RunOnItem(env.ctx, env.projectID, env.reviewID, env.itemID, env.primaryUserID)
+	require.NoError(t, err)
+	require.Equal(t, autoReviewStatusSubmitted, first.AutoReviewStatus)
+
+	second, err := env.svc.RunOnItem(env.ctx, env.projectID, env.reviewID, env.itemID, env.primaryUserID)
+	require.NoError(t, err)
+	require.Equal(t, autoReviewStatusAlready, second.AutoReviewStatus)
+
+	records, total, err := env.recordRepo.ListByItemID(env.ctx, env.itemID, nil, 1, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, records, 1)
+	assert.Equal(t, first.AutoReviewComment, records[0].Comment)
 }
 
 // TestRuleService_Rerun_IdempotentReplacesOpenAIGateDefects

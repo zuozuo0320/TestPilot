@@ -206,7 +206,7 @@ func main() {
 	userSvc := service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr)
 	roleSvc := service.NewRoleService(roleRepo, auditRepo, txMgr)
 	projectSvc := service.NewProjectService(logger, projectRepo, userRepo, auditRepo, txMgr)
-	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo, tagRepo)
+	testCaseSvc := service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo, tagRepo, caseReviewRepo, txMgr)
 	profileSvc := service.NewProfileService(userRepo, auditRepo, txMgr)
 	executionSvc := service.NewExecutionService(executionRepo, txMgr, mockExecutor, redisClient, logger)
 	defectSvc := service.NewDefectService(defectRepo, executionRepo)
@@ -217,21 +217,21 @@ func main() {
 	moduleSvc := service.NewModuleService(moduleRepo, testCaseRepo)
 	attachmentSvc := service.NewAttachmentService(attachmentRepo, "./uploads")
 	xlsxSvc := service.NewXlsxService(testCaseRepo, tagRepo)
-	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
+	aiModelConfigSvc := service.NewAIModelConfigService(aiModelConfigRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, logger)
+	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, aiModelConfigSvc, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
 	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, userRepo, projectRepo, caseReviewAttachmentRepo, txMgr, logger)
 	caseReviewSubmitSvc := service.NewCaseReviewSubmitService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, txMgr, logger)
 	caseReviewAttachmentSvc := service.NewCaseReviewAttachmentService(caseReviewAttachmentRepo, caseReviewRepo, "./uploads")
 	caseReviewDefectSvc := service.NewCaseReviewDefectService(caseReviewDefectRepo, caseReviewRepo, testCaseRepo, txMgr, logger)
-	caseReviewRuleSvc := service.NewCaseReviewRuleService(caseReviewRepo, testCaseRepo, caseReviewDefectRepo, caseReviewDefectSvc, txMgr, logger)
+	caseReviewRuleSvc := service.NewCaseReviewRuleService(caseReviewRepo, testCaseRepo, caseReviewDefectRepo, caseReviewDefectSvc, caseReviewSubmitSvc, txMgr, logger)
 	tagSvc := service.NewTagService(tagRepo, auditRepo, txMgr, logger)
-	aiModelConfigSvc := service.NewAIModelConfigService(aiModelConfigRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, logger)
 	reqDocSvc := service.NewRequirementDocService(logger, reqDocRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey)
 	// 入队器注入：Redis 不可用时传真正的 nil 接口（避免 typed-nil 陷阱），Service 降级本地执行
 	var genEnqueuer service.GenTaskEnqueuer
 	if genQueueClient != nil {
 		genEnqueuer = genQueueClient
 	}
-	reqGenTaskSvc := service.NewRequirementGenTaskService(logger, reqGenTaskRepo, reqGenResultRepo, reqDocRepo, aiSkillRepo, tagRepo, projectRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, genEnqueuer, genTimeout)
+	reqGenTaskSvc := service.NewRequirementGenTaskService(logger, reqGenTaskRepo, reqGenResultRepo, reqDocRepo, aiSkillRepo, tagRepo, projectRepo, aiModelConfigSvc, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, genEnqueuer, genTimeout)
 	aiSkillSvc := service.NewAISkillService(logger, aiSkillRepo, txMgr)
 
 	// 3. API 层
@@ -284,6 +284,10 @@ func main() {
 		} else {
 			logger.Info("需求智生 worker 已启动", "concurrency", cfg.GenWorkerConcurrency)
 		}
+	}
+
+	if _, syncErr := aiModelConfigSvc.SyncActiveToExecutor(context.Background()); syncErr != nil {
+		logger.Warn("sync active AI model to executor skipped", "error", syncErr)
 	}
 
 	// ========== 优雅关停 ==========

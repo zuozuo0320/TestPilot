@@ -43,6 +43,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 	roleRepo := repository.NewRoleRepo(db)
 	projectRepo := repository.NewProjectRepo(db)
 	testCaseRepo := repository.NewTestCaseRepo(db)
+	caseReviewRepo := repository.NewCaseReviewRepo(db)
 	caseHistoryRepo := repository.NewCaseHistoryRepo(db)
 	auditRepo := repository.NewAuditRepo(db)
 	tagRepo := repository.NewTagRepo(db)
@@ -62,7 +63,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		UserService:        service.NewUserService(userRepo, roleRepo, projectRepo, auditRepo, txMgr),
 		RoleService:        service.NewRoleService(roleRepo, auditRepo, txMgr),
 		ProjectService:     service.NewProjectService(logger, projectRepo, userRepo, auditRepo, txMgr),
-		TestCaseService:    service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo, tagRepo),
+		TestCaseService:    service.NewTestCaseService(testCaseRepo, caseHistoryRepo, auditRepo, tagRepo, caseReviewRepo, txMgr),
 		ProfileService:     service.NewProfileService(userRepo, auditRepo, txMgr),
 		ExecutionService:   service.NewExecutionService(executionRepo, txMgr, mockExecutor, nil, logger),
 		DefectService:      service.NewDefectService(defectRepo, executionRepo),
@@ -70,7 +71,7 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		ScriptService:      service.NewScriptService(scriptRepo, testCaseRepo),
 		OverviewService:    service.NewOverviewService(projectRepo, requirementRepo, testCaseRepo, scriptRepo, executionRepo, defectRepo),
 		AuditService:       service.NewAuditService(auditRepo),
-		AIScriptService:    service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, "http://127.0.0.1:8100", "http://localhost:8100", "", logger),
+		AIScriptService:    service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, nil, "http://127.0.0.1:8100", "http://localhost:8100", "", logger),
 	}, "")
 
 	seedTestData(t, db)

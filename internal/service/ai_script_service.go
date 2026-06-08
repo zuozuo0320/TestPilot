@@ -28,6 +28,7 @@ type AIScriptService struct {
 	projectRepo       repository.ProjectRepository
 	userRepo          repository.UserRepository
 	txMgr             *repository.TxManager
+	aiModelSvc        *AIModelConfigService
 	executorURL       string // Python 执行服务地址（后端内部调用）
 	executorPublicURL string // Python 执行服务地址（前端浏览器可访问）
 	executorAPIKey    string // Python 执行服务 API Key
@@ -41,6 +42,7 @@ func NewAIScriptService(
 	projectRepo repository.ProjectRepository,
 	userRepo repository.UserRepository,
 	txMgr *repository.TxManager,
+	aiModelSvc *AIModelConfigService,
 	executorURL string,
 	executorPublicURL string,
 	executorAPIKey string,
@@ -51,6 +53,7 @@ func NewAIScriptService(
 		projectRepo:       projectRepo,
 		userRepo:          userRepo,
 		txMgr:             txMgr,
+		aiModelSvc:        aiModelSvc,
 		executorURL:       strings.TrimRight(executorURL, "/"),
 		executorPublicURL: strings.TrimRight(executorPublicURL, "/"),
 		executorAPIKey:    executorAPIKey,
@@ -391,6 +394,10 @@ func (s *AIScriptService) ExecuteTask(ctx context.Context, userID, taskID uint) 
 func (s *AIScriptService) callExecutorGenerate(taskID uint, scenarioDesc, startURL, accountRef string, userID uint) {
 	ctx := context.Background()
 	log := s.logger.With("task_id", taskID, "action", "generate")
+	if err := s.syncActiveModelForLLM(ctx, log); err != nil {
+		_ = s.repo.UpdateTaskStatus(ctx, taskID, model.AITaskStatusGenerateFailed)
+		return
+	}
 
 	reqBody := ExecutorGenerateRequest{
 		TaskID:       taskID,
@@ -944,6 +951,19 @@ func (s *AIScriptService) callExecutorHTTP(ctx context.Context, path string, req
 	}
 
 	return respBody, nil
+}
+
+func (s *AIScriptService) syncActiveModelForLLM(ctx context.Context, log *slog.Logger) error {
+	if s.aiModelSvc == nil {
+		err := fmt.Errorf("AI 模型配置服务未配置")
+		log.Error("sync active AI model failed", "error", err)
+		return err
+	}
+	if _, err := s.aiModelSvc.SyncActiveToExecutor(ctx); err != nil {
+		log.Error("sync active AI model failed", "error", err)
+		return err
+	}
+	return nil
 }
 
 // fillTaskVirtualFields 填充单个任务的虚拟字段
@@ -1659,6 +1679,12 @@ func (s *AIScriptService) callExecutorRefactor(taskID, recordingID uint, rawScri
 		}
 	}
 	log := s.logger.With("task_id", taskID, "recording_id", recordingID, "action", "refactor")
+	if err := s.syncActiveModelForLLM(ctx, log); err != nil {
+		_ = s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
+			"task_status": model.AITaskStatusGenerateFailed,
+		})
+		return
+	}
 	respBody, err := s.callExecutorHTTP(ctx, "/execute/refactor", reqBody, log)
 	if err != nil {
 		log.Error("HTTP call failed", "error", err)

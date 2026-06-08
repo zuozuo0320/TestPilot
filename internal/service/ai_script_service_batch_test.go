@@ -44,6 +44,7 @@ func newTestAIScriptService(t *testing.T) (*AIScriptService, *gorm.DB, model.Use
 		projectRepo,
 		repository.NewUserRepo(db),
 		txMgr,
+		nil,
 		"http://127.0.0.1:8100",
 		"http://127.0.0.1:8100",
 		"",

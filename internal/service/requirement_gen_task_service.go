@@ -50,6 +50,7 @@ type RequirementGenTaskService struct {
 	skillRepo      repository.AISkillRepository
 	tagRepo        repository.TagRepository
 	projectRepo    repository.ProjectRepository
+	aiModelSvc     *AIModelConfigService
 	txMgr          *repository.TxManager
 	executorURL    string
 	executorAPIKey string
@@ -67,6 +68,7 @@ func NewRequirementGenTaskService(
 	skillRepo repository.AISkillRepository,
 	tagRepo repository.TagRepository,
 	projectRepo repository.ProjectRepository,
+	aiModelSvc *AIModelConfigService,
 	txMgr *repository.TxManager,
 	executorURL string,
 	executorAPIKey string,
@@ -81,6 +83,7 @@ func NewRequirementGenTaskService(
 		skillRepo:      skillRepo,
 		tagRepo:        tagRepo,
 		projectRepo:    projectRepo,
+		aiModelSvc:     aiModelSvc,
 		txMgr:          txMgr,
 		executorURL:    strings.TrimRight(executorURL, "/"),
 		executorAPIKey: executorAPIKey,
@@ -874,6 +877,16 @@ func (s *RequirementGenTaskService) RunGenerate(ctx context.Context, taskID uint
 	if s.executorURL == "" {
 		s.logger.Warn("executor URL 未配置，标记任务失败", "task_id", taskID)
 		s.failTask(ctx, taskID, "Executor 未配置")
+		return nil
+	}
+	if s.aiModelSvc == nil {
+		s.logger.Warn("AI 模型配置服务未注入，标记任务失败", "task_id", taskID)
+		s.failTask(ctx, taskID, "AI 模型配置服务未配置")
+		return nil
+	}
+	if _, err := s.aiModelSvc.SyncActiveToExecutor(ctx); err != nil {
+		s.logger.Error("同步当前启用模型到 Executor 失败", "error", err, "task_id", taskID)
+		s.failTask(ctx, taskID, "AI 模型配置同步失败，请检查系统 AI 模型配置和 Executor 服务")
 		return nil
 	}
 

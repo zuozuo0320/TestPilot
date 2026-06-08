@@ -94,6 +94,18 @@ func (s *AIModelConfigService) GetActive(ctx context.Context) (*model.AIModelCon
 	return cfg, nil
 }
 
+func (s *AIModelConfigService) SyncActiveToExecutor(ctx context.Context) (*model.AIModelConfig, error) {
+	cfg, err := s.GetActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.syncToExecutor(cfg); err != nil {
+		s.logger.Error("同步当前启用模型到 executor 失败", "error", err, "model_id", cfg.ModelID)
+		return nil, ErrServiceUnavailable(CodeReqGenExecutorUnavailable, "AI 模型配置同步到 Executor 失败，请检查 Executor 服务")
+	}
+	return cfg, nil
+}
+
 // CreateInput 创建模型配置入参
 type CreateAIModelInput struct {
 	Provider      string `json:"provider" binding:"required"`
@@ -160,6 +172,12 @@ func (s *AIModelConfigService) Update(ctx context.Context, id uint, input Update
 	}
 	if err := s.repo.Update(ctx, cfg, nil); err != nil {
 		return nil, fmt.Errorf("更新模型配置失败: %w", err)
+	}
+	if cfg.IsActive {
+		if syncErr := s.syncToExecutor(cfg); syncErr != nil {
+			s.logger.Error("同步已启用模型配置到 executor 失败", "error", syncErr, "model_id", cfg.ModelID)
+			return nil, ErrServiceUnavailable(CodeReqGenExecutorUnavailable, "AI 模型配置同步到 Executor 失败，请检查 Executor 服务")
+		}
 	}
 	s.logger.Info("模型配置已更新", "id", id, "model_id", cfg.ModelID)
 	return cfg, nil

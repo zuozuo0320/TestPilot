@@ -22,7 +22,7 @@ import httpx
 from openai import OpenAI
 from pydantic import BaseModel
 
-from config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+import config as cfg
 
 logger = logging.getLogger("requirement_gen")
 
@@ -288,8 +288,8 @@ def _openai_params(model: str, temperature: float = 0.3, max_tokens: int = 8000)
     """构建 OpenAI 调用参数，兼容 o 系列推理模型"""
     params: dict = {}
     model_lower = model.lower()
-    if model_lower.startswith("o1") or model_lower.startswith("o3") or model_lower.startswith("o4"):
-        # 推理模型使用 max_completion_tokens
+    if model_lower.startswith("o1") or model_lower.startswith("o3") or model_lower.startswith("o4") or "gpt-5" in model_lower:
+        params["reasoning_effort"] = getattr(cfg, "OPENAI_REASONING_EFFORT", "medium")
         params["max_completion_tokens"] = max_tokens
     else:
         params["temperature"] = temperature
@@ -299,9 +299,9 @@ def _openai_params(model: str, temperature: float = 0.3, max_tokens: int = 8000)
 
 def _create_generate_completion(model: str, user_prompt: str, max_retries: int = 4) -> str:
     """调用 LLM 生成用例，stream 模式收集内容，连接断开时自动重试"""
-    kwargs = {"api_key": OPENAI_API_KEY}
-    if OPENAI_BASE_URL:
-        kwargs["base_url"] = OPENAI_BASE_URL
+    kwargs = {"api_key": cfg.OPENAI_API_KEY}
+    if cfg.OPENAI_BASE_URL:
+        kwargs["base_url"] = cfg.OPENAI_BASE_URL
 
     client = OpenAI(**kwargs)
     last_err = None
@@ -458,11 +458,11 @@ def route_skills(req: SkillRouterRequest) -> list[dict]:
 
     user_prompt = f"""## 需求文本\n\n{req.requirement_text[:4000]}\n\n## 候选 Skill 列表\n\n{candidates_text}\n\n请从以上候选 Skill 中选出最多 {req.max_skills} 个最适合该需求的 Skill，返回 JSON 数组。"""
 
-    kwargs = {"api_key": OPENAI_API_KEY}
-    if OPENAI_BASE_URL:
-        kwargs["base_url"] = OPENAI_BASE_URL
+    kwargs = {"api_key": cfg.OPENAI_API_KEY}
+    if cfg.OPENAI_BASE_URL:
+        kwargs["base_url"] = cfg.OPENAI_BASE_URL
 
-    model = OPENAI_MODEL
+    model = cfg.OPENAI_MODEL
     client = OpenAI(**kwargs)
 
     logger.info(f"Skill router starting: model={model}, candidates={len(req.skills)}")
@@ -530,7 +530,7 @@ def _build_generation_results(req: GenerateRequest) -> dict:
     返回的 payload 与 Go 回调接口契约同构，含 status / generated_count / results 等字段。
     """
     start_time = time.time()
-    model = req.model_override or OPENAI_MODEL
+    model = req.model_override or cfg.OPENAI_MODEL
     skills = req.get_skills()
     skill_count = len(skills)
     per_skill_max = max(req.max_cases // skill_count, 5) if skill_count > 0 else req.max_cases

@@ -56,6 +56,7 @@ type CaseReviewRepository interface {
 	DeleteItems(ctx context.Context, tx *gorm.DB, reviewID uint, itemIDs []uint) error
 	DeleteItemsByReviewID(ctx context.Context, tx *gorm.DB, reviewID uint) error
 	HasActiveReviewForCase(ctx context.Context, tx *gorm.DB, projectID, testcaseID uint, excludeReviewID uint) (bool, error)
+	ListActiveItemsByTestCase(ctx context.Context, tx *gorm.DB, projectID, testcaseID uint) ([]model.CaseReviewItem, error)
 	FindNextPendingItem(ctx context.Context, tx *gorm.DB, reviewID, currentItemID uint) (*model.CaseReviewItem, error)
 	CountItemsByOwnership(ctx context.Context, tx *gorm.DB, reviewID, projectID uint, itemIDs []uint) (int64, error)
 
@@ -297,6 +298,21 @@ func (r *caseReviewRepo) HasActiveReviewForCase(ctx context.Context, tx *gorm.DB
 	return count > 0, err
 }
 
+// ListActiveItemsByTestCase 查询用例当前处于未关闭评审计划内的评审项。
+// 用于用例保存后同步判断是否需要自动进入下一轮复审。
+func (r *caseReviewRepo) ListActiveItemsByTestCase(ctx context.Context, tx *gorm.DB, projectID, testcaseID uint) ([]model.CaseReviewItem, error) {
+	var items []model.CaseReviewItem
+	err := r.getDB(tx).WithContext(ctx).
+		Model(&model.CaseReviewItem{}).
+		Joins("JOIN case_reviews ON case_reviews.id = case_review_items.review_id").
+		Where("case_review_items.project_id = ? AND case_review_items.test_case_id = ?", projectID, testcaseID).
+		Where("case_reviews.project_id = case_review_items.project_id").
+		Where("case_reviews.status <> ?", model.ReviewPlanStatusClosed).
+		Order("case_review_items.updated_at DESC, case_review_items.id DESC").
+		Find(&items).Error
+	return items, err
+}
+
 // FindNextPendingItem 查找下一条待评审的评审项。
 // 必须接受 tx 参数，通过 getDB(tx) 选择事务或主连接；
 // 否则在事务回调内调用会命中 SQLite 单写者死锁（参见规范 §2.2）。
@@ -397,6 +413,7 @@ func (r *caseReviewRepo) RecalcReviewStats(ctx context.Context, tx *gorm.DB, rev
 		Approved    int
 		Rejected    int
 		NeedsUpdate int
+		Reopened    int
 	}
 
 	var s stats
@@ -406,7 +423,8 @@ func (r *caseReviewRepo) RecalcReviewStats(ctx context.Context, tx *gorm.DB, rev
 			SUM(CASE WHEN final_result = 'pending' THEN 1 ELSE 0 END) AS pending,
 			SUM(CASE WHEN final_result = 'approved' THEN 1 ELSE 0 END) AS approved,
 			SUM(CASE WHEN final_result = 'rejected' THEN 1 ELSE 0 END) AS rejected,
-			SUM(CASE WHEN final_result = 'needs_update' THEN 1 ELSE 0 END) AS needs_update
+			SUM(CASE WHEN final_result = 'needs_update' THEN 1 ELSE 0 END) AS needs_update,
+			MAX(CASE WHEN current_round_no > 1 THEN 1 ELSE 0 END) AS reopened
 		FROM case_review_items WHERE review_id = ?
 	`, reviewID).Scan(&s).Error
 	if err != nil {
@@ -421,7 +439,7 @@ func (r *caseReviewRepo) RecalcReviewStats(ctx context.Context, tx *gorm.DB, rev
 	// 自动判定计划状态
 	planStatus := model.ReviewPlanStatusNotStarted
 	if s.Total > 0 {
-		if s.Pending == s.Total {
+		if s.Pending == s.Total && s.Reopened == 0 {
 			planStatus = model.ReviewPlanStatusNotStarted
 		} else if s.Approved+s.Rejected+s.NeedsUpdate == s.Total {
 			planStatus = model.ReviewPlanStatusCompleted

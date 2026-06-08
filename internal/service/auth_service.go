@@ -27,6 +27,7 @@ type AuthResult struct {
 	AccessToken  string     `json:"access_token"`
 	RefreshToken string     `json:"refresh_token"`
 	ExpiresAt    int64      `json:"expires_at"`
+	UserID       uint       `json:"user_id"`
 	User         model.User `json:"user"`
 }
 
@@ -72,6 +73,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 		AccessToken:  tokenPair.AccessToken,
 		RefreshToken: tokenPair.RefreshToken,
 		ExpiresAt:    tokenPair.ExpiresAt,
+		UserID:       user.ID,
 		User:         *user,
 	}, nil
 }
@@ -97,6 +99,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshTokenStr string) 
 		AccessToken:  tokenPair.AccessToken,
 		RefreshToken: tokenPair.RefreshToken,
 		ExpiresAt:    tokenPair.ExpiresAt,
+		UserID:       user.ID,
 		User:         *user,
 	}, nil
 }
