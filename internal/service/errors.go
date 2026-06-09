@@ -153,6 +153,15 @@ const (
 	CodeReqDocParsing       = 150105 // 需求文档解析中，请稍候
 	CodeReqDocDeleted       = 150106 // 需求文档已删除
 
+	// 1505xx: GitLab Issue 集成
+	CodeReqGitLabConfigMissing   = 150501 // GitLab 集成未配置
+	CodeReqGitLabConfigInvalid   = 150502 // GitLab 集成配置无效
+	CodeReqGitLabTokenInvalid    = 150503 // GitLab Token 无效或权限不足
+	CodeReqGitLabIssueNotFound   = 150504 // GitLab Issue 不存在
+	CodeReqGitLabUnavailable     = 150505 // GitLab 服务不可用
+	CodeReqGitLabIssueURLInvalid = 150506 // GitLab Issue URL 无效
+	CodeReqGitLabImportFailed    = 150507 // GitLab Issue 导入失败
+
 	// 1502xx: 生成任务
 	CodeReqGenTaskNotFound        = 150201 // 生成任务不存在
 	CodeReqGenTaskStatusInvalid   = 150202 // 生成任务状态不允许此操作
@@ -165,16 +174,16 @@ const (
 	CodeReqGenNoSkillRecommended  = 150209 // 未匹配到适用的 Skill
 
 	// 1503xx: Skill 管理
-	CodeReqSkillNotFound       = 150301 // Skill 不存在
-	CodeReqSkillKeyExists      = 150302 // Skill key 已存在
-	CodeReqSkillSystemNoDelete = 150303 // 系统 Skill 不可删除
+	CodeReqSkillNotFound        = 150301 // Skill 不存在
+	CodeReqSkillKeyExists       = 150302 // Skill key 已存在
+	CodeReqSkillSystemNoDelete  = 150303 // 系统 Skill 不可删除
 	CodeReqSkillVersionConflict = 150304 // Skill 已被他人修改，请刷新重试
-	CodeReqSkillPromptInvalid  = 150305 // Skill 提示词不符合规范
+	CodeReqSkillPromptInvalid   = 150305 // Skill 提示词不符合规范
 
 	// 1504xx: AI 产物
-	CodeReqResultAlreadyAdopted = 150401 // 产物已被采纳，不可重复采纳
-	CodeReqResultNotFound       = 150402 // 产物不存在
-	CodeReqResultDiscarded      = 150403 // 产物已丢弃
+	CodeReqResultAlreadyAdopted  = 150401 // 产物已被采纳，不可重复采纳
+	CodeReqResultNotFound        = 150402 // 产物不存在
+	CodeReqResultDiscarded       = 150403 // 产物已丢弃
 	CodeReqResultVersionConflict = 150404 // 产物已变更，请刷新
 
 	// 1509xx: 内部回调

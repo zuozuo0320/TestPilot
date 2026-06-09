@@ -33,6 +33,7 @@ type RequirementDocFilter struct {
 // RequirementDocRepository 需求文档数据访问层接口
 type RequirementDocRepository interface {
 	Create(ctx context.Context, doc *model.RequirementDoc) error
+	CreateTx(ctx context.Context, tx *gorm.DB, doc *model.RequirementDoc) error
 	FindByID(ctx context.Context, id uint) (*model.RequirementDoc, error)
 	FindByIDForUpdate(ctx context.Context, tx *gorm.DB, id uint) (*model.RequirementDoc, error)
 	Update(ctx context.Context, doc *model.RequirementDoc) error
@@ -71,6 +72,11 @@ func (r *requirementDocRepo) getDB(tx *gorm.DB) *gorm.DB {
 // Create 创建需求文档记录
 func (r *requirementDocRepo) Create(ctx context.Context, doc *model.RequirementDoc) error {
 	return r.db.WithContext(ctx).Create(doc).Error
+}
+
+// CreateTx 在事务中创建需求文档记录
+func (r *requirementDocRepo) CreateTx(ctx context.Context, tx *gorm.DB, doc *model.RequirementDoc) error {
+	return r.getDB(tx).WithContext(ctx).Create(doc).Error
 }
 
 // FindByID 按 ID 查询文档（排除软删）

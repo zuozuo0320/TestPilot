@@ -52,6 +52,9 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 	requirementRepo := repository.NewRequirementRepo(db)
 	scriptRepo := repository.NewScriptRepo(db)
 	aiScriptRepo := repository.NewAIScriptRepo(db)
+	reqDocRepo := repository.NewRequirementDocRepo(db)
+	reqDocSourceRepo := repository.NewRequirementDocSourceRepo(db)
+	projectIntegrationRepo := repository.NewProjectIntegrationRepo(db)
 
 	// Service 层
 	mockExecutor := execution.NewMockExecutor(logger, 0)
@@ -72,6 +75,18 @@ func setupTestRouter(t *testing.T) (http.Handler, *gorm.DB) {
 		OverviewService:    service.NewOverviewService(projectRepo, requirementRepo, testCaseRepo, scriptRepo, executionRepo, defectRepo),
 		AuditService:       service.NewAuditService(auditRepo),
 		AIScriptService:    service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, nil, "http://127.0.0.1:8100", "http://localhost:8100", "", logger),
+		ReqDocService:      service.NewRequirementDocService(logger, reqDocRepo, reqDocSourceRepo, txMgr, "http://127.0.0.1:8100", "test-executor-key"),
+		GitLabIntegrationService: service.NewGitLabIntegrationService(
+			logger,
+			projectIntegrationRepo,
+			reqDocSourceRepo,
+			reqDocRepo,
+			auditRepo,
+			txMgr,
+			"test-secret",
+			"http://127.0.0.1:8100",
+			"test-executor-key",
+		),
 	}, "")
 
 	seedTestData(t, db)

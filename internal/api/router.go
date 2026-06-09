@@ -42,6 +42,7 @@ type Dependencies struct {
 	AIModelConfigService        *service.AIModelConfigService
 	ReqDocService               *service.RequirementDocService
 	ReqGenTaskService           *service.RequirementGenTaskService
+	GitLabIntegrationService    *service.GitLabIntegrationService
 	AISkillService              *service.AISkillService
 	ExecutorURL                 string
 	ExecutorAPIKey              string
@@ -78,6 +79,7 @@ type API struct {
 	aiModelConfigSvc        *service.AIModelConfigService
 	reqDocSvc               *service.RequirementDocService
 	reqGenTaskSvc           *service.RequirementGenTaskService
+	gitLabIntegrationSvc    *service.GitLabIntegrationService
 	aiSkillSvc              *service.AISkillService
 	executorURL             string
 	executorAPIKey          string
@@ -115,6 +117,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		aiModelConfigSvc:        deps.AIModelConfigService,
 		reqDocSvc:               deps.ReqDocService,
 		reqGenTaskSvc:           deps.ReqGenTaskService,
+		gitLabIntegrationSvc:    deps.GitLabIntegrationService,
 		aiSkillSvc:              deps.AISkillService,
 		executorURL:             deps.ExecutorURL,
 		executorAPIKey:          deps.ExecutorAPIKey,
@@ -305,6 +308,11 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	auth.GET("/projects/:projectID/settings", a.getProjectSettings)
 	auth.PUT("/projects/:projectID/settings", a.updateProjectSettings)
 
+	// 项目外部集成配置
+	auth.GET("/projects/:projectID/integrations/gitlab", a.getGitLabConfig)
+	auth.PUT("/projects/:projectID/integrations/gitlab", a.saveGitLabConfig)
+	auth.POST("/projects/:projectID/integrations/gitlab/test", a.testGitLabConfig)
+
 	// 评审附件：按用例聚合（只读镜像）+ 附件自身操作
 	auth.GET("/projects/:projectID/testcases/:testcaseID/review-attachments", a.listReviewAttachmentsByTestCase)
 	auth.DELETE("/projects/:projectID/review-attachments/:attachmentID", a.deleteReviewAttachment)
@@ -323,6 +331,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	reqDocs := auth.Group("/projects/:projectID/requirement-docs")
 	reqDocs.POST("/upload", a.uploadRequirementDoc)
 	reqDocs.POST("/paste", a.pasteRequirementDoc)
+	reqDocs.POST("/gitlab-issues/import", a.importGitLabIssue)
 	reqDocs.GET("", a.listRequirementDocs)
 	reqDocs.GET("/:docID", a.getRequirementDoc)
 	reqDocs.DELETE("/:docID", a.deleteRequirementDoc)

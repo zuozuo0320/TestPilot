@@ -1453,8 +1453,8 @@ async def analyze_testcase(req: TestCaseAnalyzeRequest):
 # ── 需求智生端点 ──
 
 from requirement_gen import (
-    ParseDocRequest, GenerateRequest, SkillRouterRequest,
-    parse_doc_async, generate_cases_async, generate_cases_sync, route_skills,
+    AnalyzeImagesRequest, ParseDocRequest, GenerateRequest, SkillRouterRequest,
+    analyze_images_sync, parse_doc_async, generate_cases_async, generate_cases_sync, route_skills,
 )
 
 
@@ -1490,6 +1490,19 @@ async def requirement_gen_skill_router(req: SkillRouterRequest):
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": f"Skill 路由分析失败: {str(e)}"},
+        )
+
+
+@app.post("/requirement-gen/analyze-images")
+async def requirement_gen_analyze_images(req: AnalyzeImagesRequest):
+    """GitLab Issue 图片视觉分析：同步返回每张图片的摘要或失败原因"""
+    try:
+        return await analyze_images_sync(req)
+    except Exception as e:
+        logger.error(f"GitLab Issue image analysis failed: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "error": f"图片视觉分析失败: {str(e)}"},
         )
 
 

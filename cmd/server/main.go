@@ -195,6 +195,8 @@ func main() {
 	tagRepo := repository.NewTagRepo(db)
 	aiModelConfigRepo := repository.NewAIModelConfigRepo(db)
 	reqDocRepo := repository.NewRequirementDocRepo(db)
+	reqDocSourceRepo := repository.NewRequirementDocSourceRepo(db)
+	projectIntegrationRepo := repository.NewProjectIntegrationRepo(db)
 	reqGenTaskRepo := repository.NewRequirementGenTaskRepo(db)
 	reqGenResultRepo := repository.NewRequirementGenResultRepo(db)
 	aiSkillRepo := repository.NewAISkillRepo(db)
@@ -225,7 +227,8 @@ func main() {
 	caseReviewDefectSvc := service.NewCaseReviewDefectService(caseReviewDefectRepo, caseReviewRepo, testCaseRepo, txMgr, logger)
 	caseReviewRuleSvc := service.NewCaseReviewRuleService(caseReviewRepo, testCaseRepo, caseReviewDefectRepo, caseReviewDefectSvc, caseReviewSubmitSvc, txMgr, logger)
 	tagSvc := service.NewTagService(tagRepo, auditRepo, txMgr, logger)
-	reqDocSvc := service.NewRequirementDocService(logger, reqDocRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey)
+	reqDocSvc := service.NewRequirementDocService(logger, reqDocRepo, reqDocSourceRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey)
+	gitLabIntegrationSvc := service.NewGitLabIntegrationService(logger, projectIntegrationRepo, reqDocSourceRepo, reqDocRepo, auditRepo, txMgr, cfg.JWTSecret, cfg.ExecutorURL, cfg.ExecutorAPIKey)
 	// 入队器注入：Redis 不可用时传真正的 nil 接口（避免 typed-nil 陷阱），Service 降级本地执行
 	var genEnqueuer service.GenTaskEnqueuer
 	if genQueueClient != nil {
@@ -264,6 +267,7 @@ func main() {
 		AIModelConfigService:        aiModelConfigSvc,
 		ReqDocService:               reqDocSvc,
 		ReqGenTaskService:           reqGenTaskSvc,
+		GitLabIntegrationService:    gitLabIntegrationSvc,
 		AISkillService:              aiSkillSvc,
 		ExecutorURL:                 cfg.ExecutorURL,
 		ExecutorAPIKey:              cfg.ExecutorAPIKey,

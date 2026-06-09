@@ -29,6 +29,7 @@ import (
 type RequirementDocService struct {
 	logger         *slog.Logger
 	docRepo        repository.RequirementDocRepository
+	sourceRepo     repository.RequirementDocSourceRepository
 	txMgr          *repository.TxManager
 	executorURL    string
 	executorAPIKey string
@@ -39,6 +40,7 @@ type RequirementDocService struct {
 func NewRequirementDocService(
 	logger *slog.Logger,
 	docRepo repository.RequirementDocRepository,
+	sourceRepo repository.RequirementDocSourceRepository,
 	txMgr *repository.TxManager,
 	executorURL string,
 	executorAPIKey string,
@@ -46,6 +48,7 @@ func NewRequirementDocService(
 	return &RequirementDocService{
 		logger:         logger.With("module", "requirement_doc"),
 		docRepo:        docRepo,
+		sourceRepo:     sourceRepo,
 		txMgr:          txMgr,
 		executorURL:    strings.TrimRight(executorURL, "/"),
 		executorAPIKey: executorAPIKey,
@@ -191,12 +194,59 @@ func (s *RequirementDocService) GetByID(ctx context.Context, projectID, docID ui
 	if doc.ProjectID != projectID {
 		return nil, ErrNotFound(CodeReqDocNotFound, "需求文档不存在")
 	}
+	s.fillExternalSources(ctx, []model.RequirementDoc{*doc}, func(filled model.RequirementDoc) {
+		doc.SourceURL = filled.SourceURL
+		doc.SyncStatus = filled.SyncStatus
+	})
 	return doc, nil
 }
 
 // ListPaged 分页查询需求文档列表
 func (s *RequirementDocService) ListPaged(ctx context.Context, projectID uint, f repository.RequirementDocFilter) ([]model.RequirementDoc, int64, error) {
-	return s.docRepo.ListPaged(ctx, projectID, f)
+	docs, total, err := s.docRepo.ListPaged(ctx, projectID, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	s.fillExternalSources(ctx, docs, func(filled model.RequirementDoc) {
+		for i := range docs {
+			if docs[i].ID == filled.ID {
+				docs[i].SourceURL = filled.SourceURL
+				docs[i].SyncStatus = filled.SyncStatus
+				break
+			}
+		}
+	})
+	return docs, total, nil
+}
+
+func (s *RequirementDocService) fillExternalSources(ctx context.Context, docs []model.RequirementDoc, apply func(model.RequirementDoc)) {
+	if s.sourceRepo == nil || len(docs) == 0 {
+		return
+	}
+	docIDs := make([]uint, 0, len(docs))
+	for _, doc := range docs {
+		if doc.ID > 0 {
+			docIDs = append(docIDs, doc.ID)
+		}
+	}
+	sources, err := s.sourceRepo.ListByDocIDs(ctx, docIDs)
+	if err != nil {
+		s.logger.Warn("回填需求文档来源失败", "error", err)
+		return
+	}
+	sourceMap := make(map[uint]model.RequirementDocSource, len(sources))
+	for _, source := range sources {
+		sourceMap[source.RequirementDocID] = source
+	}
+	for _, doc := range docs {
+		source, ok := sourceMap[doc.ID]
+		if !ok {
+			continue
+		}
+		doc.SourceURL = source.SourceURL
+		doc.SyncStatus = source.SyncStatus
+		apply(doc)
+	}
 }
 
 // Delete 软删除需求文档

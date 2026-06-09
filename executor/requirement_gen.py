@@ -98,6 +98,20 @@ class GenerateRequest(BaseModel):
         return []
 
 
+class ImageAnalysisItem(BaseModel):
+    """GitLab Issue 图片分析项"""
+    source: str = ""
+    alt: str = ""
+    url: str = ""
+    content_type: str = ""
+    base64_data: str = ""
+
+
+class AnalyzeImagesRequest(BaseModel):
+    """GitLab Issue 图片视觉分析请求"""
+    images: list[ImageAnalysisItem]
+
+
 # ─── 文档解析 ───
 
 def _extract_text_from_txt(path: str) -> str:
@@ -335,6 +349,113 @@ def _create_generate_completion(model: str, user_prompt: str, max_retries: int =
                 logger.info(f"等待 {wait}s 后重试...")
                 _time.sleep(wait)
     raise last_err  # type: ignore[misc]
+
+
+_IMAGE_ANALYSIS_SYSTEM_PROMPT = """你是一名资深需求分析师和测试分析师，擅长从产品截图、流程图、原型图、报错截图中提炼可测试需求。
+
+请只围绕图片中能支持测试分析的信息进行说明，不要猜测图片之外的业务。
+输出中文，控制在 120-220 字，优先包含：
+1. 图片展示的关键页面、流程、字段、状态或异常信息
+2. 可转化为测试用例的业务规则、交互约束、边界或风险
+3. 图片信息不足时明确说明不足点"""
+
+
+def _build_image_prompt(image: ImageAnalysisItem) -> list[dict]:
+    """构建单张图片的多模态 Prompt。"""
+    source = image.source or "未知位置"
+    alt = image.alt or "无"
+    user_text = (
+        f"请分析这张 GitLab Issue 附图。\n"
+        f"- 来源位置：{source}\n"
+        f"- 图片说明：{alt}\n"
+        f"- 原始链接：{image.url}\n\n"
+        "请输出可直接追加到需求文档中的图片视觉分析摘要。"
+    )
+    data_url = f"data:{image.content_type};base64,{image.base64_data}"
+    return [
+        {"type": "text", "text": user_text},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]
+
+
+def _analyze_single_image(client: OpenAI, model: str, image: ImageAnalysisItem) -> dict:
+    """同步分析单张图片，失败时返回该图片的错误信息。"""
+    base_result = {
+        "source": image.source,
+        "alt": image.alt,
+        "url": image.url,
+        "summary": "",
+        "error": "",
+    }
+    if not image.base64_data:
+        base_result["error"] = "图片内容为空"
+        return base_result
+    if image.content_type not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+        base_result["error"] = "图片格式不受支持"
+        return base_result
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _IMAGE_ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": _build_image_prompt(image)},
+            ],
+            stream=False,
+            **_openai_params(model, temperature=0.2, max_tokens=900),
+        )
+        summary = _extract_chat_content(response)
+        if not summary:
+            base_result["error"] = "模型未返回图片摘要"
+            return base_result
+        base_result["summary"] = summary[:1200]
+        return base_result
+    except Exception as e:
+        logger.warning("GitLab Issue 图片分析失败: source=%s, error=%s", image.source, e)
+        base_result["error"] = str(e)[:500]
+        return base_result
+
+
+def _analyze_images_blocking(req: AnalyzeImagesRequest) -> dict:
+    """同步执行图片视觉分析；单图失败不影响其他图片。"""
+    images = req.images[:6]
+    if not images:
+        return {"status": "ok", "images": []}
+
+    if not cfg.OPENAI_API_KEY:
+        return {
+            "status": "ok",
+            "images": [
+                {
+                    "source": image.source,
+                    "alt": image.alt,
+                    "url": image.url,
+                    "summary": "",
+                    "error": "Executor 未配置 OpenAI API Key，无法分析图片",
+                }
+                for image in images
+            ],
+        }
+
+    kwargs = {"api_key": cfg.OPENAI_API_KEY}
+    if cfg.OPENAI_BASE_URL:
+        kwargs["base_url"] = cfg.OPENAI_BASE_URL
+
+    client = OpenAI(**kwargs)
+    model = cfg.OPENAI_MODEL
+    logger.info("GitLab Issue image analysis starting: model=%s, images=%d", model, len(images))
+    results = [_analyze_single_image(client, model, image) for image in images]
+    logger.info(
+        "GitLab Issue image analysis done: images=%d, errors=%d",
+        len(results),
+        sum(1 for item in results if item.get("error")),
+    )
+    return {"status": "ok", "images": results}
+
+
+async def analyze_images_sync(req: AnalyzeImagesRequest) -> dict:
+    """异步入口：在线程池中执行阻塞的多模态模型调用。"""
+    return await asyncio.to_thread(_analyze_images_blocking, req)
 
 
 def _extract_chat_content(response) -> str:

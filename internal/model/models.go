@@ -24,6 +24,9 @@ const (
 	ProjectStatusActive   = "active"
 	ProjectStatusArchived = "archived"
 
+	// ---- 项目外部集成 ----
+	IntegrationProviderGitLab = "gitlab"
+
 	// ---- 项目质量状态 ----
 	ProjectQualityStatusStable   = "stable"
 	ProjectQualityStatusDegraded = "degraded"
@@ -215,6 +218,23 @@ type ProjectMember struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ProjectIntegration 项目外部系统集成配置。
+// 敏感凭证只允许后端保存与解密，API 返回时必须脱敏。
+type ProjectIntegration struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	ProjectID      uint      `json:"project_id" gorm:"not null;uniqueIndex:uk_project_provider;index:idx_pi_project"`
+	Provider       string    `json:"provider" gorm:"size:30;not null;uniqueIndex:uk_project_provider"`
+	BaseURL        string    `json:"base_url" gorm:"size:500;not null;default:''"`
+	ProjectPath    string    `json:"project_path" gorm:"size:500;not null;default:''"`
+	EncryptedToken string    `json:"-" gorm:"type:text"`
+	TokenMask      string    `json:"token_mask" gorm:"size:80;not null;default:''"`
+	Enabled        bool      `json:"enabled" gorm:"not null;default:true"`
+	CreatedBy      uint      `json:"created_by" gorm:"not null;default:0"`
+	UpdatedBy      uint      `json:"updated_by" gorm:"not null;default:0"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 type Requirement struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	ProjectID uint      `json:"project_id" gorm:"not null;index;uniqueIndex:idx_project_requirement_title"`
@@ -247,10 +267,10 @@ type TestCase struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 
 	// 需求智生模块溯源字段（AI 生成的用例入库后回填）
-	SourceAIGenerated       bool `json:"source_ai_generated" gorm:"not null;default:false"`
-	SourceRequirementDocID  uint `json:"source_requirement_doc_id" gorm:"not null;default:0;index:idx_tc_source_doc"`
-	SourceGenTaskID         uint `json:"source_gen_task_id" gorm:"not null;default:0;index:idx_tc_source_task"`
-	SourceSkillID           uint `json:"source_skill_id" gorm:"not null;default:0"`
+	SourceAIGenerated      bool `json:"source_ai_generated" gorm:"not null;default:false"`
+	SourceRequirementDocID uint `json:"source_requirement_doc_id" gorm:"not null;default:0;index:idx_tc_source_doc"`
+	SourceGenTaskID        uint `json:"source_gen_task_id" gorm:"not null;default:0;index:idx_tc_source_task"`
+	SourceSkillID          uint `json:"source_skill_id" gorm:"not null;default:0"`
 
 	// 虚拟字段：用例评审模块关联摘要
 	InReview           bool   `json:"in_review" gorm:"-"`
@@ -590,6 +610,7 @@ func AutoMigrate(db *gorm.DB) error {
 
 		&Project{},
 		&ProjectMember{},
+		&ProjectIntegration{},
 		&Requirement{},
 		&TestCase{},
 		&Module{},
@@ -634,6 +655,7 @@ func AutoMigrate(db *gorm.DB) error {
 
 		// 需求智生模块
 		&RequirementDoc{},
+		&RequirementDocSource{},
 		&RequirementGenTask{},
 		&RequirementGenResult{},
 		&AISkill{},

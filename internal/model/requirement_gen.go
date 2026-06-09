@@ -26,8 +26,13 @@ const (
 	DocParseStatusParseFailed = "parse_failed"
 
 	// ---- 需求文档来源类型 ----
-	DocSourceTypeUpload = "upload_file"
-	DocSourceTypePaste  = "paste_text"
+	DocSourceTypeUpload      = "upload_file"
+	DocSourceTypePaste       = "paste_text"
+	DocSourceTypeGitLabIssue = "gitlab_issue"
+
+	// ---- 需求文档外部来源同步状态 ----
+	DocSourceSyncStatusSynced = "synced"
+	DocSourceSyncStatusFailed = "failed"
 
 	// ---- 生成任务状态 ----
 	GenTaskStatusPending        = "PENDING"
@@ -80,11 +85,41 @@ type RequirementDoc struct {
 	CaseCount       int64  `json:"case_count" gorm:"-"`
 	CreatedByName   string `json:"created_by_name,omitempty" gorm:"-"`
 	CreatedByAvatar string `json:"created_by_avatar,omitempty" gorm:"-"`
+	SourceURL       string `json:"source_url,omitempty" gorm:"-"`
+	SyncStatus      string `json:"sync_status,omitempty" gorm:"-"`
 }
 
 // TableName 指定表名
 func (RequirementDoc) TableName() string {
 	return "requirement_docs"
+}
+
+// RequirementDocSource 需求文档外部来源追溯表。
+// 用于记录 GitLab Issue 等外部需求源与 requirement_docs 的映射关系。
+type RequirementDocSource struct {
+	ID                  uint       `json:"id" gorm:"primaryKey"`
+	ProjectID           uint       `json:"project_id" gorm:"not null;index:idx_rds_project;uniqueIndex:uk_rds_external"`
+	RequirementDocID    uint       `json:"requirement_doc_id" gorm:"not null;index:idx_rds_doc"`
+	SourceType          string     `json:"source_type" gorm:"size:30;not null;uniqueIndex:uk_rds_external"`
+	ExternalSystem      string     `json:"external_system" gorm:"size:30;not null"`
+	SourceURL           string     `json:"source_url" gorm:"size:1000;not null;default:''"`
+	ExternalProjectID   string     `json:"external_project_id" gorm:"size:100;not null;default:''"`
+	ExternalProjectPath string     `json:"external_project_path" gorm:"size:500;not null;default:''"`
+	ExternalIssueIID    int        `json:"external_issue_iid" gorm:"not null;default:0"`
+	ExternalKey         string     `json:"external_key" gorm:"size:128;not null;uniqueIndex:uk_rds_external"`
+	VersionNo           int        `json:"version_no" gorm:"not null;default:1;uniqueIndex:uk_rds_external"`
+	ExternalUpdatedAt   *time.Time `json:"external_updated_at"`
+	LastSyncedAt        *time.Time `json:"last_synced_at"`
+	SyncStatus          string     `json:"sync_status" gorm:"size:20;not null;default:synced"`
+	SyncError           string     `json:"sync_error" gorm:"size:1000;not null;default:''"`
+	CreatedBy           uint       `json:"created_by" gorm:"not null;default:0"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
+// TableName 指定表名
+func (RequirementDocSource) TableName() string {
+	return "requirement_doc_sources"
 }
 
 // ===================== RequirementGenTask 生成任务表 =====================
