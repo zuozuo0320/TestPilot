@@ -71,7 +71,8 @@ type cloneTaskRequest struct {
 }
 
 type renameTaskRequest struct {
-	TaskName string `json:"task_name" binding:"required,min=1,max=128"`
+	TaskName     string `json:"task_name" binding:"required,min=1,max=128"`
+	ScenarioDesc string `json:"scenario_desc"`
 }
 
 type finishRecordingRequest struct {
@@ -488,7 +489,7 @@ func (a *API) renameTask(c *gin.Context) {
 		return
 	}
 
-	if err := a.aiScriptSvc.RenameTask(c.Request.Context(), user.ID, taskID, req.TaskName); err != nil {
+	if err := a.aiScriptSvc.RenameTask(c.Request.Context(), user.ID, taskID, req.TaskName, req.ScenarioDesc); err != nil {
 		response.HandleError(c, err)
 		return
 	}

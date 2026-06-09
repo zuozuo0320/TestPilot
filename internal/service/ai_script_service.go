@@ -884,23 +884,24 @@ func (s *AIScriptService) GetLatestValidation(ctx context.Context, scriptVersion
 		}
 		return nil, ErrInternal(CodeInternal, err)
 	}
-	// 填充触发人名称
+	s.fillValidationDetail(ctx, v)
+	return v, nil
+}
+
+func (s *AIScriptService) fillValidationDetail(ctx context.Context, v *model.AIScriptValidation) {
 	user, _ := s.userRepo.FindByID(ctx, v.TriggeredBy)
 	if user != nil {
 		v.TriggeredName = user.Name
 	}
-	// 填充日志（从 DB JSON 列复制到 API 虚拟字段）
 	if v.ExecutionLogsJSON != nil {
 		v.Logs = json.RawMessage(v.ExecutionLogsJSON)
 	} else {
 		v.Logs = json.RawMessage("[]")
 	}
-	// 填充截图证据
 	evidences, _ := s.repo.ListEvidencesByValidation(ctx, v.ID)
 	if len(evidences) > 0 {
 		v.Screenshots = evidences
 	}
-	return v, nil
 }
 
 // GetEvidences 获取任务的证据列表
@@ -1421,7 +1422,7 @@ func discardTaskSkipReason(status string) string {
 }
 
 // RenameTask 更新任务名称
-func (s *AIScriptService) RenameTask(ctx context.Context, userID, taskID uint, newName string) error {
+func (s *AIScriptService) RenameTask(ctx context.Context, userID, taskID uint, newName, scenarioDesc string) error {
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
 		return ErrBadRequest(CodeParamsError, "任务名称不能为空")
@@ -1439,16 +1440,24 @@ func (s *AIScriptService) RenameTask(ctx context.Context, userID, taskID uint, n
 	}
 
 	if task.TaskStatus == model.AITaskStatusDiscarded {
-		return ErrBadRequest(CodeParamsError, "已废弃的任务不可修改名称")
+		return ErrBadRequest(CodeParamsError, "已废弃的任务不可修改")
+	}
+	scenarioDesc = strings.TrimSpace(scenarioDesc)
+	if scenarioDesc == "" {
+		scenarioDesc = task.ScenarioDesc
+	}
+	if strings.TrimSpace(scenarioDesc) == "" {
+		return ErrBadRequest(CodeParamsError, "场景描述不能为空")
 	}
 
 	if err := s.repo.UpdateTaskFields(ctx, taskID, map[string]interface{}{
-		"task_name": newName,
+		"task_name":     newName,
+		"scenario_desc": scenarioDesc,
 	}); err != nil {
 		return ErrInternal(CodeInternal, err)
 	}
 
-	s.logger.InfoContext(ctx, "task renamed",
+	s.logger.InfoContext(ctx, "task updated",
 		"task_id", taskID,
 		"user_id", userID,
 		"new_name", newName,
@@ -1956,7 +1965,14 @@ func (s *AIScriptService) getUserRole(ctx context.Context, userID, projectID uin
 
 // GetValidationHistory 获取验证历史
 func (s *AIScriptService) GetValidationHistory(ctx context.Context, scriptVersionID uint) ([]model.AIScriptValidation, error) {
-	return s.repo.ListValidationsByScriptID(ctx, scriptVersionID)
+	validations, err := s.repo.ListValidationsByScriptID(ctx, scriptVersionID)
+	if err != nil {
+		return nil, ErrInternal(CodeInternal, err)
+	}
+	for i := range validations {
+		s.fillValidationDetail(ctx, &validations[i])
+	}
+	return validations, nil
 }
 
 // UpdateTaskCases 更新任务关联用例

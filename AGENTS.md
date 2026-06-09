@@ -4,7 +4,7 @@
 
 修改本目录下任何 Go 代码、测试、迁移、配置、API 或后端文档前，必须先阅读并遵守：
 
-- `../.windsurf/rules/testpilot-go-backend-rules.md`
+- `../.devin/rules/testpilot-go-backend-rules.md`
 
 ## 强制约定
 

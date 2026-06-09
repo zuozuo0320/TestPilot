@@ -43,14 +43,13 @@ def _ensure_playwright_project():
         # 安装依赖
         logger.info("Installing Playwright dependencies...")
         subprocess.run(
-            ["npm", "install"],
+            [_npm_command(), "install"],
             cwd=str(project_dir),
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=120,
-            shell=True,
         )
 
     # playwright.config.ts
@@ -200,14 +199,13 @@ def run_validation(
         # 3. 执行 npx playwright test
         logger.info(f"Running playwright test for task {task_id}")
         proc = subprocess.run(
-            ["npx", "playwright", "test", str(script_file.name)],
+            [_npx_command(), "playwright", "test", str(script_file.name)],
             cwd=str(project_dir),
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=180,
-            shell=True,
         )
 
         stdout = proc.stdout
@@ -240,17 +238,18 @@ def run_validation(
                 "error_message": "",
             }
         else:
+            fail_reason = _resolve_failure_reason(test_result, stdout, stderr, "测试执行失败")
             return {
                 "success": False,
                 "total_step_count": test_result["total_tests"],
                 "passed_step_count": test_result["passed_tests"],
                 "failed_step_no": test_result.get("first_failed_index"),
-                "fail_reason": test_result.get("fail_reason", stderr[:500] if stderr else "测试执行失败"),
+                "fail_reason": fail_reason,
                 "assertion_summary": test_result["assertions"],
                 "duration_ms": duration_ms,
                 "logs": _build_logs(stdout, stderr, "FAIL"),
                 "screenshots": screenshots,
-                "error_message": test_result.get("fail_reason", ""),
+                "error_message": fail_reason,
             }
 
     except subprocess.TimeoutExpired:
@@ -542,11 +541,10 @@ def _run_v1_project_validation(
     if not node_modules.exists():
         logger.info(f"[v1-validation] 安装项目依赖: {workspace_root}")
         subprocess.run(
-            ["npm", "install"],
+            [_npm_command(), "install"],
             cwd=str(workspace_root),
             capture_output=True,
             timeout=120,
-            shell=True,
         )
 
     # 确定 spec 文件路径
@@ -604,14 +602,13 @@ def _run_v1_project_validation(
     spec_relative = str(spec_path.relative_to(workspace_root)).replace("\\", "/")
     logger.info(f"[v1-validation] 执行: npx playwright test {spec_relative}")
     proc = subprocess.run(
-        ["npx", "playwright", "test", spec_relative],
+        [_npx_command(), "playwright", "test", spec_relative],
         cwd=str(workspace_root),
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=180,
-        shell=True,
     )
 
     stdout = proc.stdout
@@ -638,17 +635,18 @@ def _run_v1_project_validation(
             "error_message": "",
         }
     else:
+        fail_reason = _resolve_failure_reason(test_result, stdout, stderr, "V1 测试执行失败")
         return {
             "success": False,
             "total_step_count": test_result["total_tests"],
             "passed_step_count": test_result["passed_tests"],
             "failed_step_no": test_result.get("first_failed_index"),
-            "fail_reason": test_result.get("fail_reason", stderr[:500] if stderr else "V1 测试执行失败"),
+            "fail_reason": fail_reason,
             "assertion_summary": test_result["assertions"],
             "duration_ms": duration_ms,
             "logs": _build_logs(stdout, stderr, "FAIL"),
             "screenshots": screenshots,
-            "error_message": test_result.get("fail_reason", ""),
+            "error_message": fail_reason,
         }
 
 
@@ -670,6 +668,7 @@ def _parse_json_results(results_file: Path) -> dict:
     try:
         data = json.loads(results_file.read_text(encoding="utf-8"))
         suites = data.get("suites", [])
+        top_level_errors = data.get("errors", [])
 
         total = 0
         passed = 0
@@ -738,6 +737,9 @@ def _parse_json_results(results_file: Path) -> dict:
 
                         assertions.append(assertion)
 
+        if not fail_reason and top_level_errors:
+            fail_reason = str(top_level_errors[0].get("message", ""))[:500]
+
         return {
             "total_tests": total,
             "passed_tests": passed,
@@ -788,6 +790,27 @@ def _build_logs(stdout: str, stderr: str, status: str) -> list:
         for line in stderr.strip().split("\n")[:20]:
             logs.append({"level": "ERROR" if status == "FAIL" else "WARN", "message": line.strip()})
     return logs
+
+
+def _resolve_failure_reason(test_result: dict, stdout: str, stderr: str, default_message: str) -> str:
+    reason = str(test_result.get("fail_reason") or "").strip()
+    if reason:
+        return reason[:500]
+    stderr_text = (stderr or "").strip()
+    if stderr_text:
+        return stderr_text[:500]
+    stdout_text = (stdout or "").strip()
+    if stdout_text:
+        return stdout_text[:500]
+    return default_message
+
+
+def _npm_command() -> str:
+    return "npm.cmd" if os.name == "nt" else "npm"
+
+
+def _npx_command() -> str:
+    return "npx.cmd" if os.name == "nt" else "npx"
 
 
 def _update_config_storage_state(project_dir: Path, storage_state_path: str | None):
