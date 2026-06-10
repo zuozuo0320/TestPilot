@@ -809,7 +809,7 @@ func (s *RequirementGenTaskService) callSkillRouter(requirementText string, cand
 	if err != nil {
 		return nil, fmt.Errorf("call skill router: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("skill router returned status %d", resp.StatusCode)
@@ -835,17 +835,16 @@ func (s *RequirementGenTaskService) enqueueOrFallback(ctx context.Context, taskI
 	if s.enqueuer != nil {
 		if err := s.enqueuer.EnqueueGenerate(ctx, taskID); err != nil {
 			s.logger.Error("任务入队失败，降级为本地执行", "error", err, "task_id", taskID)
-			go s.runGenerateDetached(taskID)
+			go s.runGenerateDetached(context.WithoutCancel(ctx), taskID)
 		}
 		return
 	}
 	// 未配置队列：降级为本地异步执行
-	go s.runGenerateDetached(taskID)
+	go s.runGenerateDetached(context.WithoutCancel(ctx), taskID)
 }
 
 // runGenerateDetached 脱离请求上下文在本地执行生成任务（降级路径）。
-func (s *RequirementGenTaskService) runGenerateDetached(taskID uint) {
-	ctx := context.Background()
+func (s *RequirementGenTaskService) runGenerateDetached(ctx context.Context, taskID uint) {
 	if err := s.RunGenerate(ctx, taskID); err != nil {
 		s.logger.Error("本地执行生成任务失败", "error", err, "task_id", taskID)
 		s.failTask(ctx, taskID, fmt.Sprintf("本地执行失败: %v", err))
@@ -954,18 +953,7 @@ func (s *RequirementGenTaskService) RunGenerate(ctx context.Context, taskID uint
 	// 9. 成功：写入产物 + 推进 SUCCESS（CallbackSuccess 内含终态幂等守卫）
 	results := make([]CallbackResultItem, 0, len(genResp.Results))
 	for _, item := range genResp.Results {
-		results = append(results, CallbackResultItem{
-			SeqNo:         item.SeqNo,
-			Title:         item.Title,
-			Level:         item.Level,
-			Precondition:  item.Precondition,
-			Steps:         item.Steps,
-			Postcondition: item.Postcondition,
-			Remark:        item.Remark,
-			TagsSuggested: item.TagsSuggested,
-			AIConfidence:  item.AIConfidence,
-			RawJSON:       item.RawJSON,
-		})
+		results = append(results, CallbackResultItem(item))
 	}
 	if err := s.CallbackSuccess(ctx, CallbackSuccessInput{
 		TaskID:           taskID,
@@ -1135,7 +1123,7 @@ func (s *RequirementGenTaskService) callExecutorGenerate(ctx context.Context, ta
 	if err != nil {
 		return nil, fmt.Errorf("do generate request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("executor returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))

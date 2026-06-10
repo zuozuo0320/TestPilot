@@ -311,7 +311,9 @@ func TestTagService_ListPaged(t *testing.T) {
 	svc, ctx := newTagService(t)
 	for i := 0; i < 5; i++ {
 		name := "列表标签" + string(rune('A'+i))
-		svc.Create(ctx, 1, 1, CreateTagInput{Name: name, Color: "#3B82F6"})
+		if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: name, Color: "#3B82F6"}); err != nil {
+			t.Fatalf("create tag failed: %v", err)
+		}
 	}
 
 	tags, total, err := svc.ListPaged(ctx, 1, repository.TagFilter{Page: 1, PageSize: 10})
@@ -329,9 +331,15 @@ func TestTagService_ListPaged(t *testing.T) {
 // TestTagService_ListPaged_Keyword 测试关键词搜索：搜索“测试”应匹配 2 条
 func TestTagService_ListPaged_Keyword(t *testing.T) {
 	svc, ctx := newTagService(t)
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "冒烟测试", Color: "#3B82F6"})
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "回归测试", Color: "#EF4444"})
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "性能优化", Color: "#10B981"})
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "冒烟测试", Color: "#3B82F6"}); err != nil {
+		t.Fatalf("create smoke tag failed: %v", err)
+	}
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "回归测试", Color: "#EF4444"}); err != nil {
+		t.Fatalf("create regression tag failed: %v", err)
+	}
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "性能优化", Color: "#10B981"}); err != nil {
+		t.Fatalf("create performance tag failed: %v", err)
+	}
 
 	tags, total, err := svc.ListPaged(ctx, 1, repository.TagFilter{Keyword: "测试", Page: 1, PageSize: 10})
 	if err != nil {
@@ -350,7 +358,9 @@ func TestTagService_ListPaged_Pagination(t *testing.T) {
 	svc, ctx := newTagService(t)
 	for i := 0; i < 15; i++ {
 		name := "分页标签" + string(rune('A'+i))
-		svc.Create(ctx, 1, 1, CreateTagInput{Name: name, Color: "#3B82F6"})
+		if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: name, Color: "#3B82F6"}); err != nil {
+			t.Fatalf("create tag failed: %v", err)
+		}
 	}
 
 	tags, total, err := svc.ListPaged(ctx, 1, repository.TagFilter{Page: 2, PageSize: 10})
@@ -414,7 +424,9 @@ func TestTagService_Create_NameTrimSpaces(t *testing.T) {
 // TestTagService_Update_DuplicateName 测试更新为同项目下已存在的标签名应返回重复错误
 func TestTagService_Update_DuplicateName(t *testing.T) {
 	svc, ctx := newTagService(t)
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "标签A", Color: "#3B82F6"})
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "标签A", Color: "#3B82F6"}); err != nil {
+		t.Fatalf("create tag A failed: %v", err)
+	}
 	tagB, _ := svc.Create(ctx, 1, 1, CreateTagInput{Name: "标签B", Color: "#EF4444"})
 
 	// 尝试把 B 改名为 A
@@ -457,7 +469,9 @@ func TestTagService_Delete_CascadeUnlink(t *testing.T) {
 	// 创建 3 条测试用例并关联到该标签
 	for i := uint(1); i <= 3; i++ {
 		seedTestCase(t, env.db, i, 1, "用例"+string(rune('A'+i-1)))
-		env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, i, []uint{tag.ID})
+		if err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, i, []uint{tag.ID}); err != nil {
+			t.Fatalf("replace testcase tags failed: %v", err)
+		}
 	}
 
 	// 删除标签，应返回 unlinked=3
@@ -485,9 +499,15 @@ func TestTagService_Delete_CascadeUnlink(t *testing.T) {
 // TestTagService_ListOptions 测试候选列表基本功能
 func TestTagService_ListOptions(t *testing.T) {
 	svc, ctx := newTagService(t)
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "冒烟测试", Color: "#3B82F6"})
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "回归测试", Color: "#EF4444"})
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "性能优化", Color: "#10B981"})
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "冒烟测试", Color: "#3B82F6"}); err != nil {
+		t.Fatalf("create smoke tag failed: %v", err)
+	}
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "回归测试", Color: "#EF4444"}); err != nil {
+		t.Fatalf("create regression tag failed: %v", err)
+	}
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "性能优化", Color: "#10B981"}); err != nil {
+		t.Fatalf("create performance tag failed: %v", err)
+	}
 
 	options, err := svc.ListOptions(ctx, 1, "")
 	if err != nil {
@@ -507,9 +527,15 @@ func TestTagService_ListOptions(t *testing.T) {
 // TestTagService_ListOptions_Keyword 测试候选列表关键词过滤
 func TestTagService_ListOptions_Keyword(t *testing.T) {
 	svc, ctx := newTagService(t)
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "冒烟测试", Color: "#3B82F6"})
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "回归测试", Color: "#EF4444"})
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "性能优化", Color: "#10B981"})
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "冒烟测试", Color: "#3B82F6"}); err != nil {
+		t.Fatalf("create smoke tag failed: %v", err)
+	}
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "回归测试", Color: "#EF4444"}); err != nil {
+		t.Fatalf("create regression tag failed: %v", err)
+	}
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "性能优化", Color: "#10B981"}); err != nil {
+		t.Fatalf("create performance tag failed: %v", err)
+	}
 
 	options, err := svc.ListOptions(ctx, 1, "测试")
 	if err != nil {
@@ -536,7 +562,9 @@ func TestTagService_ListOptions_EmptyProject(t *testing.T) {
 func TestTagService_ListOptions_ProjectIsolation(t *testing.T) {
 	env := newTagTestEnv(t)
 	// 在项目1创建标签
-	env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "项目1标签", Color: "#3B82F6"})
+	if _, err := env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "项目1标签", Color: "#3B82F6"}); err != nil {
+		t.Fatalf("create project tag failed: %v", err)
+	}
 
 	// 查询项目999的标签，应为空
 	options, err := env.svc.ListOptions(env.ctx, 999, "")
@@ -595,7 +623,9 @@ func TestTagRepo_ReplaceTestCaseTags_ClearAll(t *testing.T) {
 	env := newTagTestEnv(t)
 	seedTestCase(t, env.db, 1, 1, "清空标签用例")
 	tag, _ := env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "待清除", Color: "#3B82F6"})
-	env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tag.ID})
+	if err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tag.ID}); err != nil {
+		t.Fatalf("replace testcase tags failed: %v", err)
+	}
 
 	// 用空切片替换，应清除所有关联
 	err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{})
@@ -615,7 +645,9 @@ func TestTagRepo_CopyTestCaseTags(t *testing.T) {
 	seedTestCase(t, env.db, 2, 1, "目标用例")
 	tagA, _ := env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "标签A", Color: "#3B82F6"})
 	tagB, _ := env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "标签B", Color: "#EF4444"})
-	env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tagA.ID, tagB.ID})
+	if err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tagA.ID, tagB.ID}); err != nil {
+		t.Fatalf("replace testcase tags failed: %v", err)
+	}
 
 	// 复制源用例的标签到目标用例
 	err := env.tagRepo.CopyTestCaseTags(env.ctx, nil, 1, 2)
@@ -656,8 +688,12 @@ func TestTagRepo_ListByTestCaseIDs(t *testing.T) {
 	tagA, _ := env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "标签A", Color: "#3B82F6"})
 	tagB, _ := env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "标签B", Color: "#EF4444"})
 
-	env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tagA.ID, tagB.ID}) // 用例1: A,B
-	env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 2, []uint{tagA.ID})          // 用例2: A
+	if err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tagA.ID, tagB.ID}); err != nil {
+		t.Fatalf("replace testcase 1 tags failed: %v", err)
+	}
+	if err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 2, []uint{tagA.ID}); err != nil {
+		t.Fatalf("replace testcase 2 tags failed: %v", err)
+	}
 	// 用例3 无标签
 
 	tagMap, err := env.tagRepo.ListByTestCaseIDs(env.ctx, []uint{1, 2, 3})
@@ -692,7 +728,9 @@ func TestTagRepo_DeleteRelsByTestCaseID(t *testing.T) {
 	env := newTagTestEnv(t)
 	seedTestCase(t, env.db, 1, 1, "删除关联用例")
 	tag, _ := env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "不被删除", Color: "#3B82F6"})
-	env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tag.ID})
+	if err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tag.ID}); err != nil {
+		t.Fatalf("replace testcase tags failed: %v", err)
+	}
 
 	// 删除用例1的标签关联
 	err := env.tagRepo.DeleteRelsByTestCaseID(env.ctx, nil, 1)
@@ -719,8 +757,12 @@ func TestTagRepo_DeleteRelsByTestCaseIDs_Batch(t *testing.T) {
 	seedTestCase(t, env.db, 1, 1, "批量删除1")
 	seedTestCase(t, env.db, 2, 1, "批量删除2")
 	tag, _ := env.svc.Create(env.ctx, 1, 1, CreateTagInput{Name: "共享标签", Color: "#3B82F6"})
-	env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tag.ID})
-	env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 2, []uint{tag.ID})
+	if err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 1, []uint{tag.ID}); err != nil {
+		t.Fatalf("replace testcase 1 tags failed: %v", err)
+	}
+	if err := env.tagRepo.ReplaceTestCaseTags(env.ctx, nil, 2, []uint{tag.ID}); err != nil {
+		t.Fatalf("replace testcase 2 tags failed: %v", err)
+	}
 
 	// 批量删除
 	err := env.tagRepo.DeleteRelsByTestCaseIDs(env.ctx, nil, []uint{1, 2})
@@ -739,9 +781,15 @@ func TestTagRepo_DeleteRelsByTestCaseIDs_Batch(t *testing.T) {
 // TestTagService_ListPaged_SortByName 测试按名称升序排序
 func TestTagService_ListPaged_SortByName(t *testing.T) {
 	svc, ctx := newTagService(t)
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "Charlie", Color: "#3B82F6"})
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "Alpha", Color: "#EF4444"})
-	svc.Create(ctx, 1, 1, CreateTagInput{Name: "Bravo", Color: "#10B981"})
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "Charlie", Color: "#3B82F6"}); err != nil {
+		t.Fatalf("create Charlie tag failed: %v", err)
+	}
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "Alpha", Color: "#EF4444"}); err != nil {
+		t.Fatalf("create Alpha tag failed: %v", err)
+	}
+	if _, err := svc.Create(ctx, 1, 1, CreateTagInput{Name: "Bravo", Color: "#10B981"}); err != nil {
+		t.Fatalf("create Bravo tag failed: %v", err)
+	}
 
 	tags, _, err := svc.ListPaged(ctx, 1, repository.TagFilter{Page: 1, PageSize: 10, SortBy: "name"})
 	if err != nil {

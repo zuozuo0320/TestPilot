@@ -119,7 +119,7 @@ func (a *API) importTestCasesXlsx(c *gin.Context) {
 		response.Error(c, 400, service.CodeParamsError, "file is required")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	created, skipped, err := a.xlsxSvc.ImportFromXlsx(c.Request.Context(), projectID, user.ID, file)
 	if err != nil {

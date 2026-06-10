@@ -42,7 +42,7 @@ func (s *XlsxService) ExportToXlsx(ctx context.Context, projectID uint, w io.Wri
 	}
 
 	f := excelize.NewFile()
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sheet := "测试用例"
 	index, _ := f.NewSheet(sheet)
 	f.SetActiveSheet(index)
@@ -119,7 +119,7 @@ func (s *XlsxService) ExportReportToXlsx(ctx context.Context, projectID uint, fi
 	}
 
 	f := excelize.NewFile()
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sheet := "用例报表"
 	index, _ := f.NewSheet(sheet)
 	f.SetActiveSheet(index)
@@ -202,7 +202,7 @@ func (s *XlsxService) ImportFromXlsx(ctx context.Context, projectID, userID uint
 	if err != nil {
 		return 0, 0, fmt.Errorf("open xlsx: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// 读取第一个 sheet
 	sheets := f.GetSheetList()

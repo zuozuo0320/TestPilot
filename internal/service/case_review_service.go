@@ -337,9 +337,15 @@ func (s *CaseReviewService) DeleteReview(ctx context.Context, projectID, reviewI
 	}
 
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
-		s.reviewRepo.DeleteReviewersByReviewID(ctx, tx, reviewID)
-		s.reviewRepo.DeleteItemsByReviewID(ctx, tx, reviewID)
-		s.recordRepo.DeleteByReviewID(ctx, tx, reviewID)
+		if err := s.reviewRepo.DeleteReviewersByReviewID(ctx, tx, reviewID); err != nil {
+			return err
+		}
+		if err := s.reviewRepo.DeleteItemsByReviewID(ctx, tx, reviewID); err != nil {
+			return err
+		}
+		if err := s.recordRepo.DeleteByReviewID(ctx, tx, reviewID); err != nil {
+			return err
+		}
 		if s.attachmentRepo != nil {
 			if delErr := s.attachmentRepo.DeleteByReviewID(ctx, tx, reviewID); delErr != nil {
 				return delErr
@@ -548,7 +554,9 @@ func (s *CaseReviewService) UnlinkItems(ctx context.Context, projectID, reviewID
 	}
 
 	return s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
-		s.reviewRepo.DeleteReviewersByItemIDs(ctx, tx, itemIDs)
+		if err := s.reviewRepo.DeleteReviewersByItemIDs(ctx, tx, itemIDs); err != nil {
+			return err
+		}
 		if s.attachmentRepo != nil {
 			if err := s.attachmentRepo.DeleteByItemIDs(ctx, tx, itemIDs); err != nil {
 				return err

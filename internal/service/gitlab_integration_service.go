@@ -748,7 +748,7 @@ func (s *GitLabIntegrationService) downloadGitLabImage(ctx context.Context, inte
 	if err != nil {
 		return nil, fmt.Errorf("下载图片失败")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("下载图片返回 %d", resp.StatusCode)
 	}
@@ -847,15 +847,15 @@ func (s *GitLabIntegrationService) callExecutorAnalyzeImages(ctx context.Context
 	}
 	resp, err := s.executorClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Executor 不可用")
+		return nil, fmt.Errorf("executor 不可用")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if readErr != nil {
 		return nil, fmt.Errorf("读取 Executor 响应失败")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Executor 返回 %d", resp.StatusCode)
+		return nil, fmt.Errorf("executor 返回 %d", resp.StatusCode)
 	}
 	var decoded struct {
 		Status string                    `json:"status"`
@@ -869,7 +869,7 @@ func (s *GitLabIntegrationService) callExecutorAnalyzeImages(ctx context.Context
 		if decoded.Error != "" {
 			return nil, fmt.Errorf("%s", decoded.Error)
 		}
-		return nil, fmt.Errorf("Executor 图片分析失败")
+		return nil, fmt.Errorf("executor 图片分析失败")
 	}
 	return decoded.Images, nil
 }

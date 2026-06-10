@@ -1,10 +1,11 @@
 package execution
 
 import (
+	crand "crypto/rand"
 	"fmt"
 	"log/slog"
-	"math/rand"
-	"time"
+	"math/big"
+	"strconv"
 
 	"testpilot/internal/model"
 )
@@ -28,12 +29,11 @@ func NewMockExecutor(logger *slog.Logger, failRate float64) *MockExecutor {
 }
 
 func (m *MockExecutor) RunScript(script model.Script) ScriptExecution {
-	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(script.ID)))
 	status := "passed"
-	if rng.Float64() < m.failRate {
+	if float64(secureRandomInt(10000))/10000 < m.failRate {
 		status = "failed"
 	}
-	duration := 300 + rng.Intn(2200)
+	duration := 300 + secureRandomInt(2200)
 	output := fmt.Sprintf("[mock-cypress] script=%s path=%s status=%s duration_ms=%d", script.Name, script.Path, status, duration)
 
 	m.logger.Info("script executed", "script_id", script.ID, "script_name", script.Name, "status", status)
@@ -43,4 +43,19 @@ func (m *MockExecutor) RunScript(script model.Script) ScriptExecution {
 		Output:     output,
 		DurationMS: duration,
 	}
+}
+
+func secureRandomInt(max int) int {
+	if max <= 0 {
+		return 0
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0
+	}
+	value, err := strconv.Atoi(n.String())
+	if err != nil {
+		return 0
+	}
+	return value
 }

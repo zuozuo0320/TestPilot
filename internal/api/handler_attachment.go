@@ -29,7 +29,7 @@ func (a *API) uploadAttachment(c *gin.Context) {
 		response.Error(c, 400, service.CodeParamsError, "no file provided")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	att, err := a.attachmentSvc.Upload(
 		testcaseID, user.ID,

@@ -370,7 +370,7 @@ func (s *RequirementDocService) DispatchParse(ctx context.Context, doc *model.Re
 		s.logger.Error("派发文档解析失败", "error", err, "doc_id", doc.ID)
 		return fmt.Errorf("dispatch parse: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("executor dispatch status: %d", resp.StatusCode)

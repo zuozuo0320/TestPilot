@@ -188,6 +188,10 @@ func main() {
 	caseHistoryRepo := repository.NewCaseHistoryRepo(db)
 	caseRelationRepo := repository.NewCaseRelationRepo(db)
 	aiScriptRepo := repository.NewAIScriptRepo(db)
+	aiFlowAssetRepo := repository.NewAIFlowAssetRepo(db)
+	aiAssertionAssetRepo := repository.NewAIAssertionAssetRepo(db)
+	aiScenarioCompositionRepo := repository.NewAIScenarioCompositionRepo(db)
+	aiAssetReferenceRepo := repository.NewAIAssetReferenceRepo(db)
 	caseReviewRepo := repository.NewCaseReviewRepo(db)
 	caseReviewRecordRepo := repository.NewCaseReviewRecordRepo(db)
 	caseReviewAttachmentRepo := repository.NewCaseReviewAttachmentRepo(db)
@@ -221,6 +225,9 @@ func main() {
 	xlsxSvc := service.NewXlsxService(testCaseRepo, tagRepo)
 	aiModelConfigSvc := service.NewAIModelConfigService(aiModelConfigRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, logger)
 	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, aiModelConfigSvc, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
+	aiFlowAssetSvc := service.NewAIFlowAssetService(logger, aiFlowAssetRepo, aiAssetReferenceRepo, aiScriptRepo, projectRepo, userRepo, txMgr)
+	aiAssertionAssetSvc := service.NewAIAssertionAssetService(logger, aiAssertionAssetRepo, aiAssetReferenceRepo, projectRepo, userRepo, txMgr)
+	aiScenarioCompositionSvc := service.NewAIScenarioCompositionService(logger, aiScenarioCompositionRepo, aiFlowAssetRepo, aiAssertionAssetRepo, aiAssetReferenceRepo, aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey)
 	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, userRepo, projectRepo, caseReviewAttachmentRepo, txMgr, logger)
 	caseReviewSubmitSvc := service.NewCaseReviewSubmitService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, txMgr, logger)
 	caseReviewAttachmentSvc := service.NewCaseReviewAttachmentService(caseReviewAttachmentRepo, caseReviewRepo, "./uploads")
@@ -239,38 +246,41 @@ func main() {
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{
-		Logger:                      logger,
-		AuthService:                 authSvc,
-		UserService:                 userSvc,
-		RoleService:                 roleSvc,
-		ProjectService:              projectSvc,
-		TestCaseService:             testCaseSvc,
-		ProfileService:              profileSvc,
-		ExecutionService:            executionSvc,
-		DefectService:               defectSvc,
-		RequirementService:          requirementSvc,
-		ScriptService:               scriptSvc,
-		OverviewService:             overviewSvc,
-		AuditService:                auditSvc,
-		ModuleService:               moduleSvc,
-		AttachmentService:           attachmentSvc,
-		CaseHistoryRepo:             caseHistoryRepo,
-		CaseRelationRepo:            caseRelationRepo,
-		XlsxService:                 xlsxSvc,
-		AIScriptService:             aiScriptSvc,
-		CaseReviewService:           caseReviewSvc,
-		CaseReviewSubmitService:     caseReviewSubmitSvc,
-		CaseReviewAttachmentService: caseReviewAttachmentSvc,
-		CaseReviewRuleService:       caseReviewRuleSvc,
-		CaseReviewDefectService:     caseReviewDefectSvc,
-		TagService:                  tagSvc,
-		AIModelConfigService:        aiModelConfigSvc,
-		ReqDocService:               reqDocSvc,
-		ReqGenTaskService:           reqGenTaskSvc,
-		GitLabIntegrationService:    gitLabIntegrationSvc,
-		AISkillService:              aiSkillSvc,
-		ExecutorURL:                 cfg.ExecutorURL,
-		ExecutorAPIKey:              cfg.ExecutorAPIKey,
+		Logger:                       logger,
+		AuthService:                  authSvc,
+		UserService:                  userSvc,
+		RoleService:                  roleSvc,
+		ProjectService:               projectSvc,
+		TestCaseService:              testCaseSvc,
+		ProfileService:               profileSvc,
+		ExecutionService:             executionSvc,
+		DefectService:                defectSvc,
+		RequirementService:           requirementSvc,
+		ScriptService:                scriptSvc,
+		OverviewService:              overviewSvc,
+		AuditService:                 auditSvc,
+		ModuleService:                moduleSvc,
+		AttachmentService:            attachmentSvc,
+		CaseHistoryRepo:              caseHistoryRepo,
+		CaseRelationRepo:             caseRelationRepo,
+		XlsxService:                  xlsxSvc,
+		AIScriptService:              aiScriptSvc,
+		AIFlowAssetService:           aiFlowAssetSvc,
+		AIAssertionAssetService:      aiAssertionAssetSvc,
+		AIScenarioCompositionService: aiScenarioCompositionSvc,
+		CaseReviewService:            caseReviewSvc,
+		CaseReviewSubmitService:      caseReviewSubmitSvc,
+		CaseReviewAttachmentService:  caseReviewAttachmentSvc,
+		CaseReviewRuleService:        caseReviewRuleSvc,
+		CaseReviewDefectService:      caseReviewDefectSvc,
+		TagService:                   tagSvc,
+		AIModelConfigService:         aiModelConfigSvc,
+		ReqDocService:                reqDocSvc,
+		ReqGenTaskService:            reqGenTaskSvc,
+		GitLabIntegrationService:     gitLabIntegrationSvc,
+		AISkillService:               aiSkillSvc,
+		ExecutorURL:                  cfg.ExecutorURL,
+		ExecutorAPIKey:               cfg.ExecutorAPIKey,
 	}, cfg.CORSAllowOrigins)
 
 	server := &http.Server{

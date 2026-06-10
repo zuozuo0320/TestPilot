@@ -4,7 +4,6 @@ package service
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -22,7 +21,6 @@ type AttachmentService struct {
 
 // NewAttachmentService 创建附件服务
 func NewAttachmentService(repo *repository.AttachmentRepo, uploadDir string) *AttachmentService {
-	os.MkdirAll(uploadDir, 0755)
 	return &AttachmentService{attachRepo: repo, uploadDir: uploadDir}
 }
 
@@ -35,16 +33,7 @@ func (s *AttachmentService) Upload(testCaseID uint, userID uint, fileName string
 	// Generate unique file path
 	ext := filepath.Ext(fileName)
 	storedName := fmt.Sprintf("%d_%d_%d%s", testCaseID, userID, time.Now().UnixMilli(), ext)
-	fullPath := filepath.Join(s.uploadDir, storedName)
-
-	dst, err := os.Create(fullPath)
-	if err != nil {
-		return nil, ErrInternal(CodeInternal, err)
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, reader); err != nil {
-		os.Remove(fullPath)
+	if err := saveReaderUnderRoot(s.uploadDir, storedName, reader); err != nil {
 		return nil, ErrInternal(CodeInternal, err)
 	}
 
@@ -57,7 +46,7 @@ func (s *AttachmentService) Upload(testCaseID uint, userID uint, fileName string
 		CreatedBy:  userID,
 	}
 	if err := s.attachRepo.Create(attachment); err != nil {
-		os.Remove(fullPath)
+		_ = removeUnderRoot(s.uploadDir, storedName)
 		return nil, ErrInternal(CodeInternal, err)
 	}
 	return attachment, nil
@@ -75,8 +64,9 @@ func (s *AttachmentService) Delete(id uint) error {
 		return ErrNotFound(CodeNotFound, "attachment not found")
 	}
 	// Remove file
-	fullPath := filepath.Join(s.uploadDir, att.FilePath)
-	os.Remove(fullPath)
+	if err := removeUnderRoot(s.uploadDir, att.FilePath); err != nil {
+		return ErrInternal(CodeInternal, err)
+	}
 
 	return s.attachRepo.Delete(id)
 }

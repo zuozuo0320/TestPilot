@@ -39,9 +39,9 @@ const (
 	ProjectQualityReasonLatestRunPassRateGE95    = "latest_run_pass_rate_ge_95"
 	ProjectQualityReasonLatestRunPassRate80To95  = "latest_run_pass_rate_between_80_95"
 	ProjectQualityReasonLatestRunPassRateBelow80 = "latest_run_pass_rate_lt_80"
-	ProjectQualityReasonCasePassRateGE95         = "case_exec_pass_rate_ge_95"
-	ProjectQualityReasonCasePassRate80To95       = "case_exec_pass_rate_between_80_95"
-	ProjectQualityReasonCasePassRateBelow80      = "case_exec_pass_rate_lt_80"
+	ProjectQualityReasonCasePassRateGE95         = "case_exec_pass_rate_ge_95"         // #nosec G101 -- pass_rate 是通过率枚举，不是密码凭据。
+	ProjectQualityReasonCasePassRate80To95       = "case_exec_pass_rate_between_80_95" // #nosec G101 -- pass_rate 是通过率枚举，不是密码凭据。
+	ProjectQualityReasonCasePassRateBelow80      = "case_exec_pass_rate_lt_80"         // #nosec G101 -- pass_rate 是通过率枚举，不是密码凭据。
 
 	// ---- 测试用例状态 ----
 	TestCaseStatusDraft     = "draft"     // 草稿
@@ -633,6 +633,15 @@ func AutoMigrate(db *gorm.DB) error {
 		&AIScriptTrace{},
 		&AIScriptEvidence{},
 		&AIScriptOperationLog{},
+		&AIFlowAsset{},
+		&AIFlowAssetVersion{},
+		&AIAssertionAsset{},
+		&AIScenarioComposition{},
+		&AIScenarioStep{},
+		&AIScenarioCompositionVersion{},
+		&AIAssetReference{},
+		&AICompositionValidation{},
+		&AICompositionAssertionResult{},
 
 		// V1 多项目工程化
 		&AIScriptFile{},

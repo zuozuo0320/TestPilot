@@ -35,10 +35,6 @@ type triggerValidationRequest struct {
 	Remark          string `json:"remark" binding:"max=255"`
 }
 
-type confirmScriptRequest struct {
-	CommentText string `json:"comment_text" binding:"max=500"`
-}
-
 type discardScriptRequest struct {
 	Reason string `json:"reason" binding:"required,max=255"`
 }

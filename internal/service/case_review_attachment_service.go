@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -26,7 +25,6 @@ func NewCaseReviewAttachmentService(
 	reviewRepo repository.CaseReviewRepository,
 	uploadDir string,
 ) *CaseReviewAttachmentService {
-	os.MkdirAll(uploadDir, 0755)
 	return &CaseReviewAttachmentService{
 		attRepo:    attRepo,
 		reviewRepo: reviewRepo,
@@ -64,16 +62,7 @@ func (s *CaseReviewAttachmentService) Upload(ctx context.Context, input UploadRe
 	// 2. 写文件
 	ext := filepath.Ext(input.FileName)
 	storedName := fmt.Sprintf("review_%d_%d_%d_%d%s", input.ReviewID, input.ReviewItemID, input.UploaderID, time.Now().UnixMilli(), ext)
-	fullPath := filepath.Join(s.uploadDir, storedName)
-
-	dst, err := os.Create(fullPath)
-	if err != nil {
-		return nil, ErrInternal(CodeInternal, err)
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, input.Reader); err != nil {
-		os.Remove(fullPath)
+	if err := saveReaderUnderRoot(s.uploadDir, storedName, input.Reader); err != nil {
 		return nil, ErrInternal(CodeInternal, err)
 	}
 
@@ -91,7 +80,7 @@ func (s *CaseReviewAttachmentService) Upload(ctx context.Context, input UploadRe
 		CreatedBy:    input.UploaderID,
 	}
 	if err := s.attRepo.Create(ctx, nil, att); err != nil {
-		os.Remove(fullPath)
+		_ = removeUnderRoot(s.uploadDir, storedName)
 		return nil, ErrInternal(CodeInternal, err)
 	}
 	return att, nil
@@ -124,7 +113,9 @@ func (s *CaseReviewAttachmentService) Delete(ctx context.Context, projectID, id 
 		return ErrBadRequest(CodeReviewItemMismatch, "附件不属于当前项目")
 	}
 	// 删除文件，忽略不存在错误
-	os.Remove(filepath.Join(s.uploadDir, att.FilePath))
+	if err := removeUnderRoot(s.uploadDir, att.FilePath); err != nil {
+		return ErrInternal(CodeInternal, err)
+	}
 	return s.attRepo.Delete(ctx, nil, id)
 }
 

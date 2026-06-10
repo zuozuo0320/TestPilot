@@ -2,6 +2,10 @@
 package service
 
 import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
 	"regexp"
 	"strings"
 
@@ -9,6 +13,51 @@ import (
 )
 
 var phonePattern = regexp.MustCompile(`^1\d{10}$`)
+
+const serviceUploadDirPerm = 0o750
+
+// saveReaderUnderRoot 将上传内容保存到指定目录内，禁止通过文件名逃逸目录边界。
+func saveReaderUnderRoot(dir, filename string, reader io.Reader) error {
+	if err := os.MkdirAll(dir, serviceUploadDirPerm); err != nil {
+		return fmt.Errorf("创建上传目录失败: %w", err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("打开上传目录失败: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	dst, err := root.Create(filename)
+	if err != nil {
+		return fmt.Errorf("创建上传文件失败: %w", err)
+	}
+	if _, err := io.Copy(dst, reader); err != nil {
+		_ = dst.Close()
+		_ = root.Remove(filename)
+		return fmt.Errorf("写入上传文件失败: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = root.Remove(filename)
+		return fmt.Errorf("关闭上传文件失败: %w", err)
+	}
+	return nil
+}
+
+// removeUnderRoot 删除指定上传目录内的文件；文件不存在时视为已清理。
+func removeUnderRoot(dir, filename string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("打开上传目录失败: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.Remove(filename); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("删除上传文件失败: %w", err)
+	}
+	return nil
+}
 
 // isValidPersonName 校验姓名
 func isValidPersonName(name string) bool {

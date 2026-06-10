@@ -16,9 +16,7 @@ package api
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -76,7 +74,7 @@ func (a *API) uploadRequirementDoc(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, service.CodeParamsError, "请选择要上传的文件")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	title := c.PostForm("title")
 	if title == "" {
@@ -95,28 +93,9 @@ func (a *API) uploadRequirementDoc(c *gin.Context) {
 	safeFilename := sanitizeUploadFilename(header.Filename, ext)
 	saveName := fmt.Sprintf("%d_%d_%s", projectID, time.Now().UnixMilli(), safeFilename)
 	saveDir := filepath.Join("uploads", "requirement-docs", fmt.Sprintf("%d", projectID))
-	if err := os.MkdirAll(saveDir, 0o755); err != nil {
-		a.logger.Error("创建上传目录失败", "error", err, "dir", saveDir)
-		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "文件保存失败")
-		return
-	}
 	savePath := filepath.Join(saveDir, saveName)
-	dst, err := os.Create(savePath)
-	if err != nil {
-		a.logger.Error("创建上传文件失败", "error", err, "path", savePath)
-		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "文件保存失败")
-		return
-	}
-	if _, err := io.Copy(dst, file); err != nil {
-		_ = dst.Close()
-		_ = os.Remove(savePath)
-		a.logger.Error("写入上传文件失败", "error", err, "path", savePath)
-		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "文件保存失败")
-		return
-	}
-	if err := dst.Close(); err != nil {
-		_ = os.Remove(savePath)
-		a.logger.Error("关闭上传文件失败", "error", err, "path", savePath)
+	if err := saveUploadedFileUnderRoot(saveDir, saveName, file); err != nil {
+		a.logger.Error("保存需求文档失败", "error", err, "path", savePath)
 		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "文件保存失败")
 		return
 	}

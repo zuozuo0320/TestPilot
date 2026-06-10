@@ -261,7 +261,7 @@ func (s *AIModelConfigService) TestConnection(ctx context.Context, provider, api
 	if err != nil {
 		return nil, fmt.Errorf("无法连接 executor: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result map[string]string
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -304,7 +304,7 @@ func (s *AIModelConfigService) ListModels(ctx context.Context, input ListAIModel
 	if err != nil {
 		return nil, fmt.Errorf("无法连接 executor: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -355,7 +355,7 @@ func (s *AIModelConfigService) syncToExecutor(cfg *model.AIModelConfig) error {
 	if err != nil {
 		return fmt.Errorf("请求 executor 失败: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("executor 返回 %d", resp.StatusCode)
 	}

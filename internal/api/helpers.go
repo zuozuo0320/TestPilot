@@ -4,7 +4,9 @@ package api
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -16,32 +18,62 @@ import (
 	"testpilot/internal/service"
 )
 
+const uploadDirPerm = 0o750
+
+func saveUploadedFileUnderRoot(dir, filename string, reader io.Reader) error {
+	if err := os.MkdirAll(dir, uploadDirPerm); err != nil {
+		return fmt.Errorf("创建上传目录失败: %w", err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("打开上传目录失败: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	dst, err := root.Create(filename)
+	if err != nil {
+		return fmt.Errorf("创建上传文件失败: %w", err)
+	}
+	if _, err := io.Copy(dst, reader); err != nil {
+		_ = dst.Close()
+		_ = root.Remove(filename)
+		return fmt.Errorf("写入上传文件失败: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = root.Remove(filename)
+		return fmt.Errorf("关闭上传文件失败: %w", err)
+	}
+	return nil
+}
+
 // bindJSON 绑定 JSON 并格式化校验错误
 func bindJSON(c *gin.Context, obj any) bool {
 	if err := c.ShouldBindJSON(obj); err != nil {
 		var ve validator.ValidationErrors
 		if errors.As(err, &ve) {
-			msgs := make([]string, 0, len(ve))
+			fieldErrors := make([]response.FieldError, 0, len(ve))
 			for _, fe := range ve {
 				field := strings.ToLower(fe.Field())
+				message := ""
 				switch fe.Tag() {
 				case "required":
-					msgs = append(msgs, fmt.Sprintf("%s is required", field))
+					message = "不能为空"
 				case "email":
-					msgs = append(msgs, fmt.Sprintf("%s must be a valid email", field))
+					message = "邮箱格式不正确"
 				case "min":
-					msgs = append(msgs, fmt.Sprintf("%s: min=%s", field, fe.Param()))
+					message = fmt.Sprintf("最小值或最小长度为 %s", fe.Param())
 				case "max":
-					msgs = append(msgs, fmt.Sprintf("%s: max=%s", field, fe.Param()))
+					message = fmt.Sprintf("最大值或最大长度为 %s", fe.Param())
 				case "oneof":
-					msgs = append(msgs, fmt.Sprintf("%s must be one of [%s]", field, fe.Param()))
+					message = fmt.Sprintf("必须是以下值之一：%s", fe.Param())
 				case "url":
-					msgs = append(msgs, fmt.Sprintf("%s must be a valid URL", field))
+					message = "URL 格式不正确"
 				default:
-					msgs = append(msgs, fmt.Sprintf("%s: %s=%s", field, fe.Tag(), fe.Param()))
+					message = fmt.Sprintf("校验失败：%s=%s", fe.Tag(), fe.Param())
 				}
+				fieldErrors = append(fieldErrors, response.FieldError{Field: field, Message: message})
 			}
-			response.Error(c, http.StatusBadRequest, service.CodeParamsError, strings.Join(msgs, "; "))
+			response.ValidationError(c, fieldErrors)
 		} else {
 			response.Error(c, http.StatusBadRequest, service.CodeParamsError, err.Error())
 		}

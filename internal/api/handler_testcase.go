@@ -753,7 +753,7 @@ func (a *API) analyzeTestCase(c *gin.Context) {
 		response.Error(c, 502, 502000, fmt.Sprintf("AI 服务请求失败: %v", err))
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {

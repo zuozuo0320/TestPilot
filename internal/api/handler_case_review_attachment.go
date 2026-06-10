@@ -48,7 +48,7 @@ func (a *API) uploadReviewAttachment(c *gin.Context) {
 		response.Error(c, 400, service.CodeParamsError, "no file provided")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	att, err := a.caseReviewAttachmentSvc.Upload(c.Request.Context(), service.UploadReviewAttachmentInput{
 		ProjectID:    projectID,

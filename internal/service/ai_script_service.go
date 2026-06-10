@@ -385,14 +385,13 @@ func (s *AIScriptService) ExecuteTask(ctx context.Context, userID, taskID uint) 
 	}
 
 	// 异步调用 Python 执行服务
-	go s.callExecutorGenerate(taskID, task.ScenarioDesc, task.StartURL, task.AccountRef, userID)
+	go s.callExecutorGenerate(context.WithoutCancel(ctx), taskID, task.ScenarioDesc, task.StartURL, task.AccountRef, userID)
 
 	return nil
 }
 
 // callExecutorGenerate 调用 Python 执行服务生成脚本（在 goroutine 中运行）
-func (s *AIScriptService) callExecutorGenerate(taskID uint, scenarioDesc, startURL, accountRef string, userID uint) {
-	ctx := context.Background()
+func (s *AIScriptService) callExecutorGenerate(ctx context.Context, taskID uint, scenarioDesc, startURL, accountRef string, userID uint) {
 	log := s.logger.With("task_id", taskID, "action", "generate")
 	if err := s.syncActiveModelForLLM(ctx, log); err != nil {
 		_ = s.repo.UpdateTaskStatus(ctx, taskID, model.AITaskStatusGenerateFailed)
@@ -717,14 +716,13 @@ func (s *AIScriptService) TriggerValidation(ctx context.Context, userID, taskID,
 	}
 
 	// 异步调用 Python 执行服务
-	go s.callExecutorValidate(taskID, scriptVersionID, validation.ID, version.ScriptContent, task.StartURL)
+	go s.callExecutorValidate(context.WithoutCancel(ctx), taskID, scriptVersionID, validation.ID, version.ScriptContent, task.StartURL)
 
 	return validation, nil
 }
 
 // callExecutorValidate 调用 Python 执行服务回放验证（在 goroutine 中运行）
-func (s *AIScriptService) callExecutorValidate(taskID, scriptVersionID, validationID uint, scriptContent, startURL string) {
-	ctx := context.Background()
+func (s *AIScriptService) callExecutorValidate(ctx context.Context, taskID, scriptVersionID, validationID uint, scriptContent, startURL string) {
 	log := s.logger.With("task_id", taskID, "script_version_id", scriptVersionID, "validation_id", validationID, "action", "validate")
 
 	reqBody := ExecutorValidateRequest{
@@ -935,7 +933,7 @@ func (s *AIScriptService) callExecutorHTTP(ctx context.Context, path string, req
 	if err != nil {
 		return nil, fmt.Errorf("http call: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 校验 HTTP 响应码
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1562,7 +1560,7 @@ func (s *AIScriptService) FinishRecording(ctx context.Context, userID, taskID ui
 
 	// 如果需要触发 AI 重构，可在此异步调用 executor/refactor
 	if triggerAIRefactor {
-		go s.callExecutorRefactor(taskID, recordingID, rawScript, userID)
+		go s.callExecutorRefactor(context.WithoutCancel(ctx), taskID, recordingID, rawScript, userID)
 	}
 	return nil
 }
@@ -1645,13 +1643,12 @@ func (s *AIScriptService) RegenerateFromLatestRecording(ctx context.Context, use
 		return ErrInternal(CodeInternal, err)
 	}
 
-	go s.callExecutorRefactor(taskID, session.ID, rawScript, userID)
+	go s.callExecutorRefactor(context.WithoutCancel(ctx), taskID, session.ID, rawScript, userID)
 	return nil
 }
 
 // callExecutorRefactor 异步调用执行服务进行 AI 重构（录制增强模式）
-func (s *AIScriptService) callExecutorRefactor(taskID, recordingID uint, rawScript string, userID uint) {
-	ctx := context.Background()
+func (s *AIScriptService) callExecutorRefactor(ctx context.Context, taskID, recordingID uint, rawScript string, userID uint) {
 	s.logger.Info("Calling executor refactor", "task_id", taskID, "recording_id", recordingID)
 
 	// 获取任务信息，传入场景描述和起始地址

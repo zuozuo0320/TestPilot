@@ -158,11 +158,12 @@ func (s *CaseReviewSubmitService) SubmitReview(ctx context.Context, projectID, r
 
 		// 7. 如已形成最终结果，回写主表
 		tcStatus, tcReviewResult := mapResultToTestCase(aggregatedResult)
-		if reviewStatus == model.ReviewItemStatusCompleted {
+		switch reviewStatus {
+		case model.ReviewItemStatusCompleted:
 			if err := s.writebackTestCase(ctx, tx, item.TestCaseID, projectID, tcStatus, tcReviewResult); err != nil {
 				return err
 			}
-		} else if reviewStatus == model.ReviewItemStatusReviewing {
+		case model.ReviewItemStatusReviewing:
 			if err := s.writebackTestCase(ctx, tx, item.TestCaseID, projectID, model.TestCaseStatusPending, model.CaseReviewResultPending); err != nil {
 				return err
 			}

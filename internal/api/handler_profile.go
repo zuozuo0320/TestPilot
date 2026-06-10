@@ -3,9 +3,7 @@ package api
 
 import (
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -42,7 +40,7 @@ func (a *API) uploadMyAvatar(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, service.CodeParamsError, "avatar file is required")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".gif" && ext != ".webp" {
@@ -55,15 +53,9 @@ func (a *API) uploadMyAvatar(c *gin.Context) {
 	}
 
 	dir := "uploads/avatars"
-	os.MkdirAll(dir, 0o755)
 	filename := fmt.Sprintf("%d_%d%s", user.ID, time.Now().UnixMilli(), ext)
-	dst, err := os.Create(filepath.Join(dir, filename))
-	if err != nil {
-		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "failed to save file")
-		return
-	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, file); err != nil {
+	if err := saveUploadedFileUnderRoot(dir, filename, file); err != nil {
+		a.logger.Error("保存头像失败", "error", err, "dir", dir)
 		response.Error(c, http.StatusInternalServerError, service.CodeInternal, "failed to save file")
 		return
 	}

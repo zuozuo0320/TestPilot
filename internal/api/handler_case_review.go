@@ -40,10 +40,6 @@ type updateReviewRequest struct {
 	Description        string  `json:"description" binding:"omitempty,max=500"`
 }
 
-type closeReviewRequest struct {
-	Reason string `json:"reason"`
-}
-
 type copyReviewRequest struct {
 	Name           string `json:"name"`
 	IncludeCases   bool   `json:"include_cases"`

@@ -15,7 +15,14 @@ type Result struct {
 	Code      int    `json:"code"`                 // 6 位业务错误码
 	Message   string `json:"message"`              // 提示消息
 	Data      any    `json:"data,omitempty"`       // 业务数据
+	Errors    any    `json:"errors,omitempty"`     // 字段级校验错误
 	RequestID string `json:"request_id,omitempty"` // 请求追踪 ID
+}
+
+// FieldError 字段级参数校验错误。
+type FieldError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
 }
 
 // PageResult 分页响应结构
@@ -62,6 +69,17 @@ func Page(c *gin.Context, data any, total int64, page, pageSize int) {
 func Error(c *gin.Context, httpStatus int, bizCode int, message string) {
 	c.JSON(httpStatus, Result{
 		Code: bizCode, Message: message,
+		RequestID: c.GetString("request_id"),
+	})
+}
+
+// ValidationError 返回字段级参数校验错误。
+func ValidationError(c *gin.Context, errors []FieldError) {
+	c.JSON(http.StatusBadRequest, Result{
+		Code:      service.CodeParamsError,
+		Message:   "参数校验失败",
+		Data:      nil,
+		Errors:    errors,
 		RequestID: c.GetString("request_id"),
 	})
 }
