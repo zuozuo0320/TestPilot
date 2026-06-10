@@ -2422,7 +2422,7 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 		b.WriteString("  },\n")
 	}
 	b.WriteString("}\n\n")
-	fmt.Fprintf(&b, "test('%s', async ({ page }) => {\n", escapeSingleQuote(composition.ScenarioName))
+	fmt.Fprintf(&b, "test(%s, async ({ page }) => {\n", tsString(composition.ScenarioName))
 	b.WriteString("  const ctx: ScenarioContext = {\n")
 	b.WriteString("    page,\n")
 	b.WriteString("    outputs: {},\n")
@@ -3261,10 +3261,6 @@ func sortedUintKeys(values map[uint]string) []uint {
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	return keys
-}
-
-func escapeSingleQuote(value string) string {
-	return strings.ReplaceAll(value, "'", "\\'")
 }
 
 func indentCodeBlock(code string, prefix string) string {

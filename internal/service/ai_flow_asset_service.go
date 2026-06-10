@@ -294,9 +294,8 @@ func (s *AIFlowAssetService) Publish(ctx context.Context, userID, projectID, flo
 	var flowVersion model.AIFlowAssetVersion
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.flowRepo.UpdateFields(ctx, tx, flow.ID, map[string]interface{}{
-			"status":                   model.AIFlowAssetStatusPublished,
-			"latest_validation_status": model.AIValidationStatusPassed,
-			"updated_by":               userID,
+			"status":     model.AIFlowAssetStatusPublished,
+			"updated_by": userID,
 		}); err != nil {
 			return err
 		}
@@ -311,7 +310,7 @@ func (s *AIFlowAssetService) Publish(ctx context.Context, userID, projectID, flo
 			ChangeSummary:    strings.TrimSpace(changeSummary),
 			SourceTaskID:     flow.SourceTaskID,
 			SourceVersionID:  flow.SourceVersionID,
-			ValidationStatus: model.AIValidationStatusPassed,
+			ValidationStatus: flow.LatestValidationStatus,
 			CreatedBy:        userID,
 		}
 		if err := s.flowRepo.CreateVersion(ctx, tx, &flowVersion); err != nil {

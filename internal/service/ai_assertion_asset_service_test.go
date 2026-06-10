@@ -94,3 +94,55 @@ func TestAIAssertionAssetServiceDeleteRejectsPublishedOrReferenced(t *testing.T)
 		t.Fatalf("expected conflict BizError, got %T %[1]v", err)
 	}
 }
+
+func TestAIAssertionAssetServicePublishCustomCode(t *testing.T) {
+	svc, _, manager, project := newTestAIAssertionAssetService(t)
+
+	tests := []struct {
+		name           string
+		key            string
+		implementation []byte
+		wantErr        bool
+	}{
+		{
+			name:           "缺少代码的自定义断言不可发布",
+			key:            "custom_code_empty",
+			implementation: []byte(`{}`),
+			wantErr:        true,
+		},
+		{
+			name:           "提供代码的自定义断言可发布",
+			key:            "custom_code_ok",
+			implementation: []byte(`{"code":"await expect(page).toHaveTitle(/TestPilot/)"}`),
+			wantErr:        false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := validSaveAssertionInput(project.ID, tt.key)
+			input.AssertionType = model.AIAssertionTypeCustomCode
+			input.Implementation = tt.implementation
+			assertion, err := svc.Create(t.Context(), manager.ID, input)
+			if err != nil {
+				t.Fatalf("create assertion draft: %v", err)
+			}
+			published, err := svc.Publish(t.Context(), manager.ID, project.ID, assertion.ID)
+			if tt.wantErr {
+				var bizErr *BizError
+				if !errors.As(err, &bizErr) || bizErr.Code != CodeConflict {
+					t.Fatalf("expected conflict BizError, got %T %[1]v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("publish assertion: %v", err)
+			}
+			if published.Status != model.AIAssertionAssetStatusPublished {
+				t.Fatalf("unexpected status: %s", published.Status)
+			}
+			if published.LatestValidationStatus != model.AIValidationStatusNotValidated {
+				t.Fatalf("publish should not fake validation status, got %s", published.LatestValidationStatus)
+			}
+		})
+	}
+}
