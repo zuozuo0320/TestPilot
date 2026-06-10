@@ -708,3 +708,211 @@ func TestAIScenarioCompositionServiceAIPlanSkipsFailedAssets(t *testing.T) {
 		t.Fatalf("failed assertion should not be recommended: %+v", result.Steps)
 	}
 }
+
+func TestAIScenarioCompositionServiceGenerateCodeRejectsPartialFlow(t *testing.T) {
+	svc, _, manager, project := newTestAIScenarioCompositionService(t)
+	partialDSL := model.RawJSON(`{
+		"schema_version":"1.0",
+		"generation_steps":[
+			{"action_type":"NAVIGATE","page_url":"${env.BASE_URL}"},
+			{"action_type":"HOVER","locator":"getByRole('button')"}
+		]
+	}`)
+	flow := seedPublishedFlowAssetWithDSL(t, svc.flowRepo, project.ID, manager.ID, "partial_flow", partialDSL)
+
+	composition, err := svc.Create(t.Context(), manager.ID, ScenarioCompositionCreateInput{
+		ProjectID:    project.ID,
+		ScenarioKey:  "partial_flow_scenario",
+		ScenarioName: "引用存量 PARTIAL 资产",
+		Description:  "未显式确认时生成代码必须硬错误",
+	})
+	if err != nil {
+		t.Fatalf("create composition: %v", err)
+	}
+	if _, err := svc.AddStep(t.Context(), manager.ID, composition.ID, ScenarioStepSaveInput{
+		ProjectID: project.ID,
+		StepType:  model.AIScenarioStepTypeFlowCall,
+		StepName:  "引用 PARTIAL 固定场景",
+		RefFlowID: &flow.ID,
+	}); err != nil {
+		t.Fatalf("add flow step: %v", err)
+	}
+
+	_, err = svc.GenerateCode(t.Context(), manager.ID, composition.ID, GenerateCompositionCodeInput{
+		ProjectID: project.ID,
+		Target:    "PLAYWRIGHT",
+	})
+	if err == nil {
+		t.Fatalf("expected generate code to fail for partial flow")
+	}
+	var bizErr *BizError
+	if !errors.As(err, &bizErr) {
+		t.Fatalf("expected BizError, got %T", err)
+	}
+	if bizErr.Code != CodeAICompositionFlowCompileFailed {
+		t.Fatalf("unexpected error code: %d", bizErr.Code)
+	}
+	if !strings.Contains(bizErr.Message, "partial_flow") || !strings.Contains(bizErr.Message, "步骤 2") {
+		t.Fatalf("expected message to locate flow_key and step no, got %q", bizErr.Message)
+	}
+	data, ok := bizErr.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structured data, got %T", bizErr.Data)
+	}
+	if data["flow_key"] != "partial_flow" {
+		t.Fatalf("expected flow_key in data, got %+v", data)
+	}
+
+	result, err := svc.GenerateCode(t.Context(), manager.ID, composition.ID, GenerateCompositionCodeInput{
+		ProjectID:      project.ID,
+		Target:         "PLAYWRIGHT",
+		ConfirmPartial: true,
+	})
+	if err != nil {
+		t.Fatalf("expected confirm_partial generate to succeed, got %v", err)
+	}
+	foundSkipWarning := false
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "已跳过") {
+			foundSkipWarning = true
+		}
+	}
+	if !foundSkipWarning {
+		t.Fatalf("expected skip warning when confirming partial flow, got %+v", result.Warnings)
+	}
+}
+
+func TestCompileAtomicActionTable(t *testing.T) {
+	cases := []struct {
+		name          string
+		action        string
+		params        string
+		wantErr       bool
+		wantFragments []string
+	}{
+		{
+			name:          "select 生成 selectOption",
+			action:        "select",
+			params:        `{"selector":"#city","value":"beijing"}`,
+			wantFragments: []string{"selectOption(String(inputs.value ?? ''))", "{ selected: true }"},
+		},
+		{
+			name:    "select 缺少 selector 报错",
+			action:  "select",
+			params:  `{"value":"beijing"}`,
+			wantErr: true,
+		},
+		{
+			name:          "press 生成 press",
+			action:        "press",
+			params:        `{"selector":"#search","key":"Enter"}`,
+			wantFragments: []string{".press(String(inputs.key ?? inputs.value ?? ''))", "{ pressed: true }"},
+		},
+		{
+			name:    "press 缺少 key 报错",
+			action:  "press",
+			params:  `{"selector":"#search"}`,
+			wantErr: true,
+		},
+		{
+			name:    "press 缺少 selector 报错",
+			action:  "press",
+			params:  `{"key":"Enter"}`,
+			wantErr: true,
+		},
+		{
+			name:          "wait_for 生成定位器等待",
+			action:        "wait_for",
+			params:        `{"selector":"#result","timeout_ms":3000}`,
+			wantFragments: []string{".waitFor({ state: 'visible', timeout: Number(inputs.timeout_ms || 5000) })", "{ waited: true }"},
+		},
+		{
+			name:    "wait_for 缺少 selector 报错",
+			action:  "wait_for",
+			params:  `{"timeout_ms":3000}`,
+			wantErr: true,
+		},
+		{
+			name:    "未知原子操作报错",
+			action:  "hover",
+			params:  `{"selector":"#btn"}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			step := model.AIScenarioStep{
+				AtomicAction:     tc.action,
+				ParamMappingJSON: model.RawJSON(tc.params),
+			}
+			line, err := compileAtomicAction(step, tc.params, "{}", "step_1")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got code:\n%s", line)
+				}
+				var bizErr *BizError
+				if !errors.As(err, &bizErr) || bizErr.Code != CodeParamsError {
+					t.Fatalf("expected params BizError, got %T %[1]v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("compile atomic action: %v", err)
+			}
+			assertContainsAll(t, line, tc.wantFragments)
+		})
+	}
+}
+
+func TestCompileFlowDSLProducesStructuredFailures(t *testing.T) {
+	cases := []struct {
+		name       string
+		dsl        string
+		wantNo     int
+		wantType   string
+		wantReason string
+	}{
+		{
+			name:       "缺少动作类型",
+			dsl:        `{"steps":[{"page_url":"https://example.com"}]}`,
+			wantNo:     1,
+			wantType:   "",
+			wantReason: "缺少动作类型",
+		},
+		{
+			name:       "不支持的类型",
+			dsl:        `{"steps":[{"type":"NAVIGATE","page_url":"x"},{"type":"HOVER"}]}`,
+			wantNo:     2,
+			wantType:   "HOVER",
+			wantReason: "动作类型 HOVER 暂不支持",
+		},
+		{
+			name:       "FLOW_CALL 缺少引用",
+			dsl:        `{"steps":[{"type":"FLOW_CALL"}]}`,
+			wantNo:     1,
+			wantType:   "FLOW_CALL",
+			wantReason: "缺少 flow_key 或 flow_id 引用",
+		},
+		{
+			name:       "非法 JSON",
+			dsl:        `{invalid`,
+			wantNo:     0,
+			wantType:   "",
+			wantReason: "固定场景 DSL 为空或不是合法 JSON",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			failures := dryRunCompileFlowDSL(model.RawJSON(tc.dsl), nil)
+			if len(failures) == 0 {
+				t.Fatalf("expected failures")
+			}
+			failure := failures[len(failures)-1]
+			if failure.StepNo != tc.wantNo || failure.StepType != tc.wantType || failure.Reason != tc.wantReason {
+				t.Fatalf("unexpected failure: %+v", failure)
+			}
+		})
+	}
+}

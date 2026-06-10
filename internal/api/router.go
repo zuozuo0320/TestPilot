@@ -248,6 +248,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	aiScript.PUT("/flows/:flowID", a.updateAIFlowAsset)
 	aiScript.DELETE("/flows/:flowID", a.deleteAIFlowAsset)
 	aiScript.POST("/flows/:flowID/publish", a.publishAIFlowAsset)
+	aiScript.POST("/flows/:flowID/compile-check", a.compileCheckAIFlowAsset)
 	aiScript.POST("/flows/:flowID/archive", a.archiveAIFlowAsset)
 	aiScript.GET("/flows/:flowID/versions", a.listAIFlowAssetVersions)
 	aiScript.GET("/flows/:flowID/references", a.listAIFlowReferences)
