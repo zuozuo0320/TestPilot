@@ -301,6 +301,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	aiScript.POST("/tasks/:taskID/clone", a.cloneTask)
 	aiScript.PUT("/tasks/:taskID/name", a.renameTask)
 	aiScript.POST("/tasks/:taskID/cases/update", a.updateTaskCases)
+	aiScript.GET("/tasks/:taskID/param-suggestions", a.suggestAIFlowParams)
 	aiScript.POST("/tasks/:taskID/publish-flow", a.publishAIFlowAssetFromTask)
 	// 录制
 	aiScript.POST("/tasks/:taskID/recording/start", a.startRecording)

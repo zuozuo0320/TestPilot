@@ -440,6 +440,39 @@ func (a *API) listAIFlowReferences(c *gin.Context) {
 	response.OK(c, refs)
 }
 
+// suggestAIFlowParams 分析录制任务可参数化字段，供发布固定场景时确认入参。
+// @Summary 分析录制任务可参数化字段
+// @Description 按参数抽取原则分析任务当前脚本版本的步骤模型，返回入参建议、env 引用建议与排除项
+// @Tags AIScriptFlow
+// @Produce json
+// @Param taskID path int true "测试智编任务 ID"
+// @Param project_id query int true "项目 ID"
+// @Success 200 {object} response.Response{data=service.FlowParamSuggestionResult}
+// @Failure 403 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Failure 409 {object} response.Response
+// @Router /ai-script/tasks/{taskID}/param-suggestions [get]
+func (a *API) suggestAIFlowParams(c *gin.Context) {
+	user := currentUser(c)
+	projectID, ok := parseProjectIDQuery(c)
+	if !ok {
+		return
+	}
+	if !a.requireProjectAccess(c, user, projectID) {
+		return
+	}
+	taskID, ok := parseUintParam(c, "taskID")
+	if !ok {
+		return
+	}
+	result, err := a.aiFlowAssetSvc.SuggestParamsFromTask(c.Request.Context(), projectID, taskID)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
 // publishAIFlowAssetFromTask 从已验证通过的录制任务发布固定场景。
 // @Summary 从录制任务发布固定场景
 // @Description 将已验证通过的测试智编任务发布为固定场景资产；同一项目下 flow_key 唯一，重复提交返回 409
