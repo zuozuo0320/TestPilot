@@ -411,6 +411,47 @@ func (a *API) generateAIScenarioCode(c *gin.Context) {
 	response.OK(c, result)
 }
 
+type refreshScenarioFlowRefsRequest struct {
+	ProjectID uint   `json:"project_id" binding:"required"`
+	FlowIDs   []uint `json:"flow_ids"`
+}
+
+// refreshAIScenarioFlowRefs 升级编排引用的固定场景版本到最新发布版本。
+// @Summary 升级编排引用版本
+// @Tags AIScriptComposition
+// @Accept json
+// @Produce json
+// @Param compositionID path int true "场景编排 ID"
+// @Param body body refreshScenarioFlowRefsRequest true "升级参数，flow_ids 为空时升级全部过期引用"
+// @Success 200 {object} response.Response{data=model.AIScenarioComposition}
+// @Router /ai-script/compositions/{compositionID}/refresh-flow-refs [post]
+func (a *API) refreshAIScenarioFlowRefs(c *gin.Context) {
+	user := currentUser(c)
+	if !requireRole(c, user, model.GlobalRoleManager, model.GlobalRoleTester, model.GlobalRoleDeveloper) {
+		return
+	}
+	compositionID, ok := parseUintParam(c, "compositionID")
+	if !ok {
+		return
+	}
+	var req refreshScenarioFlowRefsRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	if !a.requireProjectAccess(c, user, req.ProjectID) {
+		return
+	}
+	composition, err := a.aiScenarioCompositionSvc.RefreshFlowRefs(c.Request.Context(), user.ID, compositionID, service.RefreshFlowRefsInput{
+		ProjectID: req.ProjectID,
+		FlowIDs:   req.FlowIDs,
+	})
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, composition)
+}
+
 // manualUpdateAIScenarioCode 保存人工编辑后的编排生成代码。
 // @Summary 保存人工编辑代码
 // @Tags AIScriptComposition

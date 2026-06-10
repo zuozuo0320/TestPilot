@@ -129,14 +129,42 @@ func (s *AIFlowAssetService) dryRunFlowCompile(ctx context.Context, dsl model.Ra
 	return dryRunCompileFlowDSL(dsl, flowKeys)
 }
 
-// fillCompileHealth 计算并填充资产的 compile_health 标记与 dry-run 失败明细（虚拟字段）。
-func (s *AIFlowAssetService) fillCompileHealth(ctx context.Context, flow *model.AIFlowAsset) {
-	flow.CompileFailures = s.dryRunFlowCompile(ctx, flow.DSLJSON)
-	if len(flow.CompileFailures) > 0 {
+// applyCompileHealth 根据 dry-run 失败明细填充 compile_health 标记与落库字段。
+func applyCompileHealth(flow *model.AIFlowAsset, failures []model.FlowCompileFailure) {
+	flow.CompileFailures = failures
+	flow.CompileFailuresJSON = encodeCompileFailures(failures)
+	if len(failures) > 0 {
 		flow.CompileHealth = model.AIFlowCompileHealthPartial
 		return
 	}
 	flow.CompileHealth = model.AIFlowCompileHealthOK
+}
+
+func encodeCompileFailures(failures []model.FlowCompileFailure) model.RawJSON {
+	if failures == nil {
+		failures = []model.FlowCompileFailure{}
+	}
+	return mustRawJSON(failures)
+}
+
+func decodeCompileFailures(data model.RawJSON) []model.FlowCompileFailure {
+	failures := []model.FlowCompileFailure{}
+	if len(data) > 0 {
+		_ = json.Unmarshal(data, &failures)
+	}
+	return failures
+}
+
+// refreshCompileHealth 重新计算 compile_health 并落库缓存，详情/列表读库即可，不再每次实时 dry-run。
+func (s *AIFlowAssetService) refreshCompileHealth(ctx context.Context, flow *model.AIFlowAsset) {
+	applyCompileHealth(flow, s.dryRunFlowCompile(ctx, flow.DSLJSON))
+	if err := s.flowRepo.UpdateFields(ctx, nil, flow.ID, map[string]interface{}{
+		"compile_health":        flow.CompileHealth,
+		"compile_failures_json": string(flow.CompileFailuresJSON),
+		"updated_at":            flow.UpdatedAt,
+	}); err != nil {
+		s.logger.Error("persist compile health failed", "error", err, "flow_id", flow.ID)
+	}
 }
 
 // CompileCheck 草稿阶段手动触发 dry-run 编译自检，返回与发布门禁相同结构的结果。
@@ -145,6 +173,7 @@ func (s *AIFlowAssetService) CompileCheck(ctx context.Context, projectID, flowID
 	if err != nil {
 		return nil, err
 	}
+	s.refreshCompileHealth(ctx, flow)
 	failures := flow.CompileFailures
 	if failures == nil {
 		failures = []model.FlowCompileFailure{}
@@ -208,7 +237,12 @@ func (s *AIFlowAssetService) Get(ctx context.Context, projectID, flowID uint) (*
 			flow.SourceTaskName = task.TaskName
 		}
 	}
-	s.fillCompileHealth(ctx, flow)
+	if flow.CompileHealth == "" {
+		s.refreshCompileHealth(ctx, flow)
+	} else {
+		flow.CompileFailures = decodeCompileFailures(flow.CompileFailuresJSON)
+	}
+	flow.OutdatedFlowRefs = s.detectOutdatedFlowRefs(ctx, model.AIAssetRefSourceFlow, flow.ID)
 	return flow, nil
 }
 
@@ -258,6 +292,7 @@ func (s *AIFlowAssetService) Create(ctx context.Context, userID uint, input Save
 		CreatedBy:              userID,
 		UpdatedBy:              userID,
 	}
+	applyCompileHealth(flow, s.dryRunFlowCompile(ctx, flow.DSLJSON))
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.flowRepo.Create(ctx, tx, flow); err != nil {
 			return err
@@ -271,7 +306,6 @@ func (s *AIFlowAssetService) Create(ctx context.Context, userID uint, input Save
 		s.logger.Error("create flow asset failed", "error", err, "project_id", normalized.ProjectID)
 		return nil, ErrInternal(CodeInternal, err)
 	}
-	s.fillCompileHealth(ctx, flow)
 	return flow, nil
 }
 
@@ -293,6 +327,11 @@ func (s *AIFlowAssetService) Update(ctx context.Context, userID, flowID uint, in
 	if err != nil {
 		return nil, err
 	}
+	failures := s.dryRunFlowCompile(ctx, model.RawJSON(normalized.DSL))
+	health := model.AIFlowCompileHealthOK
+	if len(failures) > 0 {
+		health = model.AIFlowCompileHealthPartial
+	}
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.flowRepo.UpdateFields(ctx, tx, flowID, map[string]interface{}{
 			"flow_name":                normalized.FlowName,
@@ -306,6 +345,8 @@ func (s *AIFlowAssetService) Update(ctx context.Context, userID, flowID uint, in
 			"tags_json":                string(mustRawJSON(normalized.Tags)),
 			"allow_ai_reuse":           normalized.AllowAIReuse,
 			"latest_validation_status": model.AIValidationStatusNotValidated,
+			"compile_health":           health,
+			"compile_failures_json":    string(encodeCompileFailures(failures)),
 			"updated_by":               userID,
 		}); err != nil {
 			return err
@@ -358,8 +399,10 @@ func (s *AIFlowAssetService) Publish(ctx context.Context, userID, projectID, flo
 	var flowVersion model.AIFlowAssetVersion
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
 		if err := s.flowRepo.UpdateFields(ctx, tx, flow.ID, map[string]interface{}{
-			"status":     model.AIFlowAssetStatusPublished,
-			"updated_by": userID,
+			"status":                model.AIFlowAssetStatusPublished,
+			"compile_health":        model.AIFlowCompileHealthOK,
+			"compile_failures_json": string(encodeCompileFailures(nil)),
+			"updated_by":            userID,
 		}); err != nil {
 			return err
 		}
@@ -510,6 +553,7 @@ func (s *AIFlowAssetService) PublishFromTask(ctx context.Context, userID, taskID
 		CreatedBy:              userID,
 		UpdatedBy:              userID,
 	}
+	applyCompileHealth(flow, nil)
 	var flowVersion model.AIFlowAssetVersion
 	refs, err := s.resolveFlowDSLReferences(ctx, normalized.ProjectID, 0, normalized.FlowKey, dsl)
 	if err != nil {
@@ -863,7 +907,53 @@ func (s *AIFlowAssetService) fillFlowVirtualFields(ctx context.Context, flows []
 	for i := range flows {
 		flows[i].ProjectName = projectMap[flows[i].ProjectID]
 		flows[i].CreatedName = userMap[flows[i].CreatedBy]
+		flows[i].CompileFailures = decodeCompileFailures(flows[i].CompileFailuresJSON)
 	}
+}
+
+// detectOutdatedFlowRefs 检查引用方锁定的固定场景版本是否落后于目标最新发布版本，返回已失效的引用明细。
+func (s *AIFlowAssetService) detectOutdatedFlowRefs(ctx context.Context, sourceType string, sourceID uint) []model.AIAssetReference {
+	return detectOutdatedFlowRefs(ctx, s.refRepo, s.flowRepo, sourceType, sourceID)
+}
+
+func detectOutdatedFlowRefs(
+	ctx context.Context,
+	refRepo *repository.AIAssetReferenceRepo,
+	flowRepo *repository.AIFlowAssetRepo,
+	sourceType string,
+	sourceID uint,
+) []model.AIAssetReference {
+	refs, err := refRepo.ListBySource(ctx, sourceType, sourceID)
+	if err != nil {
+		return nil
+	}
+	outdated := []model.AIAssetReference{}
+	for _, ref := range refs {
+		if ref.TargetType != model.AIAssetRefTargetFlow || ref.TargetVersionID == nil {
+			continue
+		}
+		latest, err := flowRepo.GetLatestPublishedVersion(ctx, ref.TargetID)
+		if err != nil || latest.ID == *ref.TargetVersionID {
+			continue
+		}
+		locked, err := flowRepo.GetVersionByID(ctx, *ref.TargetVersionID)
+		if err != nil || latest.VersionNo <= locked.VersionNo {
+			continue
+		}
+		ref.RefOutdated = true
+		ref.LockedVersionNo = locked.VersionNo
+		latestID := latest.ID
+		ref.LatestVersionID = &latestID
+		ref.LatestVersionNo = latest.VersionNo
+		if target, targetErr := flowRepo.GetByID(ctx, ref.TargetID); targetErr == nil {
+			ref.TargetName = target.FlowName
+		}
+		outdated = append(outdated, ref)
+	}
+	if len(outdated) == 0 {
+		return nil
+	}
+	return outdated
 }
 
 func (s *AIFlowAssetService) batchProjectNames(ctx context.Context, ids []uint) map[uint]string {

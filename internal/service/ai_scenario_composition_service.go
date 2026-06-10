@@ -567,9 +567,12 @@ func (s *AIScenarioCompositionService) GenerateCode(ctx context.Context, userID,
 	if failures := s.validateCompositionStructure(ctx, composition); len(failures) > 0 {
 		return nil, ErrConflict(CodeConflict, "编排校验未通过: "+strings.Join(failures, "；"))
 	}
-	code, warnings, err := s.compilePlaywrightSpec(ctx, composition, input.ConfirmPartial)
+	code, warnings, confirmedPartialFlows, err := s.compilePlaywrightSpec(ctx, composition, input.ConfirmPartial)
 	if err != nil {
 		return nil, err
+	}
+	if len(confirmedPartialFlows) > 0 {
+		s.recordConfirmPartialAudit(ctx, userID, composition, confirmedPartialFlows)
 	}
 	if err := s.scenarioRepo.UpdateFields(ctx, nil, composition.ID, map[string]interface{}{
 		"generated_code":           code,
@@ -596,6 +599,82 @@ func (s *AIScenarioCompositionService) GenerateCode(ctx context.Context, userID,
 		Warnings:      warnings,
 		GeneratedCode: code,
 	}, nil
+}
+
+// recordConfirmPartialAudit 记录显式确认引用 PARTIAL 固定场景的操作审计日志，便于事后回溯。
+func (s *AIScenarioCompositionService) recordConfirmPartialAudit(ctx context.Context, userID uint, composition *model.AIScenarioComposition, flowKeys []string) {
+	operatorName := ""
+	if user, err := s.userRepo.FindByID(ctx, userID); err == nil && user != nil {
+		operatorName = user.Name
+	}
+	desc := fmt.Sprintf("生成编排 %s(ID=%d) 代码时显式确认引用 PARTIAL 固定场景：%s", composition.ScenarioKey, composition.ID, strings.Join(flowKeys, ", "))
+	if runes := []rune(desc); len(runes) > 500 {
+		desc = string(runes[:500])
+	}
+	log := &model.AIScriptOperationLog{
+		OperationType: model.AIScriptOperationConfirmPartial,
+		OperatorID:    userID,
+		OperatorName:  operatorName,
+		OperationDesc: desc,
+	}
+	if err := s.aiScriptRepo.CreateOperationLog(ctx, log); err != nil {
+		s.logger.Error("record confirm_partial audit failed", "error", err, "composition_id", composition.ID)
+	}
+}
+
+// RefreshFlowRefsInput 升级编排内固定场景引用版本的输入。
+type RefreshFlowRefsInput struct {
+	ProjectID uint
+	FlowIDs   []uint
+}
+
+// RefreshFlowRefs 将编排中 FLOW_CALL 步骤锁定的固定场景版本升级到最新发布版本（仅在用户显式确认后调用，不做自动升级）。
+func (s *AIScenarioCompositionService) RefreshFlowRefs(ctx context.Context, userID, compositionID uint, input RefreshFlowRefsInput) (*model.AIScenarioComposition, error) {
+	composition, err := s.Get(ctx, input.ProjectID, compositionID)
+	if err != nil {
+		return nil, err
+	}
+	if composition.Status == model.AIScenarioStatusArchived {
+		return nil, ErrConflict(CodeConflict, "已归档编排不可升级引用版本")
+	}
+	targetFilter := map[uint]struct{}{}
+	for _, flowID := range input.FlowIDs {
+		targetFilter[flowID] = struct{}{}
+	}
+	upgrades := map[uint]uint{}
+	for _, step := range composition.Steps {
+		if step.StepType != model.AIScenarioStepTypeFlowCall || step.RefFlowID == nil || step.RefFlowVersionID == nil {
+			continue
+		}
+		if len(targetFilter) > 0 {
+			if _, ok := targetFilter[*step.RefFlowID]; !ok {
+				continue
+			}
+		}
+		latest, latestErr := s.flowRepo.GetLatestPublishedVersion(ctx, *step.RefFlowID)
+		if latestErr != nil || latest.ID == *step.RefFlowVersionID {
+			continue
+		}
+		upgrades[step.ID] = latest.ID
+	}
+	if len(upgrades) == 0 {
+		return composition, nil
+	}
+	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
+		for stepID, versionID := range upgrades {
+			if err := s.scenarioRepo.UpdateStepFields(ctx, tx, stepID, map[string]interface{}{
+				"ref_flow_version_id": versionID,
+			}); err != nil {
+				return err
+			}
+		}
+		return s.rebuildScenarioDerivedState(ctx, tx, composition, userID)
+	})
+	if err != nil {
+		s.logger.Error("refresh flow refs failed", "error", err, "composition_id", compositionID)
+		return nil, ErrInternal(CodeInternal, err)
+	}
+	return s.Get(ctx, input.ProjectID, compositionID)
 }
 
 // ManualUpdateCode 保存人工编辑后的生成代码，并按需锁定自动覆盖。
@@ -2344,11 +2423,12 @@ func (s *AIScenarioCompositionService) collectNestedFlowAssets(ctx context.Conte
 	return nil
 }
 
-func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context, composition *model.AIScenarioComposition, confirmPartial bool) (string, []string, error) {
+func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context, composition *model.AIScenarioComposition, confirmPartial bool) (string, []string, []string, error) {
 	if len(composition.Steps) == 0 {
-		return "", nil, ErrConflict(CodeConflict, "编排至少需要一个步骤")
+		return "", nil, nil, ErrConflict(CodeConflict, "编排至少需要一个步骤")
 	}
 	warnings := []string{}
+	confirmedPartialFlows := []string{}
 	var b strings.Builder
 	b.WriteString("import { test, expect, type Page } from '@playwright/test'\n\n")
 	b.WriteString("type ScenarioContext = {\n")
@@ -2410,19 +2490,19 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 		}
 		flow, err := s.flowRepo.GetByID(ctx, *step.RefFlowID)
 		if err != nil {
-			return "", nil, ErrConflict(CodeConflict, "引用的固定场景不存在")
+			return "", nil, nil, ErrConflict(CodeConflict, "引用的固定场景不存在")
 		}
 		flowAssets[flow.ID] = flow
 		if step.RefFlowVersionID != nil {
 			version, versionErr := s.flowRepo.GetVersionByID(ctx, *step.RefFlowVersionID)
 			if versionErr != nil {
-				return "", nil, ErrConflict(CodeConflict, "引用的固定场景版本不存在")
+				return "", nil, nil, ErrConflict(CodeConflict, "引用的固定场景版本不存在")
 			}
 			flowVersions[flow.ID] = version
 		}
 	}
 	if err := s.collectNestedFlowAssets(ctx, composition.ProjectID, flowAssets, flowVersions); err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	flowKeys := make(map[uint]string, len(flowAssets))
 	for id, flow := range flowAssets {
@@ -2435,12 +2515,16 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 		if version != nil && len(version.DSLJSON) > 0 {
 			dsl = version.DSLJSON
 		}
-		if failures := dryRunCompileFlowDSL(dsl, flowKeys); len(failures) > 0 && !confirmPartial {
-			return "", nil, ErrConflictWithData(
-				CodeAICompositionFlowCompileFailed,
-				fmt.Sprintf("固定场景 %s dry-run 编译失败：%s；请修复该资产 DSL，或显式确认引用 PARTIAL 资产后重试", flow.FlowKey, summarizeFlowCompileFailures(failures)),
-				map[string]interface{}{"flow_key": flow.FlowKey, "compile_failures": failures},
-			)
+		if failures := dryRunCompileFlowDSL(dsl, flowKeys); len(failures) > 0 {
+			if !confirmPartial {
+				return "", nil, nil, ErrConflictWithData(
+					CodeAICompositionFlowCompileFailed,
+					fmt.Sprintf("固定场景 %s dry-run 编译失败：%s；请修复该资产 DSL，或显式确认引用 PARTIAL 资产后重试", flow.FlowKey, summarizeFlowCompileFailures(failures)),
+					map[string]interface{}{"flow_key": flow.FlowKey, "compile_failures": failures},
+				)
+			}
+			confirmedPartialFlows = append(confirmedPartialFlows, flow.FlowKey)
+			warnings = append(warnings, fmt.Sprintf("已显式确认引用 PARTIAL 固定场景 %s，跳过其中 %d 个不可编译步骤", flow.FlowKey, len(failures)))
 		}
 		fmt.Fprintf(&b, "  %s: async (parentCtx, inputs) => {\n", flow.FlowKey)
 		b.WriteString("    const ctx: ScenarioContext = { ...parentCtx, variables: { ...parentCtx.variables, ...inputs } }\n")
@@ -2471,7 +2555,7 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 		}
 		assertion, err := s.assertionRepo.GetByID(ctx, *step.RefAssertionID)
 		if err != nil {
-			return "", nil, ErrConflict(CodeConflict, "引用的断言资产不存在")
+			return "", nil, nil, ErrConflict(CodeConflict, "引用的断言资产不存在")
 		}
 		assertionAssets[assertion.ID] = assertion
 	}
@@ -2485,7 +2569,7 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 		b.WriteString("    const page = ctx.page\n")
 		assertionLines, assertionWarnings, err := compileAssertionAssetStatements(assertion, "    ")
 		if err != nil {
-			return "", nil, err
+			return "", nil, nil, err
 		}
 		warnings = append(warnings, assertionWarnings...)
 		for _, line := range assertionLines {
@@ -2516,11 +2600,11 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 		switch step.StepType {
 		case model.AIScenarioStepTypeFlowCall:
 			if step.RefFlowID == nil {
-				return "", nil, ErrConflict(CodeConflict, "固定场景步骤缺少引用")
+				return "", nil, nil, ErrConflict(CodeConflict, "固定场景步骤缺少引用")
 			}
 			flowKey := flowKeys[*step.RefFlowID]
 			if flowKey == "" {
-				return "", nil, ErrConflict(CodeConflict, "固定场景引用不可用")
+				return "", nil, nil, ErrConflict(CodeConflict, "固定场景引用不可用")
 			}
 			b.WriteString("  {\n")
 			fmt.Fprintf(&b, "    const inputs = resolveScenarioValue(ctx, %s) as Record<string, unknown>\n", inputLiteral)
@@ -2529,36 +2613,36 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 			b.WriteString("  }\n")
 		case model.AIScenarioStepTypeAssertion:
 			if step.RefAssertionID == nil {
-				return "", nil, ErrConflict(CodeConflict, "断言步骤缺少引用")
+				return "", nil, nil, ErrConflict(CodeConflict, "断言步骤缺少引用")
 			}
 			assertionKey := assertionKeys[*step.RefAssertionID]
 			if assertionKey == "" {
-				return "", nil, ErrConflict(CodeConflict, "断言引用不可用")
+				return "", nil, nil, ErrConflict(CodeConflict, "断言引用不可用")
 			}
 			fmt.Fprintf(&b, "  await assertions.%s(ctx, resolveScenarioValue(ctx, %s) as Record<string, unknown>)\n", assertionKey, inputLiteral)
 			fmt.Fprintf(&b, "  ctx.outputs[%s] = { status: 'PASSED' }\n", tsString(stepID))
 		case model.AIScenarioStepTypeAtomicAction:
 			line, err := compileAtomicAction(step, inputLiteral, outputLiteral, stepID)
 			if err != nil {
-				return "", nil, err
+				return "", nil, nil, err
 			}
 			b.WriteString(line)
 		case model.AIScenarioStepTypeCodeBlock:
 			if !step.ManualReviewed {
-				return "", nil, ErrConflict(CodeConflict, "自定义代码块生成前必须标记已审核")
+				return "", nil, nil, ErrConflict(CodeConflict, "自定义代码块生成前必须标记已审核")
 			}
 			b.WriteString("  // 已审核自定义代码块\n")
 			b.WriteString(indentCodeBlock(step.CodeBlock, "  "))
 			b.WriteString("\n")
 		case model.AIScenarioStepTypeAIGenerated:
-			return "", nil, ErrConflict(CodeConflict, "AI 临时步骤不能直接生成正式代码，请先采纳为确定步骤类型")
+			return "", nil, nil, ErrConflict(CodeConflict, "AI 临时步骤不能直接生成正式代码，请先采纳为确定步骤类型")
 		}
 	}
 	b.WriteString("})\n")
 	if len(assertionKeys) == 0 {
 		warnings = append(warnings, "当前编排未配置断言步骤")
 	}
-	return b.String(), warnings, nil
+	return b.String(), warnings, confirmedPartialFlows, nil
 }
 
 func compileAtomicAction(step model.AIScenarioStep, inputLiteral string, outputLiteral string, stepID string) (string, error) {
@@ -3386,6 +3470,7 @@ func (s *AIScenarioCompositionService) fillCompositionVirtualField(ctx context.C
 	if count, err := s.refRepo.CountSourceTargets(ctx, model.AIAssetRefSourceScenario, composition.ID, model.AIAssetRefTargetAssertion); err == nil {
 		composition.AssertionRefCount = count
 	}
+	composition.OutdatedFlowRefs = detectOutdatedFlowRefs(ctx, s.refRepo, s.flowRepo, model.AIAssetRefSourceScenario, composition.ID)
 }
 
 func (s *AIScenarioCompositionService) fillStepNames(ctx context.Context, steps []model.AIScenarioStep) {
