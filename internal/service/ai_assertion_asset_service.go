@@ -190,10 +190,18 @@ func (s *AIAssertionAssetService) Publish(ctx context.Context, userID, projectID
 	if len(assertion.ParamSchemaJSON) == 0 || len(assertion.ImplementationJSON) == 0 {
 		return nil, ErrConflict(CodeConflict, "断言参数 Schema 和实现模板不能为空")
 	}
+	if assertion.AssertionType == model.AIAssertionTypeCustomCode {
+		implementation := map[string]interface{}{}
+		if json.Valid(assertion.ImplementationJSON) {
+			_ = json.Unmarshal(assertion.ImplementationJSON, &implementation)
+		}
+		if strings.TrimSpace(firstNonEmptyString(implementation, "code", "template", "typescript")) == "" {
+			return nil, ErrConflict(CodeConflict, "自定义代码断言发布前必须提供 implementation.code 或 implementation.template")
+		}
+	}
 	if err := s.assertionRepo.UpdateFields(ctx, nil, assertionID, map[string]interface{}{
-		"status":                   model.AIAssertionAssetStatusPublished,
-		"latest_validation_status": model.AIValidationStatusPassed,
-		"updated_by":               userID,
+		"status":     model.AIAssertionAssetStatusPublished,
+		"updated_by": userID,
 	}); err != nil {
 		return nil, ErrInternal(CodeInternal, err)
 	}
