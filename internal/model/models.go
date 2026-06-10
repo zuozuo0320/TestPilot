@@ -642,6 +642,10 @@ func AutoMigrate(db *gorm.DB) error {
 		&AIAssetReference{},
 		&AICompositionValidation{},
 		&AICompositionAssertionResult{},
+		&AIRegressionPlan{},
+		&AIRegressionExecution{},
+		&AIRepairSuggestion{},
+		&AIPlanRecord{},
 
 		// V1 多项目工程化
 		&AIScriptFile{},
