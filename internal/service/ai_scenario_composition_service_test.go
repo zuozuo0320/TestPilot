@@ -782,6 +782,156 @@ func TestAIScenarioCompositionServiceGenerateCodeRejectsPartialFlow(t *testing.T
 	}
 }
 
+func TestAIScenarioCompositionServiceConfirmPartialWritesAuditLog(t *testing.T) {
+	svc, _, manager, project := newTestAIScenarioCompositionService(t)
+	partialDSL := model.RawJSON(`{
+		"schema_version":"1.0",
+		"generation_steps":[
+			{"action_type":"NAVIGATE","page_url":"${env.BASE_URL}"},
+			{"action_type":"HOVER","locator":"getByRole('button')"}
+		]
+	}`)
+	flow := seedPublishedFlowAssetWithDSL(t, svc.flowRepo, project.ID, manager.ID, "audit_partial_flow", partialDSL)
+
+	composition, err := svc.Create(t.Context(), manager.ID, ScenarioCompositionCreateInput{
+		ProjectID:    project.ID,
+		ScenarioKey:  "audit_partial_scenario",
+		ScenarioName: "确认 PARTIAL 审计",
+		Description:  "确认引用 PARTIAL 资产时必须记录审计日志",
+	})
+	if err != nil {
+		t.Fatalf("create composition: %v", err)
+	}
+	if _, err := svc.AddStep(t.Context(), manager.ID, composition.ID, ScenarioStepSaveInput{
+		ProjectID: project.ID,
+		StepType:  model.AIScenarioStepTypeFlowCall,
+		StepName:  "引用 PARTIAL 固定场景",
+		RefFlowID: &flow.ID,
+	}); err != nil {
+		t.Fatalf("add flow step: %v", err)
+	}
+
+	if _, err := svc.GenerateCode(t.Context(), manager.ID, composition.ID, GenerateCompositionCodeInput{
+		ProjectID:      project.ID,
+		Target:         "PLAYWRIGHT",
+		ConfirmPartial: true,
+	}); err != nil {
+		t.Fatalf("confirm_partial generate: %v", err)
+	}
+
+	logs, err := svc.aiScriptRepo.ListOperationLogsByType(t.Context(), model.AIScriptOperationConfirmPartial)
+	if err != nil {
+		t.Fatalf("list operation logs: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected one confirm_partial audit log, got %d", len(logs))
+	}
+	log := logs[0]
+	if log.OperatorID != manager.ID {
+		t.Fatalf("expected operator %d, got %d", manager.ID, log.OperatorID)
+	}
+	if !strings.Contains(log.OperationDesc, composition.ScenarioKey) || !strings.Contains(log.OperationDesc, flow.FlowKey) {
+		t.Fatalf("expected desc to contain scenario and flow key, got %q", log.OperationDesc)
+	}
+	if len([]rune(log.OperationDesc)) > 500 {
+		t.Fatalf("expected desc truncated to 500 runes, got %d", len([]rune(log.OperationDesc)))
+	}
+}
+
+func TestAIScenarioCompositionServiceRefreshFlowRefs(t *testing.T) {
+	svc, scenarioRepo, manager, project := newTestAIScenarioCompositionService(t)
+	flow := seedPublishedFlowAsset(t, svc.flowRepo, project.ID, manager.ID, "refresh_target_flow")
+
+	composition, err := svc.Create(t.Context(), manager.ID, ScenarioCompositionCreateInput{
+		ProjectID:    project.ID,
+		ScenarioKey:  "refresh_flow_refs",
+		ScenarioName: "升级引用版本",
+		Description:  "FLOW_CALL 锁定版本升级到最新发布版本",
+	})
+	if err != nil {
+		t.Fatalf("create composition: %v", err)
+	}
+	step, err := svc.AddStep(t.Context(), manager.ID, composition.ID, ScenarioStepSaveInput{
+		ProjectID: project.ID,
+		StepType:  model.AIScenarioStepTypeFlowCall,
+		StepName:  "调用固定场景",
+		RefFlowID: &flow.ID,
+	})
+	if err != nil {
+		t.Fatalf("add flow step: %v", err)
+	}
+	if step.RefFlowVersionID == nil {
+		t.Fatalf("expected step to lock flow version")
+	}
+	lockedVersionID := *step.RefFlowVersionID
+
+	latest := &model.AIFlowAssetVersion{
+		FlowID:           flow.ID,
+		VersionNo:        2,
+		VersionStatus:    model.AIFlowAssetStatusPublished,
+		DSLJSON:          flow.DSLJSON,
+		CodeSnapshot:     flow.CodeSnapshot,
+		InputSchemaJSON:  flow.InputSchemaJSON,
+		OutputSchemaJSON: flow.OutputSchemaJSON,
+		ChangeSummary:    "发布 v2",
+		ValidationStatus: model.AIValidationStatusPassed,
+		CreatedBy:        manager.ID,
+	}
+	if err := svc.flowRepo.CreateVersion(t.Context(), nil, latest); err != nil {
+		t.Fatalf("create flow v2: %v", err)
+	}
+
+	stale, err := svc.Get(t.Context(), project.ID, composition.ID)
+	if err != nil {
+		t.Fatalf("get stale composition: %v", err)
+	}
+	if len(stale.OutdatedFlowRefs) != 1 || stale.OutdatedFlowRefs[0].TargetID != flow.ID {
+		t.Fatalf("expected one outdated flow ref, got %+v", stale.OutdatedFlowRefs)
+	}
+
+	otherFlowID := flow.ID + 999
+	unchanged, err := svc.RefreshFlowRefs(t.Context(), manager.ID, composition.ID, RefreshFlowRefsInput{
+		ProjectID: project.ID,
+		FlowIDs:   []uint{otherFlowID},
+	})
+	if err != nil {
+		t.Fatalf("refresh with non-matching filter: %v", err)
+	}
+	if len(unchanged.Steps) != 1 || *unchanged.Steps[0].RefFlowVersionID != lockedVersionID {
+		t.Fatalf("expected filtered refresh to keep locked version, got %+v", unchanged.Steps)
+	}
+
+	refreshed, err := svc.RefreshFlowRefs(t.Context(), manager.ID, composition.ID, RefreshFlowRefsInput{
+		ProjectID: project.ID,
+	})
+	if err != nil {
+		t.Fatalf("refresh flow refs: %v", err)
+	}
+	if len(refreshed.Steps) != 1 || refreshed.Steps[0].RefFlowVersionID == nil {
+		t.Fatalf("expected refreshed step with locked version, got %+v", refreshed.Steps)
+	}
+	if *refreshed.Steps[0].RefFlowVersionID != latest.ID {
+		t.Fatalf("expected version upgraded to %d, got %d", latest.ID, *refreshed.Steps[0].RefFlowVersionID)
+	}
+	if len(refreshed.OutdatedFlowRefs) != 0 {
+		t.Fatalf("expected no outdated refs after refresh, got %+v", refreshed.OutdatedFlowRefs)
+	}
+
+	if err := scenarioRepo.UpdateFields(t.Context(), nil, composition.ID, map[string]interface{}{
+		"status": model.AIScenarioStatusArchived,
+	}); err != nil {
+		t.Fatalf("archive composition: %v", err)
+	}
+	_, err = svc.RefreshFlowRefs(t.Context(), manager.ID, composition.ID, RefreshFlowRefsInput{ProjectID: project.ID})
+	if err == nil {
+		t.Fatalf("expected archived composition refresh to fail")
+	}
+	var bizErr *BizError
+	if !errors.As(err, &bizErr) || bizErr.Code != CodeConflict {
+		t.Fatalf("expected conflict BizError, got %T %[1]v", err)
+	}
+}
+
 func TestCompileAtomicActionTable(t *testing.T) {
 	cases := []struct {
 		name          string

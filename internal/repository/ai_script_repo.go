@@ -291,6 +291,16 @@ func (r *AIScriptRepo) CreateOperationLog(ctx context.Context, log *model.AIScri
 	return r.db.WithContext(ctx).Create(log).Error
 }
 
+// ListOperationLogsByType 按操作类型查询操作日志，用于审计回溯。
+func (r *AIScriptRepo) ListOperationLogsByType(ctx context.Context, operationType string) ([]model.AIScriptOperationLog, error) {
+	var logs []model.AIScriptOperationLog
+	err := r.db.WithContext(ctx).
+		Where("operation_type = ?", operationType).
+		Order("id DESC").
+		Find(&logs).Error
+	return logs, err
+}
+
 // ── 录制会话 ──
 
 // CreateRecordingSession 创建录制会话
