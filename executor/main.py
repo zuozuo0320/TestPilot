@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from config import SERVICE_PORT, EXECUTOR_API_KEY, CODEGEN_SESSION_TIMEOUT_SEC, SCREENSHOT_DIR, SCRIPT_OUTPUT_DIR
 from browser_runner import run_browser_exploration
 from script_generator import generate_playwright_script, refactor_recorded_script, parse_step_model
+from planner import generate_plan
 from validation_runner import run_validation
 
 # 日志配置
@@ -256,6 +257,17 @@ class RefactorRequest(BaseModel):
     start_url: Optional[str] = ""
     account_ref: Optional[str] = None
     project_scope: Optional[dict] = None  # V1 多项目工程化：ProjectScope 信息
+
+
+class PlanRequest(BaseModel):
+    task_name: str = ""
+    scenario_desc: str = ""
+    start_url_path: str = ""
+    recording_steps: List[dict] = []
+    candidates: List[dict] = []
+    env_keys: List[str] = []
+    max_steps: int = 20
+    expression_doc: str = ""
 
 
 class ValidateRequest(BaseModel):
@@ -603,6 +615,17 @@ async def execute_generate(req: GenerateRequest):
         "screenshots": exploration_result.get("screenshots", []),
         "error_message": "",
     }
+
+
+@app.post("/execute/plan")
+async def execute_plan(req: PlanRequest):
+    """LLM Planner 语义匹配：基于脱敏录制上下文与候选资产清单生成编排计划"""
+    logger.info(
+        f"Received plan request: task_name={req.task_name}, "
+        f"candidates={len(req.candidates)}, max_steps={req.max_steps}"
+    )
+    result = await asyncio.to_thread(generate_plan, req.model_dump())
+    return result
 
 
 @app.post("/execute/refactor")

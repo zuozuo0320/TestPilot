@@ -88,10 +88,11 @@ type rollbackScenarioVersionRequest struct {
 }
 
 type aiPlanFromTaskRequest struct {
-	ProjectID       uint `json:"project_id" binding:"required,min=1"`
-	TaskID          uint `json:"task_id" binding:"required,min=1"`
-	SourceVersionID uint `json:"source_version_id"`
-	MaxSteps        int  `json:"max_steps" binding:"omitempty,min=0,max=20"`
+	ProjectID       uint   `json:"project_id" binding:"required,min=1"`
+	TaskID          uint   `json:"task_id" binding:"required,min=1"`
+	SourceVersionID uint   `json:"source_version_id"`
+	MaxSteps        int    `json:"max_steps" binding:"omitempty,min=0,max=20"`
+	PlannerMode     string `json:"planner_mode" binding:"omitempty,oneof=auto llm heuristic"`
 }
 
 // listAIScenarioCompositions 获取场景编排列表。
@@ -856,6 +857,8 @@ func (a *API) createAIPlanFromTask(c *gin.Context) {
 		TaskID:          req.TaskID,
 		SourceVersionID: req.SourceVersionID,
 		MaxSteps:        req.MaxSteps,
+		PlannerMode:     req.PlannerMode,
+		OperatorID:      user.ID,
 	})
 	if err != nil {
 		response.HandleError(c, err)
