@@ -412,6 +412,9 @@ const (
 	AIFlowCompileHealthPartial = "PARTIAL"
 )
 
+// AIScriptOperationConfirmPartial 显式确认引用 PARTIAL 固定场景生成编排代码的审计操作类型。
+const AIScriptOperationConfirmPartial = "CONFIRM_PARTIAL_FLOW"
+
 // FlowCompileFailure 固定场景 DSL dry-run 编译失败明细。
 type FlowCompileFailure struct {
 	StepNo   int    `json:"step_no"`
@@ -439,16 +442,18 @@ type AIFlowAsset struct {
 	TagsJSON               RawJSON   `json:"tags" gorm:"type:json;column:tags_json"`
 	AllowAIReuse           bool      `json:"allow_ai_reuse" gorm:"not null;default:true"`
 	LatestValidationStatus string    `json:"latest_validation_status" gorm:"size:32;not null;default:NOT_VALIDATED;index"`
+	CompileHealth          string    `json:"compile_health,omitempty" gorm:"size:16;not null;default:''"`
+	CompileFailuresJSON    RawJSON   `json:"-" gorm:"type:json;column:compile_failures_json"`
 	CreatedBy              uint      `json:"created_by" gorm:"not null;index"`
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedBy              uint      `json:"updated_by" gorm:"not null"`
 	UpdatedAt              time.Time `json:"updated_at"`
 
-	ProjectName     string               `json:"project_name,omitempty" gorm:"-"`
-	CreatedName     string               `json:"created_name,omitempty" gorm:"-"`
-	SourceTaskName  string               `json:"source_task_name,omitempty" gorm:"-"`
-	CompileHealth   string               `json:"compile_health,omitempty" gorm:"-"`
-	CompileFailures []FlowCompileFailure `json:"compile_failures,omitempty" gorm:"-"`
+	ProjectName      string               `json:"project_name,omitempty" gorm:"-"`
+	CreatedName      string               `json:"created_name,omitempty" gorm:"-"`
+	SourceTaskName   string               `json:"source_task_name,omitempty" gorm:"-"`
+	CompileFailures  []FlowCompileFailure `json:"compile_failures,omitempty" gorm:"-"`
+	OutdatedFlowRefs []AIAssetReference   `json:"outdated_flow_refs,omitempty" gorm:"-"`
 }
 
 // TableName 指定固定场景资产表名，与脚本编排方案中的表命名保持一致。
@@ -539,9 +544,10 @@ type AIScenarioComposition struct {
 
 	ProjectName       string           `json:"project_name,omitempty" gorm:"-"`
 	CreatedName       string           `json:"created_name,omitempty" gorm:"-"`
-	FlowRefCount      int64            `json:"flow_ref_count" gorm:"-"`
-	AssertionRefCount int64            `json:"assertion_ref_count" gorm:"-"`
-	Steps             []AIScenarioStep `json:"steps,omitempty" gorm:"-"`
+	FlowRefCount      int64              `json:"flow_ref_count" gorm:"-"`
+	AssertionRefCount int64              `json:"assertion_ref_count" gorm:"-"`
+	Steps             []AIScenarioStep   `json:"steps,omitempty" gorm:"-"`
+	OutdatedFlowRefs  []AIAssetReference `json:"outdated_flow_refs,omitempty" gorm:"-"`
 }
 
 // TableName 指定场景编排表名。
@@ -610,10 +616,14 @@ type AIAssetReference struct {
 	TargetVersionID *uint     `json:"target_version_id" gorm:"uniqueIndex:uk_ai_asset_reference"`
 	CreatedAt       time.Time `json:"created_at"`
 
-	SourceName  string   `json:"source_name,omitempty" gorm:"-"`
-	TargetName  string   `json:"target_name,omitempty" gorm:"-"`
-	ImpactLevel string   `json:"impact_level,omitempty" gorm:"-"`
-	ImpactPath  []string `json:"impact_path,omitempty" gorm:"-"`
+	SourceName      string   `json:"source_name,omitempty" gorm:"-"`
+	TargetName      string   `json:"target_name,omitempty" gorm:"-"`
+	ImpactLevel     string   `json:"impact_level,omitempty" gorm:"-"`
+	ImpactPath      []string `json:"impact_path,omitempty" gorm:"-"`
+	RefOutdated     bool     `json:"ref_outdated,omitempty" gorm:"-"`
+	LockedVersionNo int      `json:"locked_version_no,omitempty" gorm:"-"`
+	LatestVersionID *uint    `json:"latest_version_id,omitempty" gorm:"-"`
+	LatestVersionNo int      `json:"latest_version_no,omitempty" gorm:"-"`
 }
 
 // TableName 指定资产引用表名。

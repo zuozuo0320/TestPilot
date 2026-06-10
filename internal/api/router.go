@@ -273,6 +273,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	aiScript.PUT("/compositions/:compositionID/steps/:stepID", a.updateAIScenarioStep)
 	aiScript.DELETE("/compositions/:compositionID/steps/:stepID", a.deleteAIScenarioStep)
 	aiScript.POST("/compositions/:compositionID/generate-code", a.generateAIScenarioCode)
+	aiScript.POST("/compositions/:compositionID/refresh-flow-refs", a.refreshAIScenarioFlowRefs)
 	aiScript.PUT("/compositions/:compositionID/generated-code", a.manualUpdateAIScenarioCode)
 	aiScript.POST("/compositions/:compositionID/code-lock", a.setAIScenarioCodeLock)
 	aiScript.POST("/compositions/:compositionID/validate", a.validateAIScenarioComposition)
