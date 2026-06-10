@@ -50,6 +50,13 @@ type AIScenarioCompositionService struct {
 	executorAPIKey    string
 	httpClient        *http.Client
 	plannerTimeout    time.Duration
+	planRecorder      AIPlanRecorder
+}
+
+// AIPlanRecorder 计划指标记录钩子，由回归服务实现，通过 setter 注入以避免循环依赖。
+type AIPlanRecorder interface {
+	RecordPlanGenerated(ctx context.Context, projectID, taskID, operatorID uint, result *AIPlanResult)
+	RecordFirstValidation(ctx context.Context, compositionID uint, status string)
 }
 
 // NewAIScenarioCompositionService 创建场景编排服务。
@@ -85,6 +92,11 @@ func NewAIScenarioCompositionService(
 		httpClient:        &http.Client{Timeout: 300 * time.Second},
 		plannerTimeout:    defaultPlannerTimeout,
 	}
+}
+
+// SetPlanRecorder 注入计划指标记录钩子。
+func (s *AIScenarioCompositionService) SetPlanRecorder(recorder AIPlanRecorder) {
+	s.planRecorder = recorder
 }
 
 // ScenarioCompositionListInput 表示场景编排列表查询输入。
@@ -894,6 +906,9 @@ func (s *AIScenarioCompositionService) Validate(ctx context.Context, userID, com
 		}
 		return nil, ErrInternal(CodeInternal, err)
 	}
+	if s.planRecorder != nil {
+		s.planRecorder.RecordFirstValidation(ctx, composition.ID, status)
+	}
 	validation.AssertionResults = assertionResults
 	return validation, nil
 }
@@ -1602,6 +1617,9 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 		result, meta = s.runLLMPlanner(ctx, task, sourceVersion, candidates, maxSteps, heuristic)
 	}
 	s.recordAIPlanOperationLog(ctx, input, mode, result, meta, time.Since(start), len(candidates))
+	if s.planRecorder != nil && result != nil {
+		s.planRecorder.RecordPlanGenerated(ctx, input.ProjectID, input.TaskID, input.OperatorID, result)
+	}
 	return result, nil
 }
 

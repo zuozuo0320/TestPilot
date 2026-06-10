@@ -47,6 +47,7 @@ type Dependencies struct {
 	ReqGenTaskService            *service.RequirementGenTaskService
 	GitLabIntegrationService     *service.GitLabIntegrationService
 	AISkillService               *service.AISkillService
+	AIRegressionService          *service.AIRegressionService
 	ExecutorURL                  string
 	ExecutorAPIKey               string
 }
@@ -87,6 +88,7 @@ type API struct {
 	reqGenTaskSvc            *service.RequirementGenTaskService
 	gitLabIntegrationSvc     *service.GitLabIntegrationService
 	aiSkillSvc               *service.AISkillService
+	aiRegressionSvc          *service.AIRegressionService
 	executorURL              string
 	executorAPIKey           string
 }
@@ -128,6 +130,7 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 		reqGenTaskSvc:            deps.ReqGenTaskService,
 		gitLabIntegrationSvc:     deps.GitLabIntegrationService,
 		aiSkillSvc:               deps.AISkillService,
+		aiRegressionSvc:          deps.AIRegressionService,
 		executorURL:              deps.ExecutorURL,
 		executorAPIKey:           deps.ExecutorAPIKey,
 	}
@@ -320,6 +323,22 @@ func NewRouter(deps Dependencies, corsOrigins string) http.Handler {
 	// 轨迹与证据
 	aiScript.GET("/tasks/:taskID/traces", a.getAIScriptTraces)
 	aiScript.GET("/tasks/:taskID/evidences", a.getAIScriptEvidences)
+	// 定时回归计划与执行记录（18.3）
+	aiScript.POST("/regression/plans", a.createRegressionPlan)
+	aiScript.GET("/regression/plans", a.listRegressionPlans)
+	aiScript.PUT("/regression/plans/:planID", a.updateRegressionPlan)
+	aiScript.DELETE("/regression/plans/:planID", a.deleteRegressionPlan)
+	aiScript.POST("/regression/plans/:planID/trigger", a.triggerRegressionPlan)
+	aiScript.GET("/regression/executions", a.listRegressionExecutions)
+	// AI 修复建议：仅生成 Diff，必须人工确认后才能应用（14.3 约束）
+	aiScript.GET("/repair-suggestions", a.listRepairSuggestions)
+	aiScript.GET("/repair-suggestions/:suggestionID", a.getRepairSuggestion)
+	aiScript.POST("/repair-suggestions/:suggestionID/apply", a.applyRepairSuggestion)
+	aiScript.POST("/repair-suggestions/:suggestionID/reject", a.rejectRepairSuggestion)
+	// 计划采纳上报
+	aiScript.POST("/plan-records/adoption", a.recordPlanAdoption)
+	// 18.3 编排指标看板
+	auth.GET("/metrics/orchestration", a.getOrchestrationMetrics)
 
 	// ---- 用例评审 ----
 	caseReview := auth.Group("/projects/:projectID/case-reviews")
