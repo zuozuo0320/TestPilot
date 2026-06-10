@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"testpilot/internal/model"
@@ -299,5 +300,189 @@ func TestAIFlowAssetServiceRejectsFlowReferenceDepthOverThree(t *testing.T) {
 	var bizErr *BizError
 	if !errors.As(err, &bizErr) || bizErr.Code != CodeConflict {
 		t.Fatalf("expected conflict BizError, got %T %[1]v", err)
+	}
+}
+
+func TestAIFlowAssetServicePublishCompileGate(t *testing.T) {
+	cases := []struct {
+		name        string
+		flowKey     string
+		dsl         json.RawMessage
+		wantErr     bool
+		wantReasons []string
+	}{
+		{
+			name:    "合法 DSL 允许发布",
+			flowKey: "gate_ok",
+			dsl:     json.RawMessage(`{"schema_version":"1.0","steps":[{"type":"NAVIGATE","page_url":"${env.BASE_URL}"},{"type":"CLICK","locator":"getByRole('button')"}]}`),
+		},
+		{
+			name:        "缺少动作类型拒绝发布",
+			flowKey:     "gate_missing_type",
+			dsl:         json.RawMessage(`{"schema_version":"1.0","steps":[{"page_url":"https://example.com"}]}`),
+			wantErr:     true,
+			wantReasons: []string{"缺少动作类型"},
+		},
+		{
+			name:        "不支持的步骤类型拒绝发布",
+			flowKey:     "gate_unsupported",
+			dsl:         json.RawMessage(`{"schema_version":"1.0","steps":[{"type":"HOVER","locator":"getByRole('button')"}]}`),
+			wantErr:     true,
+			wantReasons: []string{"动作类型 HOVER 暂不支持"},
+		},
+		{
+			name:        "必填字段缺失拒绝发布",
+			flowKey:     "gate_missing_field",
+			dsl:         json.RawMessage(`{"schema_version":"1.0","steps":[{"type":"CLICK"}]}`),
+			wantErr:     true,
+			wantReasons: []string{"缺少点击选择器"},
+		},
+		{
+			name:        "多条失败逐条列出",
+			flowKey:     "gate_multi",
+			dsl:         json.RawMessage(`{"schema_version":"1.0","steps":[{"type":"NAVIGATE"},{"type":"INPUT","input_value":"abc"}]}`),
+			wantErr:     true,
+			wantReasons: []string{"步骤 1", "缺少跳转 URL", "步骤 2", "缺少输入选择器"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, _, manager, project := newTestAIFlowAssetService(t)
+			flow, err := svc.Create(t.Context(), manager.ID, validSaveFlowInput(project.ID, tc.flowKey, tc.dsl))
+			if err != nil {
+				t.Fatalf("create draft flow: %v", err)
+			}
+			_, err = svc.Publish(t.Context(), manager.ID, project.ID, flow.ID, "发布")
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("expected publish to succeed, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected publish to be rejected")
+			}
+			var bizErr *BizError
+			if !errors.As(err, &bizErr) {
+				t.Fatalf("expected BizError, got %T", err)
+			}
+			if bizErr.Code != CodeAIFlowCompileFailed {
+				t.Fatalf("unexpected error code: %d", bizErr.Code)
+			}
+			for _, reason := range tc.wantReasons {
+				if !strings.Contains(bizErr.Message, reason) {
+					t.Fatalf("expected message to contain %q, got %q", reason, bizErr.Message)
+				}
+			}
+			data, ok := bizErr.Data.(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected structured data, got %T", bizErr.Data)
+			}
+			failures, ok := data["compile_failures"].([]model.FlowCompileFailure)
+			if !ok || len(failures) == 0 {
+				t.Fatalf("expected compile_failures in data, got %+v", data)
+			}
+			if failures[0].StepNo == 0 || failures[0].Reason == "" {
+				t.Fatalf("expected populated failure fields, got %+v", failures[0])
+			}
+		})
+	}
+}
+
+func TestAIFlowAssetServiceCompileCheck(t *testing.T) {
+	cases := []struct {
+		name         string
+		flowKey      string
+		dsl          json.RawMessage
+		wantHealth   string
+		wantFailures int
+	}{
+		{
+			name:       "合法 DSL 返回 OK",
+			flowKey:    "check_ok",
+			dsl:        json.RawMessage(`{"schema_version":"1.0","steps":[{"type":"NAVIGATE","page_url":"${env.BASE_URL}"}]}`),
+			wantHealth: model.AIFlowCompileHealthOK,
+		},
+		{
+			name:         "不可编译步骤返回 PARTIAL",
+			flowKey:      "check_partial",
+			dsl:          json.RawMessage(`{"schema_version":"1.0","steps":[{"type":"HOVER"},{"type":"CLICK"}]}`),
+			wantHealth:   model.AIFlowCompileHealthPartial,
+			wantFailures: 2,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, _, manager, project := newTestAIFlowAssetService(t)
+			flow, err := svc.Create(t.Context(), manager.ID, validSaveFlowInput(project.ID, tc.flowKey, tc.dsl))
+			if err != nil {
+				t.Fatalf("create draft flow: %v", err)
+			}
+			result, err := svc.CompileCheck(t.Context(), project.ID, flow.ID)
+			if err != nil {
+				t.Fatalf("compile check: %v", err)
+			}
+			if result.FlowID != flow.ID {
+				t.Fatalf("unexpected flow id: %d", result.FlowID)
+			}
+			if result.CompileHealth != tc.wantHealth {
+				t.Fatalf("expected health %s, got %s", tc.wantHealth, result.CompileHealth)
+			}
+			if len(result.CompileFailures) != tc.wantFailures {
+				t.Fatalf("expected %d failures, got %+v", tc.wantFailures, result.CompileFailures)
+			}
+			if len(result.SupportedStepTypes) == 0 {
+				t.Fatalf("expected supported step types list")
+			}
+		})
+	}
+}
+
+func TestAIFlowAssetServiceCompileCheckPermission(t *testing.T) {
+	svc, _, _, manager, project := newTestAIFlowAssetService(t)
+	flow, err := svc.Create(t.Context(), manager.ID, validSaveFlowInput(project.ID, "check_perm", emptyFlowDSL()))
+	if err != nil {
+		t.Fatalf("create draft flow: %v", err)
+	}
+
+	_, err = svc.CompileCheck(t.Context(), project.ID+999, flow.ID)
+	var bizErr *BizError
+	if !errors.As(err, &bizErr) || bizErr.Code != CodeForbidden {
+		t.Fatalf("expected forbidden BizError, got %T %[1]v", err)
+	}
+
+	_, err = svc.CompileCheck(t.Context(), project.ID, flow.ID+999)
+	if !errors.As(err, &bizErr) || bizErr.Code != CodeNotFound {
+		t.Fatalf("expected not found BizError, got %T %[1]v", err)
+	}
+}
+
+func TestAIFlowAssetServiceGetMarksCompileHealth(t *testing.T) {
+	svc, _, _, manager, project := newTestAIFlowAssetService(t)
+
+	healthy, err := svc.Create(t.Context(), manager.ID, validSaveFlowInput(project.ID, "health_ok", emptyFlowDSL()))
+	if err != nil {
+		t.Fatalf("create healthy flow: %v", err)
+	}
+	if healthy.CompileHealth != model.AIFlowCompileHealthOK || len(healthy.CompileFailures) != 0 {
+		t.Fatalf("expected OK health on create, got %s %+v", healthy.CompileHealth, healthy.CompileFailures)
+	}
+
+	partial, err := svc.Create(t.Context(), manager.ID, validSaveFlowInput(project.ID, "health_partial", json.RawMessage(`{"schema_version":"1.0","steps":[{"type":"HOVER"}]}`)))
+	if err != nil {
+		t.Fatalf("create partial flow: %v", err)
+	}
+	if partial.CompileHealth != model.AIFlowCompileHealthPartial || len(partial.CompileFailures) != 1 {
+		t.Fatalf("expected PARTIAL health on create, got %s %+v", partial.CompileHealth, partial.CompileFailures)
+	}
+
+	fetched, err := svc.Get(t.Context(), project.ID, partial.ID)
+	if err != nil {
+		t.Fatalf("get partial flow: %v", err)
+	}
+	if fetched.CompileHealth != model.AIFlowCompileHealthPartial || len(fetched.CompileFailures) != 1 {
+		t.Fatalf("expected PARTIAL health on get, got %s %+v", fetched.CompileHealth, fetched.CompileFailures)
 	}
 }

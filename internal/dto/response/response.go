@@ -91,6 +91,7 @@ func HandleError(c *gin.Context, err error) {
 		c.JSON(bizErr.Status, Result{
 			Code:      bizErr.NumericCode(),
 			Message:   bizErr.Message,
+			Data:      bizErr.Data,
 			RequestID: c.GetString("request_id"),
 		})
 		return

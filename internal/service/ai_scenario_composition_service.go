@@ -133,6 +133,8 @@ type GenerateCompositionCodeInput struct {
 	ProjectID uint
 	Force     bool
 	Target    string
+	// ConfirmPartial 显式确认引用 compile_health=PARTIAL 的存量资产，允许跳过不可编译步骤继续生成。
+	ConfirmPartial bool
 }
 
 // ManualUpdateCompositionCodeInput 表示人工编辑生成代码的输入。
@@ -565,7 +567,7 @@ func (s *AIScenarioCompositionService) GenerateCode(ctx context.Context, userID,
 	if failures := s.validateCompositionStructure(ctx, composition); len(failures) > 0 {
 		return nil, ErrConflict(CodeConflict, "编排校验未通过: "+strings.Join(failures, "；"))
 	}
-	code, warnings, err := s.compilePlaywrightSpec(ctx, composition)
+	code, warnings, err := s.compilePlaywrightSpec(ctx, composition, input.ConfirmPartial)
 	if err != nil {
 		return nil, err
 	}
@@ -2282,7 +2284,67 @@ func rawJSONToObject(data model.RawJSON) interface{} {
 	return value
 }
 
-func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context, composition *model.AIScenarioComposition) (string, []string, error) {
+// collectNestedFlowAssets 按 FLOW_CALL 引用广度优先收集嵌套固定场景（深度不超过 maxFlowReferenceDepth），
+// 使被引用的固定场景同样内联进生成代码，FLOW_CALL 步骤可直接调用 flows.<flow_key>。
+func (s *AIScenarioCompositionService) collectNestedFlowAssets(ctx context.Context, projectID uint, flowAssets map[uint]*model.AIFlowAsset, flowVersions map[uint]*model.AIFlowAssetVersion) error {
+	queue := make([]uint, 0, len(flowAssets))
+	depths := make(map[uint]int, len(flowAssets))
+	for id := range flowAssets {
+		queue = append(queue, id)
+		depths[id] = 1
+	}
+	for len(queue) > 0 {
+		currentID := queue[0]
+		queue = queue[1:]
+		if depths[currentID] >= maxFlowReferenceDepth {
+			continue
+		}
+		flow := flowAssets[currentID]
+		dsl := flow.DSLJSON
+		if version := flowVersions[currentID]; version != nil && len(version.DSLJSON) > 0 {
+			dsl = version.DSLJSON
+		}
+		rawRefs, err := extractFlowDSLReferences(dsl)
+		if err != nil {
+			continue
+		}
+		for _, rawRef := range rawRefs {
+			var target *model.AIFlowAsset
+			var lookupErr error
+			switch {
+			case rawRef.FlowID > 0:
+				if _, ok := flowAssets[rawRef.FlowID]; ok {
+					continue
+				}
+				target, lookupErr = s.flowRepo.GetByID(ctx, rawRef.FlowID)
+			case rawRef.FlowKey != "":
+				target, lookupErr = s.flowRepo.GetByProjectAndKey(ctx, projectID, rawRef.FlowKey)
+			default:
+				continue
+			}
+			if lookupErr != nil {
+				return ErrConflict(CodeConflict, fmt.Sprintf("固定场景 %s 引用的嵌套固定场景不存在", flow.FlowKey))
+			}
+			if target.ProjectID != projectID {
+				return ErrForbidden(CodeForbidden, "嵌套引用的固定场景不属于当前项目")
+			}
+			if _, ok := flowAssets[target.ID]; ok {
+				continue
+			}
+			flowAssets[target.ID] = target
+			if rawRef.FlowVersionID > 0 {
+				if version, versionErr := s.flowRepo.GetVersionByID(ctx, rawRef.FlowVersionID); versionErr == nil && version.FlowID == target.ID {
+					flowVersions[target.ID] = version
+				}
+			}
+			depths[target.ID] = depths[currentID] + 1
+			queue = append(queue, target.ID)
+		}
+	}
+	return nil
+}
+
+func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context, composition *model.AIScenarioComposition, confirmPartial bool) (string, []string, error) {
 	if len(composition.Steps) == 0 {
 		return "", nil, ErrConflict(CodeConflict, "编排至少需要一个步骤")
 	}
@@ -2359,6 +2421,9 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 			flowVersions[flow.ID] = version
 		}
 	}
+	if err := s.collectNestedFlowAssets(ctx, composition.ProjectID, flowAssets, flowVersions); err != nil {
+		return "", nil, err
+	}
 	flowKeys := make(map[uint]string, len(flowAssets))
 	for id, flow := range flowAssets {
 		flowKeys[id] = flow.FlowKey
@@ -2370,11 +2435,18 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 		if version != nil && len(version.DSLJSON) > 0 {
 			dsl = version.DSLJSON
 		}
+		if failures := dryRunCompileFlowDSL(dsl, flowKeys); len(failures) > 0 && !confirmPartial {
+			return "", nil, ErrConflictWithData(
+				CodeAICompositionFlowCompileFailed,
+				fmt.Sprintf("固定场景 %s dry-run 编译失败：%s；请修复该资产 DSL，或显式确认引用 PARTIAL 资产后重试", flow.FlowKey, summarizeFlowCompileFailures(failures)),
+				map[string]interface{}{"flow_key": flow.FlowKey, "compile_failures": failures},
+			)
+		}
 		fmt.Fprintf(&b, "  %s: async (parentCtx, inputs) => {\n", flow.FlowKey)
 		b.WriteString("    const ctx: ScenarioContext = { ...parentCtx, variables: { ...parentCtx.variables, ...inputs } }\n")
 		b.WriteString("    const page = ctx.page\n")
 		b.WriteString("    const outputs: Record<string, unknown> = {}\n")
-		flowLines, flowWarnings := compileFlowDSLStatements(dsl, "    ")
+		flowLines, flowWarnings := compileFlowDSLStatements(dsl, "    ", flowKeys)
 		warnings = append(warnings, flowWarnings...)
 		if len(flowLines) == 0 {
 			if strings.TrimSpace(flow.CodeSnapshot) != "" {
@@ -2512,45 +2584,119 @@ func compileAtomicAction(step model.AIScenarioStep, inputLiteral string, outputL
 		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).fill(String(inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ filled: true }, " + outputLiteral + " as Record<string, unknown>, { filled: true })\n  }\n", nil
 	case "wait":
 		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await page.waitForTimeout(Number(inputs.timeout_ms || 1000))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ waited: true }, " + outputLiteral + " as Record<string, unknown>, { waited: true })\n  }\n", nil
+	case "select":
+		if selector == "" {
+			return "", ErrBadRequest(CodeParamsError, "select 原子操作需要 selector 参数")
+		}
+		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).selectOption(String(inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ selected: true }, " + outputLiteral + " as Record<string, unknown>, { selected: true })\n  }\n", nil
+	case "press":
+		key, _ := params["key"].(string)
+		if key == "" {
+			key, _ = params["value"].(string)
+		}
+		if selector == "" {
+			return "", ErrBadRequest(CodeParamsError, "press 原子操作需要 selector 参数")
+		}
+		if key == "" {
+			return "", ErrBadRequest(CodeParamsError, "press 原子操作需要 key 参数")
+		}
+		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).press(String(inputs.key ?? inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ pressed: true }, " + outputLiteral + " as Record<string, unknown>, { pressed: true })\n  }\n", nil
+	case "wait_for":
+		if selector == "" {
+			return "", ErrBadRequest(CodeParamsError, "wait_for 原子操作需要 selector 参数")
+		}
+		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).waitFor({ state: 'visible', timeout: Number(inputs.timeout_ms || 5000) })\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ waited: true }, " + outputLiteral + " as Record<string, unknown>, { waited: true })\n  }\n", nil
 	default:
-		return "", ErrBadRequest(CodeParamsError, "原子操作类型无效")
+		return "", ErrBadRequest(CodeParamsError, "原子操作类型无效，支持："+strings.Join(supportedAtomicActions, "、"))
 	}
 }
 
-func compileFlowDSLStatements(data model.RawJSON, indent string) ([]string, []string) {
+// supportedFlowDSLStepTypes 固定场景 DSL 支持的步骤类型清单，与 compileFlowStepStatement 能力保持同一清单。
+// 新增类型必须同步更新编译器与本清单。
+var supportedFlowDSLStepTypes = []string{
+	"NAVIGATE", "GOTO", "CLICK", "INPUT", "FILL", "SELECT", "KEY_PRESS", "WAIT", "ASSERT", "ASSERT_CANDIDATE", "FLOW_CALL",
+}
+
+// supportedAtomicActions 编排原子操作支持的类型清单，与 compileAtomicAction 能力保持同一清单。
+var supportedAtomicActions = []string{"goto", "click", "fill", "select", "press", "wait", "wait_for"}
+
+func compileFlowDSLStatements(data model.RawJSON, indent string, flowKeys map[uint]string) ([]string, []string) {
+	lines, failures := compileFlowDSL(data, indent, flowKeys)
+	warnings := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		warnings = append(warnings, flowCompileFailureWarning(failure))
+	}
+	return lines, warnings
+}
+
+// dryRunCompileFlowDSL 对固定场景 DSL 执行 dry-run 编译，返回结构化失败清单。
+// 发布门禁、compile-check 接口、compile_health 标记与编排生成代码硬错误均复用本函数。
+func dryRunCompileFlowDSL(data model.RawJSON, flowKeys map[uint]string) []model.FlowCompileFailure {
+	_, failures := compileFlowDSL(data, "", flowKeys)
+	return failures
+}
+
+func compileFlowDSL(data model.RawJSON, indent string, flowKeys map[uint]string) ([]string, []model.FlowCompileFailure) {
 	root := map[string]interface{}{}
 	if len(data) == 0 || !json.Valid(data) {
-		return nil, []string{"固定场景 DSL 为空或不是合法 JSON"}
+		return nil, []model.FlowCompileFailure{{Reason: "固定场景 DSL 为空或不是合法 JSON"}}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(&root); err != nil {
-		return nil, []string{"固定场景 DSL 解析失败"}
+		return nil, []model.FlowCompileFailure{{Reason: "固定场景 DSL 解析失败"}}
 	}
 	steps := dslObjectSlice(root["generation_steps"])
 	if len(steps) == 0 {
 		steps = dslObjectSlice(root["steps"])
 	}
 	lines := make([]string, 0, len(steps)*3)
-	warnings := []string{}
+	failures := []model.FlowCompileFailure{}
 	for index, step := range steps {
-		stepLines, warning := compileFlowStepStatement(step, index+1, indent)
-		if warning != "" {
-			warnings = append(warnings, warning)
+		stepLines, failure := compileFlowStepStatement(step, index+1, indent, flowKeys)
+		if failure != nil {
+			failures = append(failures, *failure)
 			continue
 		}
 		lines = append(lines, stepLines...)
 	}
-	return lines, warnings
+	return lines, failures
 }
 
-func compileFlowStepStatement(step map[string]interface{}, fallbackNo int, indent string) ([]string, string) {
+func flowCompileFailureWarning(failure model.FlowCompileFailure) string {
+	if failure.StepNo == 0 {
+		return failure.Reason
+	}
+	return fmt.Sprintf("固定场景步骤 %d %s，已跳过", failure.StepNo, failure.Reason)
+}
+
+func summarizeFlowCompileFailures(failures []model.FlowCompileFailure) string {
+	parts := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		if failure.StepNo == 0 {
+			parts = append(parts, failure.Reason)
+			continue
+		}
+		stepType := failure.StepType
+		if stepType == "" {
+			stepType = "未知类型"
+		}
+		parts = append(parts, fmt.Sprintf("步骤 %d（%s）%s", failure.StepNo, stepType, failure.Reason))
+	}
+	return strings.Join(parts, "；")
+}
+
+func flowStepFailure(stepNo int, stepType, reason string) *model.FlowCompileFailure {
+	return &model.FlowCompileFailure{StepNo: stepNo, StepType: stepType, Reason: reason}
+}
+
+func compileFlowStepStatement(step map[string]interface{}, fallbackNo int, indent string, flowKeys map[uint]string) ([]string, *model.FlowCompileFailure) {
 	actionType := strings.ToUpper(firstNonEmptyString(step, "type", "step_type", "action_type", "actionType"))
 	if actionType == model.AIScenarioStepTypeAtomicAction {
 		actionType = strings.ToUpper(firstNonEmptyString(step, "action.type", "action_type", "actionType"))
 	}
 	if actionType == "" {
-		return nil, fmt.Sprintf("固定场景步骤 %d 缺少动作类型，已跳过", fallbackNo)
+		return nil, flowStepFailure(fallbackNo, "", "缺少动作类型")
 	}
 	inputs := objectFromAny(step["inputs"])
 	selector := firstNonEmptyStringFromObjects([]map[string]interface{}{inputs, step}, "selector", "locator", "locator_used", "locatorUsed")
@@ -2564,44 +2710,64 @@ func compileFlowStepStatement(step map[string]interface{}, fallbackNo int, inden
 	switch actionType {
 	case "NAVIGATE", "GOTO":
 		if url == "" {
-			return nil, fmt.Sprintf("固定场景步骤 %d 缺少跳转 URL，已跳过", fallbackNo)
+			return nil, flowStepFailure(fallbackNo, actionType, "缺少跳转 URL")
 		}
-		return []string{indent + "await page.goto(String(resolveScenarioValue(ctx, " + tsStringOrInput(url, "url") + ")))\n"}, ""
+		return []string{indent + "await page.goto(String(resolveScenarioValue(ctx, " + tsStringOrInput(url, "url") + ")))\n"}, nil
 	case "CLICK":
 		if selector == "" {
-			return nil, fmt.Sprintf("固定场景步骤 %d 缺少点击选择器，已跳过", fallbackNo)
+			return nil, flowStepFailure(fallbackNo, actionType, "缺少点击选择器")
 		}
-		return []string{indent + "await " + compileLocatorExpression(selector, "selector") + ".click()\n"}, ""
+		return []string{indent + "await " + compileLocatorExpression(selector, "selector") + ".click()\n"}, nil
 	case "INPUT", "FILL":
 		if selector == "" {
-			return nil, fmt.Sprintf("固定场景步骤 %d 缺少输入选择器，已跳过", fallbackNo)
+			return nil, flowStepFailure(fallbackNo, actionType, "缺少输入选择器")
 		}
-		return []string{indent + "await " + compileLocatorExpression(selector, "selector") + ".fill(String(resolveScenarioValue(ctx, " + tsStringOrInput(value, "value") + ") ?? ''))\n"}, ""
+		return []string{indent + "await " + compileLocatorExpression(selector, "selector") + ".fill(String(resolveScenarioValue(ctx, " + tsStringOrInput(value, "value") + ") ?? ''))\n"}, nil
 	case "SELECT":
 		if selector == "" {
-			return nil, fmt.Sprintf("固定场景步骤 %d 缺少选择器，已跳过", fallbackNo)
+			return nil, flowStepFailure(fallbackNo, actionType, "缺少选择器")
 		}
-		return []string{indent + "await " + compileLocatorExpression(selector, "selector") + ".selectOption(String(resolveScenarioValue(ctx, " + tsStringOrInput(value, "value") + ") ?? ''))\n"}, ""
+		return []string{indent + "await " + compileLocatorExpression(selector, "selector") + ".selectOption(String(resolveScenarioValue(ctx, " + tsStringOrInput(value, "value") + ") ?? ''))\n"}, nil
 	case "KEY_PRESS":
 		if selector == "" {
-			return nil, fmt.Sprintf("固定场景步骤 %d 缺少按键选择器，已跳过", fallbackNo)
+			return nil, flowStepFailure(fallbackNo, actionType, "缺少按键选择器")
 		}
-		return []string{indent + "await " + compileLocatorExpression(selector, "selector") + ".press(String(resolveScenarioValue(ctx, " + tsStringOrInput(value, "value") + ") ?? ''))\n"}, ""
+		return []string{indent + "await " + compileLocatorExpression(selector, "selector") + ".press(String(resolveScenarioValue(ctx, " + tsStringOrInput(value, "value") + ") ?? ''))\n"}, nil
 	case "WAIT":
 		if strings.HasPrefix(strings.ToLower(value), "load") {
-			return []string{indent + "await page.waitForLoadState('networkidle')\n"}, ""
+			return []string{indent + "await page.waitForLoadState('networkidle')\n"}, nil
 		}
-		return []string{indent + "await page.waitForTimeout(Number(resolveScenarioValue(ctx, " + tsStringOrInput(timeout, "timeout_ms") + ") || 1000))\n"}, ""
+		return []string{indent + "await page.waitForTimeout(Number(resolveScenarioValue(ctx, " + tsStringOrInput(timeout, "timeout_ms") + ") || 1000))\n"}, nil
 	case "ASSERT", "ASSERT_CANDIDATE":
 		if selector != "" {
-			return []string{indent + "await expect(" + compileLocatorExpression(selector, "selector") + ").toBeVisible()\n"}, ""
+			return []string{indent + "await expect(" + compileLocatorExpression(selector, "selector") + ").toBeVisible()\n"}, nil
 		}
 		if value != "" {
-			return []string{indent + "await expect(page.getByText(String(resolveScenarioValue(ctx, " + tsStringOrInput(value, "text") + ")))).toBeVisible()\n"}, ""
+			return []string{indent + "await expect(page.getByText(String(resolveScenarioValue(ctx, " + tsStringOrInput(value, "text") + ")))).toBeVisible()\n"}, nil
 		}
-		return nil, fmt.Sprintf("固定场景步骤 %d 缺少断言目标，已跳过", fallbackNo)
+		return nil, flowStepFailure(fallbackNo, actionType, "缺少断言目标")
+	case model.AIScenarioStepTypeFlowCall:
+		refObject := objectFromAny(step["ref"])
+		flowKey := firstNonEmptyStringFromObjects([]map[string]interface{}{refObject, step}, "flow_key", "ref_flow_key", "flowKey", "refFlowKey")
+		if flowKey == "" {
+			flowID, _ := firstUintFromObjects([]map[string]interface{}{refObject, step}, "flow_id", "ref_flow_id", "flowId", "refFlowId")
+			if flowID == 0 {
+				return nil, flowStepFailure(fallbackNo, actionType, "缺少 flow_key 或 flow_id 引用")
+			}
+			flowKey = flowKeys[flowID]
+		}
+		if !flowKeyPattern.MatchString(flowKey) {
+			return nil, flowStepFailure(fallbackNo, actionType, "引用的 flow_key 无法解析为可编译的固定场景")
+		}
+		inputsLiteral := "{}"
+		if len(inputs) > 0 {
+			if data, err := json.Marshal(inputs); err == nil {
+				inputsLiteral = string(data)
+			}
+		}
+		return []string{indent + "await flows." + flowKey + "(ctx, resolveScenarioValue(ctx, " + inputsLiteral + ") as Record<string, unknown>)\n"}, nil
 	default:
-		return nil, fmt.Sprintf("固定场景步骤 %d 动作类型 %s 暂不支持，已跳过", fallbackNo, actionType)
+		return nil, flowStepFailure(fallbackNo, actionType, fmt.Sprintf("动作类型 %s 暂不支持", actionType))
 	}
 }
 

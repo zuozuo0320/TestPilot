@@ -300,6 +300,43 @@ func (a *API) publishAIFlowAsset(c *gin.Context) {
 	response.Created(c, result)
 }
 
+// compileCheckAIFlowAsset 草稿阶段手动触发固定场景 DSL dry-run 编译自检。
+// @Summary 固定场景发布前自检
+// @Description 对固定场景 DSL 执行 dry-run 编译，返回与发布门禁相同结构的编译失败清单与 compile_health 标记
+// @Tags AIScriptFlow
+// @Accept json
+// @Produce json
+// @Param flowID path int true "固定场景 ID"
+// @Param body body flowAssetActionRequest true "自检参数"
+// @Success 200 {object} response.Response{data=service.FlowCompileCheckResult}
+// @Failure 400 {object} response.Response
+// @Failure 403 {object} response.Response
+// @Failure 404 {object} response.Response
+// @Router /ai-script/flows/{flowID}/compile-check [post]
+func (a *API) compileCheckAIFlowAsset(c *gin.Context) {
+	user := currentUser(c)
+	if !requireRole(c, user, model.GlobalRoleManager, model.GlobalRoleTester, model.GlobalRoleDeveloper) {
+		return
+	}
+	flowID, ok := parseUintParam(c, "flowID")
+	if !ok {
+		return
+	}
+	var req flowAssetActionRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	if !a.requireProjectAccess(c, user, req.ProjectID) {
+		return
+	}
+	result, err := a.aiFlowAssetSvc.CompileCheck(c.Request.Context(), req.ProjectID, flowID)
+	if err != nil {
+		response.HandleError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
 // archiveAIFlowAsset 归档固定场景资产。
 // @Summary 归档固定场景
 // @Description 归档后不能新增引用，历史编排仍保留锁定版本

@@ -102,6 +102,61 @@ type PublishFlowAssetResult struct {
 	Status        string `json:"status"`
 }
 
+// FlowCompileCheckResult 表示固定场景 DSL dry-run 自检结果，与发布门禁返回同一结构。
+type FlowCompileCheckResult struct {
+	FlowID             uint                       `json:"flow_id"`
+	CompileHealth      string                     `json:"compile_health"`
+	SupportedStepTypes []string                   `json:"supported_step_types"`
+	CompileFailures    []model.FlowCompileFailure `json:"compile_failures"`
+}
+
+// dryRunFlowCompile 对固定场景 DSL 执行 dry-run 编译，返回结构化失败清单。
+func (s *AIFlowAssetService) dryRunFlowCompile(ctx context.Context, dsl model.RawJSON) []model.FlowCompileFailure {
+	flowKeys := map[uint]string{}
+	if rawRefs, err := extractFlowDSLReferences(dsl); err == nil {
+		for _, rawRef := range rawRefs {
+			if rawRef.FlowID == 0 {
+				continue
+			}
+			if _, ok := flowKeys[rawRef.FlowID]; ok {
+				continue
+			}
+			if flow, lookupErr := s.flowRepo.GetByID(ctx, rawRef.FlowID); lookupErr == nil {
+				flowKeys[rawRef.FlowID] = flow.FlowKey
+			}
+		}
+	}
+	return dryRunCompileFlowDSL(dsl, flowKeys)
+}
+
+// fillCompileHealth 计算并填充资产的 compile_health 标记与 dry-run 失败明细（虚拟字段）。
+func (s *AIFlowAssetService) fillCompileHealth(ctx context.Context, flow *model.AIFlowAsset) {
+	flow.CompileFailures = s.dryRunFlowCompile(ctx, flow.DSLJSON)
+	if len(flow.CompileFailures) > 0 {
+		flow.CompileHealth = model.AIFlowCompileHealthPartial
+		return
+	}
+	flow.CompileHealth = model.AIFlowCompileHealthOK
+}
+
+// CompileCheck 草稿阶段手动触发 dry-run 编译自检，返回与发布门禁相同结构的结果。
+func (s *AIFlowAssetService) CompileCheck(ctx context.Context, projectID, flowID uint) (*FlowCompileCheckResult, error) {
+	flow, err := s.Get(ctx, projectID, flowID)
+	if err != nil {
+		return nil, err
+	}
+	failures := flow.CompileFailures
+	if failures == nil {
+		failures = []model.FlowCompileFailure{}
+	}
+	return &FlowCompileCheckResult{
+		FlowID:             flow.ID,
+		CompileHealth:      flow.CompileHealth,
+		SupportedStepTypes: supportedFlowDSLStepTypes,
+		CompileFailures:    failures,
+	}, nil
+}
+
 // List 分页查询固定场景资产。
 func (s *AIFlowAssetService) List(ctx context.Context, input FlowAssetListInput) ([]model.AIFlowAsset, int64, error) {
 	if input.ProjectID == 0 {
@@ -153,6 +208,7 @@ func (s *AIFlowAssetService) Get(ctx context.Context, projectID, flowID uint) (*
 			flow.SourceTaskName = task.TaskName
 		}
 	}
+	s.fillCompileHealth(ctx, flow)
 	return flow, nil
 }
 
@@ -215,6 +271,7 @@ func (s *AIFlowAssetService) Create(ctx context.Context, userID uint, input Save
 		s.logger.Error("create flow asset failed", "error", err, "project_id", normalized.ProjectID)
 		return nil, ErrInternal(CodeInternal, err)
 	}
+	s.fillCompileHealth(ctx, flow)
 	return flow, nil
 }
 
@@ -278,6 +335,13 @@ func (s *AIFlowAssetService) Publish(ctx context.Context, userID, projectID, flo
 	}
 	if !json.Valid(flow.DSLJSON) {
 		return nil, ErrConflict(CodeConflict, "固定场景 DSL 不是合法 JSON")
+	}
+	if failures := s.dryRunFlowCompile(ctx, flow.DSLJSON); len(failures) > 0 {
+		return nil, ErrConflictWithData(
+			CodeAIFlowCompileFailed,
+			fmt.Sprintf("DSL dry-run 编译失败，拒绝发布：%s", summarizeFlowCompileFailures(failures)),
+			map[string]interface{}{"compile_failures": failures},
+		)
 	}
 	refs, err := s.resolveFlowDSLReferences(ctx, projectID, flow.ID, flow.FlowKey, flow.DSLJSON)
 	if err != nil {
@@ -417,6 +481,13 @@ func (s *AIFlowAssetService) PublishFromTask(ctx context.Context, userID, taskID
 	dsl, err := buildFlowDSL(task, version)
 	if err != nil {
 		return nil, ErrInternal(CodeInternal, err)
+	}
+	if failures := s.dryRunFlowCompile(ctx, dsl); len(failures) > 0 {
+		return nil, ErrConflictWithData(
+			CodeAIFlowCompileFailed,
+			fmt.Sprintf("DSL dry-run 编译失败，拒绝发布：%s", summarizeFlowCompileFailures(failures)),
+			map[string]interface{}{"compile_failures": failures},
+		)
 	}
 
 	flow := &model.AIFlowAsset{

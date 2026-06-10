@@ -48,9 +48,10 @@ type reorderScenarioStepsRequest struct {
 }
 
 type generateScenarioCodeRequest struct {
-	ProjectID uint   `json:"project_id" binding:"required,min=1"`
-	Force     bool   `json:"force"`
-	Target    string `json:"target" binding:"omitempty,max=32"`
+	ProjectID      uint   `json:"project_id" binding:"required,min=1"`
+	Force          bool   `json:"force"`
+	Target         string `json:"target" binding:"omitempty,max=32"`
+	ConfirmPartial bool   `json:"confirm_partial"`
 }
 
 type manualScenarioCodeRequest struct {
@@ -398,9 +399,10 @@ func (a *API) generateAIScenarioCode(c *gin.Context) {
 		return
 	}
 	result, err := a.aiScenarioCompositionSvc.GenerateCode(c.Request.Context(), user.ID, compositionID, service.GenerateCompositionCodeInput{
-		ProjectID: req.ProjectID,
-		Force:     req.Force,
-		Target:    req.Target,
+		ProjectID:      req.ProjectID,
+		Force:          req.Force,
+		Target:         req.Target,
+		ConfirmPartial: req.ConfirmPartial,
 	})
 	if err != nil {
 		response.HandleError(c, err)

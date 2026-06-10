@@ -405,6 +405,20 @@ type AIScriptRecordingSession struct {
 	FinishedAt       *time.Time `json:"finished_at"`
 }
 
+// 固定场景编译健康度标记。
+// 存量已发布但含不可编译步骤的资产不回溯下架，仅在详情与引用校验中标记 PARTIAL。
+const (
+	AIFlowCompileHealthOK      = "OK"
+	AIFlowCompileHealthPartial = "PARTIAL"
+)
+
+// FlowCompileFailure 固定场景 DSL dry-run 编译失败明细。
+type FlowCompileFailure struct {
+	StepNo   int    `json:"step_no"`
+	StepType string `json:"step_type"`
+	Reason   string `json:"reason"`
+}
+
 // AIFlowAsset 固定业务场景资产主表。
 // 固定场景由已验证通过的测试智编任务发布，作为后续编排复用的稳定契约。
 type AIFlowAsset struct {
@@ -430,9 +444,11 @@ type AIFlowAsset struct {
 	UpdatedBy              uint      `json:"updated_by" gorm:"not null"`
 	UpdatedAt              time.Time `json:"updated_at"`
 
-	ProjectName    string `json:"project_name,omitempty" gorm:"-"`
-	CreatedName    string `json:"created_name,omitempty" gorm:"-"`
-	SourceTaskName string `json:"source_task_name,omitempty" gorm:"-"`
+	ProjectName     string               `json:"project_name,omitempty" gorm:"-"`
+	CreatedName     string               `json:"created_name,omitempty" gorm:"-"`
+	SourceTaskName  string               `json:"source_task_name,omitempty" gorm:"-"`
+	CompileHealth   string               `json:"compile_health,omitempty" gorm:"-"`
+	CompileFailures []FlowCompileFailure `json:"compile_failures,omitempty" gorm:"-"`
 }
 
 // TableName 指定固定场景资产表名，与脚本编排方案中的表命名保持一致。

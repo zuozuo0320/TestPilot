@@ -9,6 +9,7 @@ type BizError struct {
 	Status  int    // HTTP 状态码（200/400/401/403/404/500）
 	Code    int    // 6 位数字业务错误码（如 100101）
 	Message string // 用户可见消息
+	Data    any    // 附加结构化数据（如 compile_failures），随响应 data 字段返回
 }
 
 func (e *BizError) Error() string {
@@ -45,6 +46,11 @@ func ErrNotFound(code int, message string) *BizError {
 // ErrConflict 409 资源冲突
 func ErrConflict(code int, message string) *BizError {
 	return &BizError{Status: 409, Code: code, Message: message}
+}
+
+// ErrConflictWithData 409 资源冲突，附带结构化数据（随响应 data 字段返回）
+func ErrConflictWithData(code int, message string, data any) *BizError {
+	return &BizError{Status: 409, Code: code, Message: message, Data: data}
 }
 
 // ErrInternal 500 内部错误（不暴露细节给客户端）
@@ -189,6 +195,11 @@ const (
 	// 1509xx: 内部回调
 	CodeReqInternalTokenInvalid = 150901 // 内部 token 鉴权失败
 	CodeReqCallbackIgnored      = 150902 // 回调任务已为终态，忽略
+
+	// 16: 测试智编脚本编排工程化
+	// 1601xx: 固定场景 DSL 编译门禁
+	CodeAIFlowCompileFailed            = 160101 // 固定场景 DSL dry-run 编译失败，拒绝发布
+	CodeAICompositionFlowCompileFailed = 160102 // 编排生成代码时引用的固定场景 dry-run 编译失败
 )
 
 // ========== 预定义错误（向后兼容） ==========
