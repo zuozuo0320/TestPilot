@@ -459,6 +459,104 @@ func TestAIFlowAssetServiceCompileCheckPermission(t *testing.T) {
 	}
 }
 
+func TestAIFlowAssetServiceGetLazyBackfillsCompileHealth(t *testing.T) {
+	cases := []struct {
+		name         string
+		flowKey      string
+		dsl          json.RawMessage
+		wantHealth   string
+		wantFailures int
+	}{
+		{
+			name:       "存量 OK 资产懒回填",
+			flowKey:    "backfill_ok",
+			dsl:        emptyFlowDSL(),
+			wantHealth: model.AIFlowCompileHealthOK,
+		},
+		{
+			name:         "存量 PARTIAL 资产懒回填",
+			flowKey:      "backfill_partial",
+			dsl:          json.RawMessage(`{"schema_version":"1.0","steps":[{"type":"HOVER"}]}`),
+			wantHealth:   model.AIFlowCompileHealthPartial,
+			wantFailures: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, flowRepo, _, manager, project := newTestAIFlowAssetService(t)
+			flow, err := svc.Create(t.Context(), manager.ID, validSaveFlowInput(project.ID, tc.flowKey, tc.dsl))
+			if err != nil {
+				t.Fatalf("create flow: %v", err)
+			}
+			if err := flowRepo.UpdateFields(t.Context(), nil, flow.ID, map[string]interface{}{
+				"compile_health":        "",
+				"compile_failures_json": "",
+			}); err != nil {
+				t.Fatalf("simulate legacy flow: %v", err)
+			}
+
+			fetched, err := svc.Get(t.Context(), project.ID, flow.ID)
+			if err != nil {
+				t.Fatalf("get flow: %v", err)
+			}
+			if fetched.CompileHealth != tc.wantHealth || len(fetched.CompileFailures) != tc.wantFailures {
+				t.Fatalf("expected %s with %d failures, got %s %+v", tc.wantHealth, tc.wantFailures, fetched.CompileHealth, fetched.CompileFailures)
+			}
+
+			persisted, err := flowRepo.GetByID(t.Context(), flow.ID)
+			if err != nil {
+				t.Fatalf("query persisted flow: %v", err)
+			}
+			if persisted.CompileHealth != tc.wantHealth {
+				t.Fatalf("expected persisted health %s, got %s", tc.wantHealth, persisted.CompileHealth)
+			}
+			if len(decodeCompileFailures(persisted.CompileFailuresJSON)) != tc.wantFailures {
+				t.Fatalf("expected %d persisted failures, got %s", tc.wantFailures, persisted.CompileFailuresJSON)
+			}
+		})
+	}
+}
+
+func TestAIFlowAssetServiceDetectOutdatedFlowRefs(t *testing.T) {
+	svc, _, _, manager, project := newTestAIFlowAssetService(t)
+	base := createAndPublishFlow(t, svc, manager.ID, project.ID, "outdated_base", emptyFlowDSL())
+	caller := createAndPublishFlow(t, svc, manager.ID, project.ID, "outdated_caller", flowCallDSL(base.FlowKey))
+
+	fresh, err := svc.Get(t.Context(), project.ID, caller.ID)
+	if err != nil {
+		t.Fatalf("get caller: %v", err)
+	}
+	if len(fresh.OutdatedFlowRefs) != 0 {
+		t.Fatalf("expected no outdated refs before republish, got %+v", fresh.OutdatedFlowRefs)
+	}
+
+	if _, err := svc.Update(t.Context(), manager.ID, base.ID, validSaveFlowInput(project.ID, base.FlowKey, emptyFlowDSL())); err != nil {
+		t.Fatalf("update base flow: %v", err)
+	}
+	if _, err := svc.Publish(t.Context(), manager.ID, project.ID, base.ID, "发布 v2"); err != nil {
+		t.Fatalf("republish base flow: %v", err)
+	}
+
+	stale, err := svc.Get(t.Context(), project.ID, caller.ID)
+	if err != nil {
+		t.Fatalf("get caller after republish: %v", err)
+	}
+	if len(stale.OutdatedFlowRefs) != 1 {
+		t.Fatalf("expected one outdated ref, got %+v", stale.OutdatedFlowRefs)
+	}
+	ref := stale.OutdatedFlowRefs[0]
+	if !ref.RefOutdated || ref.TargetID != base.ID {
+		t.Fatalf("unexpected outdated ref: %+v", ref)
+	}
+	if ref.LockedVersionNo != 1 || ref.LatestVersionNo != 2 || ref.LatestVersionID == nil {
+		t.Fatalf("expected locked v1 latest v2, got %+v", ref)
+	}
+	if ref.TargetName == "" {
+		t.Fatalf("expected target name to be filled, got %+v", ref)
+	}
+}
+
 func TestAIFlowAssetServiceGetMarksCompileHealth(t *testing.T) {
 	svc, _, _, manager, project := newTestAIFlowAssetService(t)
 
