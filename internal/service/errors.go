@@ -205,6 +205,13 @@ const (
 	CodeAIPlannerModelNotConfigured = 160201 // LLM Planner 激活模型未配置
 	CodeAIPlannerOutputInvalid      = 160202 // LLM Planner 输出不符合计划 Schema
 	CodeAIPlannerTimeout            = 160203 // LLM Planner 调用超时
+
+	// 1603xx: 回归与 AI 修复闭环
+	CodeAIRegressionNotPublished     = 160301 // 仅已发布编排可纳入定时回归
+	CodeAIRegressionPlanExists       = 160302 // 该编排已存在回归计划
+	CodeAIRepairModelNotConfigured   = 160303 // AI 修复激活模型未配置
+	CodeAIRepairOutputInvalid        = 160304 // AI 修复输出不合法（缺少 Diff 或补丁代码）
+	CodeAIRepairSuggestionNotPending = 160305 // 修复建议不处于待确认状态，不可应用或拒绝
 )
 
 // ========== 预定义错误（向后兼容） ==========
