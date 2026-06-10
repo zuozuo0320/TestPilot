@@ -227,7 +227,7 @@ func main() {
 	aiScriptSvc := service.NewAIScriptService(aiScriptRepo, projectRepo, userRepo, txMgr, aiModelConfigSvc, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey, logger)
 	aiFlowAssetSvc := service.NewAIFlowAssetService(logger, aiFlowAssetRepo, aiAssetReferenceRepo, aiScriptRepo, projectRepo, userRepo, txMgr)
 	aiAssertionAssetSvc := service.NewAIAssertionAssetService(logger, aiAssertionAssetRepo, aiAssetReferenceRepo, projectRepo, userRepo, txMgr)
-	aiScenarioCompositionSvc := service.NewAIScenarioCompositionService(logger, aiScenarioCompositionRepo, aiFlowAssetRepo, aiAssertionAssetRepo, aiAssetReferenceRepo, aiScriptRepo, projectRepo, userRepo, txMgr, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey)
+	aiScenarioCompositionSvc := service.NewAIScenarioCompositionService(logger, aiScenarioCompositionRepo, aiFlowAssetRepo, aiAssertionAssetRepo, aiAssetReferenceRepo, aiScriptRepo, projectRepo, userRepo, txMgr, aiModelConfigSvc, cfg.ExecutorURL, cfg.ExecutorPublicURL, cfg.ExecutorAPIKey)
 	caseReviewSvc := service.NewCaseReviewService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, userRepo, projectRepo, caseReviewAttachmentRepo, txMgr, logger)
 	caseReviewSubmitSvc := service.NewCaseReviewSubmitService(caseReviewRepo, caseReviewRecordRepo, testCaseRepo, txMgr, logger)
 	caseReviewAttachmentSvc := service.NewCaseReviewAttachmentService(caseReviewAttachmentRepo, caseReviewRepo, "./uploads")

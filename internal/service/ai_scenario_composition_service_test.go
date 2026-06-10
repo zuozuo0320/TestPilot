@@ -34,6 +34,7 @@ func newTestAIScenarioCompositionService(t *testing.T) (*AIScenarioCompositionSe
 		projectRepo,
 		repository.NewUserRepo(db),
 		txMgr,
+		nil,
 		"",
 		"",
 		"",

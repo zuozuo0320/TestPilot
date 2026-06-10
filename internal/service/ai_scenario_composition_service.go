@@ -44,10 +44,12 @@ type AIScenarioCompositionService struct {
 	projectRepo       repository.ProjectRepository
 	userRepo          repository.UserRepository
 	txMgr             *repository.TxManager
+	aiModelSvc        *AIModelConfigService
 	executorURL       string
 	executorPublicURL string
 	executorAPIKey    string
 	httpClient        *http.Client
+	plannerTimeout    time.Duration
 }
 
 // NewAIScenarioCompositionService 创建场景编排服务。
@@ -61,6 +63,7 @@ func NewAIScenarioCompositionService(
 	projectRepo repository.ProjectRepository,
 	userRepo repository.UserRepository,
 	txMgr *repository.TxManager,
+	aiModelSvc *AIModelConfigService,
 	executorURL string,
 	executorPublicURL string,
 	executorAPIKey string,
@@ -75,10 +78,12 @@ func NewAIScenarioCompositionService(
 		projectRepo:       projectRepo,
 		userRepo:          userRepo,
 		txMgr:             txMgr,
+		aiModelSvc:        aiModelSvc,
 		executorURL:       strings.TrimRight(executorURL, "/"),
 		executorPublicURL: strings.TrimRight(executorPublicURL, "/"),
 		executorAPIKey:    executorAPIKey,
 		httpClient:        &http.Client{Timeout: 300 * time.Second},
+		plannerTimeout:    defaultPlannerTimeout,
 	}
 }
 
@@ -232,6 +237,8 @@ type AIPlanFromTaskInput struct {
 	TaskID          uint
 	SourceVersionID uint
 	MaxSteps        int
+	PlannerMode     string
+	OperatorID      uint
 }
 
 // AIPlanStep 表示单个 AI 编排建议步骤。
@@ -249,11 +256,13 @@ type AIPlanStep struct {
 
 // AIPlanResult 表示 AI 编排建议结果。
 type AIPlanResult struct {
-	PlanID     string       `json:"plan_id"`
-	Confidence float64      `json:"confidence"`
-	Summary    string       `json:"summary"`
-	Steps      []AIPlanStep `json:"steps"`
-	Warnings   []string     `json:"warnings"`
+	PlanID         string       `json:"plan_id"`
+	Confidence     float64      `json:"confidence"`
+	Summary        string       `json:"summary"`
+	Steps          []AIPlanStep `json:"steps"`
+	Warnings       []string     `json:"warnings"`
+	PlannerUsed    string       `json:"planner_used"`
+	DegradedReason string       `json:"degraded_reason,omitempty"`
 }
 
 // List 分页查询场景编排列表。
@@ -1525,7 +1534,8 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 	profile := buildAIPlanSourceProfile(task, sourceVersion)
 
 	candidates := make([]aiPlanCandidate, 0, len(flows)+len(assertions))
-	for _, flow := range flows {
+	for i := range flows {
+		flow := flows[i]
 		if isValidationUnusableForAI(flow.LatestValidationStatus) {
 			continue
 		}
@@ -1536,7 +1546,9 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 		score, matched := scoreFlowPlanCandidate(profile, flow, version)
 		confidence := planConfidence(score, model.AIScenarioStepTypeFlowCall)
 		candidates = append(candidates, aiPlanCandidate{
-			Score: score,
+			Score:       score,
+			Flow:        &flows[i],
+			FlowVersion: version,
 			Step: AIPlanStep{
 				Type:          model.AIScenarioStepTypeFlowCall,
 				FlowID:        flow.ID,
@@ -1548,14 +1560,16 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 			},
 		})
 	}
-	for _, assertion := range assertions {
+	for i := range assertions {
+		assertion := assertions[i]
 		if isValidationUnusableForAI(assertion.LatestValidationStatus) {
 			continue
 		}
 		score, matched := scoreAssertionPlanCandidate(profile, assertion)
 		confidence := planConfidence(score, model.AIScenarioStepTypeAssertion)
 		candidates = append(candidates, aiPlanCandidate{
-			Score: score,
+			Score:     score,
+			Assertion: &assertions[i],
 			Step: AIPlanStep{
 				Type:         model.AIScenarioStepTypeAssertion,
 				AssertionID:  assertion.ID,
@@ -1576,6 +1590,23 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 		return candidates[i].Step.Confidence > candidates[j].Step.Confidence
 	})
 
+	heuristic := buildHeuristicPlanResult(input.TaskID, candidates, maxSteps)
+
+	mode := normalizePlannerMode(input.PlannerMode)
+	start := time.Now()
+	result := heuristic
+	var meta plannerRunMeta
+	if mode == plannerModeHeuristic {
+		result.PlannerUsed = plannerUsedHeuristic
+	} else {
+		result, meta = s.runLLMPlanner(ctx, task, sourceVersion, candidates, maxSteps, heuristic)
+	}
+	s.recordAIPlanOperationLog(ctx, input, mode, result, meta, time.Since(start), len(candidates))
+	return result, nil
+}
+
+// buildHeuristicPlanResult 基于启发式候选生成编排建议结果。
+func buildHeuristicPlanResult(taskID uint, candidates []aiPlanCandidate, maxSteps int) *AIPlanResult {
 	steps := make([]AIPlanStep, 0, maxSteps)
 	for _, candidate := range candidates {
 		if len(steps) >= maxSteps {
@@ -1592,12 +1623,13 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 		warnings = append(warnings, "整体置信度低于 75%，建议逐条确认后再生成编排草稿")
 	}
 	return &AIPlanResult{
-		PlanID:     fmt.Sprintf("plan_%d_%d", input.TaskID, time.Now().Unix()),
-		Confidence: confidence,
-		Summary:    fmt.Sprintf("基于录制任务、步骤模型和资产契约推荐 %d 个可复用编排步骤", len(steps)),
-		Steps:      steps,
-		Warnings:   warnings,
-	}, nil
+		PlanID:      fmt.Sprintf("plan_%d_%d", taskID, time.Now().Unix()),
+		Confidence:  confidence,
+		Summary:     fmt.Sprintf("基于录制任务、步骤模型和资产契约推荐 %d 个可复用编排步骤", len(steps)),
+		Steps:       steps,
+		Warnings:    warnings,
+		PlannerUsed: plannerUsedHeuristic,
+	}
 }
 
 // AISuggestAssertions 为当前编排推荐断言资产。
@@ -1639,8 +1671,11 @@ type aiPlanSourceProfile struct {
 }
 
 type aiPlanCandidate struct {
-	Score float64
-	Step  AIPlanStep
+	Score       float64
+	Step        AIPlanStep
+	Flow        *model.AIFlowAsset
+	FlowVersion *model.AIFlowAssetVersion
+	Assertion   *model.AIAssertionAsset
 }
 
 func isValidationUnusableForAI(status string) bool {

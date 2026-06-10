@@ -200,6 +200,11 @@ const (
 	// 1601xx: 固定场景 DSL 编译门禁
 	CodeAIFlowCompileFailed            = 160101 // 固定场景 DSL dry-run 编译失败，拒绝发布
 	CodeAICompositionFlowCompileFailed = 160102 // 编排生成代码时引用的固定场景 dry-run 编译失败
+
+	// 1602xx: LLM Planner 语义匹配
+	CodeAIPlannerModelNotConfigured = 160201 // LLM Planner 激活模型未配置
+	CodeAIPlannerOutputInvalid      = 160202 // LLM Planner 输出不符合计划 Schema
+	CodeAIPlannerTimeout            = 160203 // LLM Planner 调用超时
 )
 
 // ========== 预定义错误（向后兼容） ==========

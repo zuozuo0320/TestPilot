@@ -415,6 +415,9 @@ const (
 // AIScriptOperationConfirmPartial 显式确认引用 PARTIAL 固定场景生成编排代码的审计操作类型。
 const AIScriptOperationConfirmPartial = "CONFIRM_PARTIAL_FLOW"
 
+// AIScriptOperationAIPlan AI 编排规划（含 LLM Planner 与启发式降级）的审计操作类型。
+const AIScriptOperationAIPlan = "AI_PLAN"
+
 // FlowCompileFailure 固定场景 DSL dry-run 编译失败明细。
 type FlowCompileFailure struct {
 	StepNo   int    `json:"step_no"`
