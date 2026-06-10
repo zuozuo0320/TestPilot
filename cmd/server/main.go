@@ -243,6 +243,10 @@ func main() {
 	}
 	reqGenTaskSvc := service.NewRequirementGenTaskService(logger, reqGenTaskRepo, reqGenResultRepo, reqDocRepo, aiSkillRepo, tagRepo, projectRepo, aiModelConfigSvc, txMgr, cfg.ExecutorURL, cfg.ExecutorAPIKey, genEnqueuer, genTimeout)
 	aiSkillSvc := service.NewAISkillService(logger, aiSkillRepo, txMgr)
+	aiRegressionRepo := repository.NewAIRegressionRepo(db)
+	aiRegressionSvc := service.NewAIRegressionService(logger, aiRegressionRepo, aiScenarioCompositionRepo, aiScriptRepo, userRepo, aiScenarioCompositionSvc, aiModelConfigSvc, cfg.ExecutorURL, cfg.ExecutorAPIKey)
+	// setter 注入计划指标记录钩子，避免两个服务构造函数循环依赖
+	aiScenarioCompositionSvc.SetPlanRecorder(aiRegressionSvc)
 
 	// 3. API 层
 	router := api.NewRouter(api.Dependencies{
@@ -279,6 +283,7 @@ func main() {
 		ReqGenTaskService:            reqGenTaskSvc,
 		GitLabIntegrationService:     gitLabIntegrationSvc,
 		AISkillService:               aiSkillSvc,
+		AIRegressionService:          aiRegressionSvc,
 		ExecutorURL:                  cfg.ExecutorURL,
 		ExecutorAPIKey:               cfg.ExecutorAPIKey,
 	}, cfg.CORSAllowOrigins)
@@ -304,6 +309,12 @@ func main() {
 		logger.Warn("sync active AI model to executor skipped", "error", syncErr)
 	}
 
+	// 启动定时回归调度器，关停时通过 context 退出
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+	aiRegressionSvc.StartScheduler(schedulerCtx)
+	logger.Info("AI 回归调度器已启动")
+
 	// ========== 优雅关停 ==========
 	go func() {
 		logger.Info("server starting", "addr", cfg.HTTPAddr())
@@ -317,6 +328,8 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	logger.Info("shutting down", "signal", sig.String())
+
+	schedulerCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

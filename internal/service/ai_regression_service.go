@@ -657,6 +657,53 @@ func (s *AIRegressionService) RejectSuggestion(ctx context.Context, userID, proj
 	return suggestion, nil
 }
 
+// ── 计划指标记录钩子（实现 AIPlanRecorder）──
+
+// RecordPlanGenerated 在 AI 计划生成成功后写入计划指标记录。
+func (s *AIRegressionService) RecordPlanGenerated(ctx context.Context, projectID, taskID, operatorID uint, result *AIPlanResult) {
+	if result == nil || strings.TrimSpace(result.PlanID) == "" {
+		return
+	}
+	flowCallSteps, assertionSteps := 0, 0
+	for _, step := range result.Steps {
+		switch step.Type {
+		case model.AIScenarioStepTypeFlowCall:
+			flowCallSteps++
+		case model.AIScenarioStepTypeAssertion:
+			assertionSteps++
+		}
+	}
+	record := &model.AIPlanRecord{
+		ProjectID:      projectID,
+		TaskID:         taskID,
+		PlanID:         result.PlanID,
+		PlannerUsed:    result.PlannerUsed,
+		TotalSteps:     len(result.Steps),
+		FlowCallSteps:  flowCallSteps,
+		AssertionSteps: assertionSteps,
+		CreatedBy:      operatorID,
+	}
+	if err := s.regressionRepo.CreatePlanRecord(ctx, record); err != nil {
+		s.logger.Warn("写入计划指标记录失败", "plan_id", result.PlanID, "error", err)
+	}
+}
+
+// RecordFirstValidation 在编排验证完成后回填关联计划记录的一次验证结果（仅首次）。
+func (s *AIRegressionService) RecordFirstValidation(ctx context.Context, compositionID uint, status string) {
+	record, err := s.regressionRepo.FindPlanRecordForFirstValidation(ctx, compositionID)
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			s.logger.Warn("查询计划指标记录失败", "composition_id", compositionID, "error", err)
+		}
+		return
+	}
+	if err := s.regressionRepo.UpdatePlanRecordFields(ctx, record.ID, map[string]interface{}{
+		"first_validation_status": status,
+	}); err != nil {
+		s.logger.Warn("回填一次验证结果失败", "record_id", record.ID, "error", err)
+	}
+}
+
 // ── 18.3 指标统计 ──
 
 // PlanAdoptionInput 计划采纳上报输入。

@@ -27,6 +27,7 @@ from config import SERVICE_PORT, EXECUTOR_API_KEY, CODEGEN_SESSION_TIMEOUT_SEC, 
 from browser_runner import run_browser_exploration
 from script_generator import generate_playwright_script, refactor_recorded_script, parse_step_model
 from planner import generate_plan
+from repair import generate_repair
 from validation_runner import run_validation
 
 # 日志配置
@@ -268,6 +269,14 @@ class PlanRequest(BaseModel):
     env_keys: List[str] = []
     max_steps: int = 20
     expression_doc: str = ""
+
+
+class RepairRequest(BaseModel):
+    composition_id: int = 0
+    scenario_name: str = ""
+    script_content: str = ""
+    failure_summary: str = ""
+    failure_logs: str = ""
 
 
 class ValidateRequest(BaseModel):
@@ -625,6 +634,17 @@ async def execute_plan(req: PlanRequest):
         f"candidates={len(req.candidates)}, max_steps={req.max_steps}"
     )
     result = await asyncio.to_thread(generate_plan, req.model_dump())
+    return result
+
+
+@app.post("/execute/repair")
+async def execute_repair(req: RepairRequest):
+    """AI 修复建议：基于失败回归脚本与失败日志生成修复 Diff 建议（仅建议，不自动应用）"""
+    logger.info(
+        f"Received repair request: composition_id={req.composition_id}, "
+        f"scenario_name={req.scenario_name}"
+    )
+    result = await asyncio.to_thread(generate_repair, req.model_dump())
     return result
 
 
