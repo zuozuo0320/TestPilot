@@ -519,9 +519,14 @@ func (s *AIFlowAssetService) PublishFromTask(ctx context.Context, userID, taskID
 		return nil, ErrInternal(CodeInternal, err)
 	}
 
+	traces, err := s.aiScriptRepo.ListTraces(ctx, task.ID)
+	if err != nil {
+		return nil, ErrInternal(CodeInternal, err)
+	}
+
 	sourceTaskID := task.ID
 	sourceVersionID := version.ID
-	dsl, err := buildFlowDSL(task, version)
+	dsl, err := buildFlowDSL(task, version, traces)
 	if err != nil {
 		return nil, ErrInternal(CodeInternal, err)
 	}
@@ -982,11 +987,8 @@ func (s *AIFlowAssetService) batchUserNames(ctx context.Context, ids []uint) map
 	return result
 }
 
-func buildFlowDSL(task *model.AIScriptTask, version *model.AIScriptVersion) (model.RawJSON, error) {
-	steps := interface{}([]interface{}{})
-	if version.StepModelJSON != nil {
-		steps = version.StepModelJSON
-	}
+func buildFlowDSL(task *model.AIScriptTask, version *model.AIScriptVersion, traces []model.AIScriptTrace) (model.RawJSON, error) {
+	steps := buildFlowGenerationSteps(version.StepModelJSON, traces)
 	payload := map[string]interface{}{
 		"schema_version": "1.0",
 		"flow": map[string]interface{}{
@@ -1000,13 +1002,123 @@ func buildFlowDSL(task *model.AIScriptTask, version *model.AIScriptVersion) (mod
 			"task_id":    task.ID,
 			"version_id": version.ID,
 		},
-		"steps": steps,
+		"generation_steps": steps,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 	return model.RawJSON(data), nil
+}
+
+func buildFlowGenerationSteps(stepModel model.JSONMap, traces []model.AIScriptTrace) []map[string]interface{} {
+	if steps := generationStepsFromStepModel(stepModel); len(steps) > 0 {
+		return steps
+	}
+	return generationStepsFromTraces(traces)
+}
+
+func generationStepsFromStepModel(stepModel model.JSONMap) []map[string]interface{} {
+	if len(stepModel) == 0 {
+		return nil
+	}
+	for _, key := range []string{"generation_steps", "steps"} {
+		rawSteps, ok := stepModel[key]
+		if !ok {
+			continue
+		}
+		items, ok := rawSteps.([]interface{})
+		if !ok {
+			continue
+		}
+		steps := make([]map[string]interface{}, 0, len(items))
+		for _, item := range items {
+			step, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			normalized := normalizeFlowGenerationStep(step)
+			if len(normalized) > 0 {
+				steps = append(steps, normalized)
+			}
+		}
+		if len(steps) > 0 {
+			return steps
+		}
+	}
+	return nil
+}
+
+func generationStepsFromTraces(traces []model.AIScriptTrace) []map[string]interface{} {
+	steps := make([]map[string]interface{}, 0, len(traces))
+	for _, trace := range traces {
+		step := map[string]interface{}{
+			"action_type": strings.ToUpper(strings.TrimSpace(trace.ActionType)),
+		}
+		if trace.PageURL != "" {
+			step["page_url"] = trace.PageURL
+		}
+		if trace.LocatorUsed != "" {
+			step["locator"] = trace.LocatorUsed
+		}
+		if trace.InputValueMasked != "" {
+			step["input_value"] = trace.InputValueMasked
+		}
+		normalized := normalizeFlowGenerationStep(step)
+		if len(normalized) > 0 {
+			steps = append(steps, normalized)
+		}
+	}
+	return steps
+}
+
+func normalizeFlowGenerationStep(step map[string]interface{}) map[string]interface{} {
+	actionType := strings.ToUpper(firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "action_type", "actionType", "type", "step_type"))
+	if actionType == "" {
+		return nil
+	}
+	normalized := map[string]interface{}{
+		"action_type": actionType,
+	}
+	switch actionType {
+	case "NAVIGATE", "GOTO":
+		if url := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "page_url", "pageUrl", "url"); url != "" {
+			normalized["page_url"] = url
+		}
+	case "CLICK":
+		if locator := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "locator", "locator_used", "locatorUsed", "selector"); locator != "" {
+			normalized["locator"] = locator
+		}
+	case "INPUT", "FILL":
+		if locator := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "locator", "locator_used", "locatorUsed", "selector"); locator != "" {
+			normalized["locator"] = locator
+		}
+		if value := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "input_value", "inputValue", "value"); value != "" {
+			normalized["input_value"] = value
+		}
+	case "KEY_PRESS":
+		if locator := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "locator", "locator_used", "locatorUsed", "selector"); locator != "" {
+			normalized["locator"] = locator
+		}
+		if value := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "input_value", "inputValue", "value", "key"); value != "" {
+			normalized["input_value"] = value
+		}
+	case "WAIT":
+		if timeout := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "timeout_ms", "timeoutMs", "timeout"); timeout != "" {
+			normalized["timeout_ms"] = timeout
+		}
+		if value := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "value", "state"); value != "" {
+			normalized["value"] = value
+		}
+	default:
+		if locator := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "locator", "locator_used", "locatorUsed", "selector"); locator != "" {
+			normalized["locator"] = locator
+		}
+		if value := firstNonEmptyStringFromObjects([]map[string]interface{}{step}, "input_value", "inputValue", "value"); value != "" {
+			normalized["input_value"] = value
+		}
+	}
+	return normalized
 }
 
 func mustRawJSON(value interface{}) model.RawJSON {

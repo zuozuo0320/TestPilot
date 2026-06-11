@@ -222,6 +222,7 @@ type ExecutorValidateRequest struct {
 	ScriptContent    string                 `json:"script_content"`
 	StartURL         string                 `json:"start_url"`
 	CallbackURL      string                 `json:"callback_url"`
+	Variables        map[string]interface{} `json:"variables,omitempty"`
 	ProjectScope     map[string]interface{} `json:"project_scope,omitempty"`
 	SpecRelativePath string                 `json:"spec_relative_path,omitempty"`
 }

@@ -34,5 +34,7 @@ scripts/
 .gocache/
 
 # 构建产物
+server
 server.exe
+testpilot-patched
 tmp_server.exe

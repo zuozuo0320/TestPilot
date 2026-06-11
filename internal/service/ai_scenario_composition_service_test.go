@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"testpilot/internal/model"
 	"testpilot/internal/repository"
@@ -54,7 +55,7 @@ func seedPublishedFlowAsset(t *testing.T, repo *repository.AIFlowAssetRepo, proj
 		OutputSchemaJSON:       model.RawJSON(`{}`),
 		PreconditionsJSON:      model.RawJSON(`["浏览器已打开登录页"]`),
 		PostconditionsJSON:     model.RawJSON(`["登录成功"]`),
-		DSLJSON:                model.RawJSON(`{"schema_version":"1.0","steps":[]}`),
+		DSLJSON:                model.RawJSON(`{"schema_version":"1.0","generation_steps":[{"action_type":"NAVIGATE","page_url":"${env.BASE_URL}"}]}`),
 		CodeSnapshot:           "export async function login() {}",
 		TagsJSON:               model.RawJSON(`["登录"]`),
 		AllowAIReuse:           true,
@@ -115,6 +116,33 @@ func assertContainsAll(t *testing.T, text string, fragments []string) {
 			t.Fatalf("expected generated code to contain %q, got:\n%s", fragment, text)
 		}
 	}
+}
+
+func waitForCompositionValidationStatus(t *testing.T, repo *repository.AIScenarioCompositionRepo, compositionID uint, status string) model.AICompositionValidation {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	var latest model.AICompositionValidation
+	for time.Now().Before(deadline) {
+		validations, err := repo.ListValidations(t.Context(), compositionID)
+		if err != nil {
+			t.Fatalf("list validations: %v", err)
+		}
+		if len(validations) > 0 {
+			latest = validations[0]
+			if latest.Status == status {
+				results, resultErr := repo.ListAssertionResults(t.Context(), latest.ID)
+				if resultErr != nil {
+					t.Fatalf("list assertion results: %v", resultErr)
+				}
+				latest.AssertionResults = results
+				return latest
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("validation did not reach %s, latest=%+v", status, latest)
+	return latest
 }
 
 func seedPublishedFlowAssetWithDSL(t *testing.T, repo *repository.AIFlowAssetRepo, projectID, userID uint, flowKey string, dsl model.RawJSON) model.AIFlowAsset {
@@ -202,6 +230,9 @@ func TestAIScenarioCompositionServiceValidateIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first validate: %v", err)
 	}
+	if first.Status != model.AICompositionValidationStatusRunning {
+		t.Fatalf("expected validation to start asynchronously, got %s", first.Status)
+	}
 	second, err := svc.Validate(t.Context(), manager.ID, composition.ID, input)
 	if err != nil {
 		t.Fatalf("second validate: %v", err)
@@ -209,11 +240,15 @@ func TestAIScenarioCompositionServiceValidateIsIdempotent(t *testing.T) {
 	if first.ID == 0 || first.ID != second.ID {
 		t.Fatalf("expected same validation by idempotency key, got first=%d second=%d", first.ID, second.ID)
 	}
-	if len(second.AssertionResults) != 1 {
-		t.Fatalf("expected cached validation with assertion result, got %+v", second.AssertionResults)
+	finished := waitForCompositionValidationStatus(t, scenarioRepo, composition.ID, model.AICompositionValidationStatusPassed)
+	if finished.ID != first.ID {
+		t.Fatalf("expected finished validation to keep same id, got first=%d finished=%d", first.ID, finished.ID)
 	}
-	if second.AssertionResults[0].StepID != fmt.Sprintf("step_%d", assertionStep.ID) {
-		t.Fatalf("expected stable assertion step id, got %s", second.AssertionResults[0].StepID)
+	if len(finished.AssertionResults) != 1 {
+		t.Fatalf("expected cached validation with assertion result, got %+v", finished.AssertionResults)
+	}
+	if finished.AssertionResults[0].StepID != fmt.Sprintf("step_%d", assertionStep.ID) {
+		t.Fatalf("expected stable assertion step id, got %s", finished.AssertionResults[0].StepID)
 	}
 	validations, err := scenarioRepo.ListValidations(t.Context(), composition.ID)
 	if err != nil {
@@ -710,6 +745,196 @@ func TestAIScenarioCompositionServiceAIPlanSkipsFailedAssets(t *testing.T) {
 	}
 }
 
+func TestAIScenarioCompositionServiceAIPlanRequiresConfirmedPassedTask(t *testing.T) {
+	svc, _, manager, project := newTestAIScenarioCompositionService(t)
+	task := createPublishableTask(t, svc.aiScriptRepo, project.ID, manager.ID, 4402, model.AIValidationStatusPassed)
+	if err := svc.aiScriptRepo.UpdateTaskFields(t.Context(), task.ID, map[string]interface{}{
+		"task_status": model.AITaskStatusPendingConfirm,
+	}); err != nil {
+		t.Fatalf("update task status: %v", err)
+	}
+
+	_, err := svc.AIPlanFromTask(t.Context(), AIPlanFromTaskInput{
+		ProjectID: project.ID,
+		TaskID:    task.ID,
+		MaxSteps:  10,
+	})
+	if err == nil {
+		t.Fatalf("expected unconfirmed task to be rejected")
+	}
+	var bizErr *BizError
+	if !errors.As(err, &bizErr) || bizErr.Code != CodeConflict {
+		t.Fatalf("expected conflict BizError, got %T %[1]v", err)
+	}
+
+	if err := svc.aiScriptRepo.UpdateTaskFields(t.Context(), task.ID, map[string]interface{}{
+		"task_status":              model.AITaskStatusConfirmed,
+		"latest_validation_status": model.AIValidationStatusFailed,
+	}); err != nil {
+		t.Fatalf("update validation status: %v", err)
+	}
+	_, err = svc.AIPlanFromTask(t.Context(), AIPlanFromTaskInput{
+		ProjectID: project.ID,
+		TaskID:    task.ID,
+		MaxSteps:  10,
+	})
+	if err == nil {
+		t.Fatalf("expected failed validation task to be rejected")
+	}
+}
+
+func TestAIScenarioCompositionServiceAIPlanFusesConfirmedTaskWithSelectedFlow(t *testing.T) {
+	svc, _, manager, project := newTestAIScenarioCompositionService(t)
+	task := createPublishableTask(t, svc.aiScriptRepo, project.ID, manager.ID, 4403, model.AIValidationStatusPassed)
+	extraTask := createPublishableTask(t, svc.aiScriptRepo, project.ID, manager.ID, 4404, model.AIValidationStatusPassed)
+	flowDSL := model.RawJSON(`{
+		"schema_version":"1.0",
+		"generation_steps":[
+			{"step_no":1,"action_type":"NAVIGATE","page_url":"${env.BASE_URL}/assets"},
+			{"step_no":2,"action_type":"CLICK","locator":"page.getByRole('button', { name: '新建任务' })"}
+		]
+	}`)
+	flow := seedPublishedFlowAssetWithDSL(t, svc.flowRepo, project.ID, manager.ID, "asset_scan_create_task", flowDSL)
+	version, err := svc.aiScriptRepo.GetCurrentScriptVersion(t.Context(), task.ID)
+	if err != nil {
+		t.Fatalf("get current script version: %v", err)
+	}
+	version.StepModelJSON = model.JSONMap{
+		"generation_steps": []interface{}{
+			map[string]interface{}{"step_no": 1, "action_type": "NAVIGATE", "page_url": "${env.BASE_URL}/assets"},
+			map[string]interface{}{"step_no": 2, "action_type": "CLICK", "locator": "page.getByRole('button', { name: '新建任务' })"},
+			map[string]interface{}{"step_no": 3, "action_type": "INPUT", "locator": "page.getByRole('textbox', { name: '任务名称' })", "input_value": "资产扫描回归"},
+		},
+	}
+	if err := svc.aiScriptRepo.UpdateScriptVersionFields(t.Context(), version.ID, map[string]interface{}{
+		"step_model_json": version.StepModelJSON,
+	}); err != nil {
+		t.Fatalf("update script version step model: %v", err)
+	}
+	extraVersion, err := svc.aiScriptRepo.GetCurrentScriptVersion(t.Context(), extraTask.ID)
+	if err != nil {
+		t.Fatalf("get extra script version: %v", err)
+	}
+	extraVersion.StepModelJSON = model.JSONMap{
+		"generation_steps": []interface{}{
+			map[string]interface{}{"step_no": 1, "action_type": "CLICK", "locator": "page.getByRole('button', { name: '提交' })"},
+		},
+	}
+	if err := svc.aiScriptRepo.UpdateScriptVersionFields(t.Context(), extraVersion.ID, map[string]interface{}{
+		"step_model_json": extraVersion.StepModelJSON,
+	}); err != nil {
+		t.Fatalf("update extra script version step model: %v", err)
+	}
+
+	result, err := svc.AIPlanFromTask(t.Context(), AIPlanFromTaskInput{
+		ProjectID:         project.ID,
+		TaskID:            task.ID,
+		PreferredFlowIDs:  []uint{flow.ID},
+		AdditionalTaskIDs: []uint{extraTask.ID},
+		OrderedSources: []AIPlanOrderedSourceInput{
+			{Type: "FLOW", ID: flow.ID},
+			{Type: "TASK", ID: task.ID},
+			{Type: "TASK", ID: extraTask.ID},
+		},
+		MaxSteps: 10,
+	})
+	if err != nil {
+		t.Fatalf("ai plan from task: %v", err)
+	}
+	if len(result.Steps) != 3 {
+		t.Fatalf("expected flow call plus remaining recording steps, got %+v", result.Steps)
+	}
+	if result.Steps[0].Type != model.AIScenarioStepTypeFlowCall || result.Steps[0].FlowID != flow.ID {
+		t.Fatalf("expected first step to reference selected flow, got %+v", result.Steps[0])
+	}
+	if result.Steps[1].Type != model.AIScenarioStepTypeAtomicAction || result.Steps[1].AtomicAction != "fill" {
+		t.Fatalf("expected remaining recording step as fill atomic action, got %+v", result.Steps[1])
+	}
+	if result.Steps[1].Inputs["selector"] == "" || result.Steps[1].Inputs["value"] == "" {
+		t.Fatalf("expected atomic action inputs to preserve recording data, got %+v", result.Steps[1].Inputs)
+	}
+	if result.Steps[2].Type != model.AIScenarioStepTypeAtomicAction || result.Steps[2].AtomicAction != "click" {
+		t.Fatalf("expected additional recording script step as click atomic action, got %+v", result.Steps[2])
+	}
+}
+
+func TestAIScenarioCompositionServiceAIPlanFallsBackToTracesAndKeepsRemainingSteps(t *testing.T) {
+	svc, _, manager, project := newTestAIScenarioCompositionService(t)
+	task := createPublishableTask(t, svc.aiScriptRepo, project.ID, manager.ID, 4405, model.AIValidationStatusPassed)
+	version, err := svc.aiScriptRepo.GetCurrentScriptVersion(t.Context(), task.ID)
+	if err != nil {
+		t.Fatalf("get current script version: %v", err)
+	}
+	if err := svc.aiScriptRepo.UpdateScriptVersionFields(t.Context(), version.ID, map[string]interface{}{
+		"step_model_json": model.JSONMap{},
+	}); err != nil {
+		t.Fatalf("clear script version step model: %v", err)
+	}
+	if err := svc.aiScriptRepo.BatchCreateTraces(t.Context(), []model.AIScriptTrace{
+		{TaskID: task.ID, TraceNo: 1, ActionType: "NAVIGATE", PageURL: "https://foradar.baimaohui.net/workbench", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 2, ActionType: "CLICK", LocatorUsed: "locator('span').filter({ hasText: '任务管理' }).first()", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 3, ActionType: "CLICK", LocatorUsed: "locator('span').filter({ hasText: '资产探知' }).first()", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 4, ActionType: "CLICK", LocatorUsed: "getByText('查看任务').nth(2)", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 5, ActionType: "CLICK", LocatorUsed: "getByRole('button', { name: '新建任务' })", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 6, ActionType: "CLICK", LocatorUsed: "getByRole('button', { name: 'Close' })", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 7, ActionType: "CLICK", LocatorUsed: "locator('.el-table__row.hover-row .cell').first()", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 8, ActionType: "CLICK", LocatorUsed: "getByRole('button', { name: '新建任务' })", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 9, ActionType: "INPUT", LocatorUsed: "locator('textarea')", InputValueMasked: "11***06", ActionResult: "success"},
+		{TaskID: task.ID, TraceNo: 10, ActionType: "CLICK", LocatorUsed: "getByRole('button', { name: '确定' })", ActionResult: "success"},
+	}); err != nil {
+		t.Fatalf("create traces: %v", err)
+	}
+	flowDSL := model.RawJSON(`{
+		"schema_version":"1.0",
+		"generation_steps":[
+			{"step_no":1,"action_type":"NAVIGATE","page_url":"https://foradar.baimaohui.net/workbench"},
+			{"step_no":2,"action_type":"CLICK","locator":"locator('span').filter({ hasText: '任务管理' }).first()"},
+			{"step_no":3,"action_type":"CLICK","locator":"getByText('资产探知')"},
+			{"step_no":4,"action_type":"CLICK","locator":"getByText('查看任务').nth(2)"},
+			{"step_no":5,"action_type":"CLICK","locator":"getByRole('button', { name: '新建任务' })"}
+		]
+	}`)
+	flow := seedPublishedFlowAssetWithDSL(t, svc.flowRepo, project.ID, manager.ID, "asset_scan_create_from_trace", flowDSL)
+
+	result, err := svc.AIPlanFromTask(t.Context(), AIPlanFromTaskInput{
+		ProjectID: project.ID,
+		TaskID:    task.ID,
+		OrderedSources: []AIPlanOrderedSourceInput{
+			{Type: "FLOW", ID: flow.ID},
+			{Type: "TASK", ID: task.ID},
+		},
+		MaxSteps: 20,
+	})
+	if err != nil {
+		t.Fatalf("ai plan from task: %v", err)
+	}
+	if len(result.Steps) != 5 {
+		t.Fatalf("expected flow call plus stable remaining trace actions, got %+v", result.Steps)
+	}
+	if result.Steps[0].Type != model.AIScenarioStepTypeFlowCall || result.Steps[0].FlowID != flow.ID {
+		t.Fatalf("expected first step to reference selected flow, got %+v", result.Steps[0])
+	}
+	expectedActions := []string{"click", "click", "fill", "click"}
+	for index, expectedAction := range expectedActions {
+		step := result.Steps[index+1]
+		if step.Type != model.AIScenarioStepTypeAtomicAction || step.AtomicAction != expectedAction {
+			t.Fatalf("expected remaining step %d as %s atomic action, got %+v", index+1, expectedAction, step)
+		}
+	}
+	if result.Steps[3].Inputs["value"] != "自动化验证任务" {
+		t.Fatalf("expected masked input to be replaced with stable value, got %+v", result.Steps[3].Inputs)
+	}
+	foundTraceFallbackWarning := false
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "已回退使用录制轨迹融合") {
+			foundTraceFallbackWarning = true
+		}
+	}
+	if !foundTraceFallbackWarning {
+		t.Fatalf("expected trace fallback warning, got %+v", result.Warnings)
+	}
+}
+
 func TestAIScenarioCompositionServiceGenerateCodeRejectsPartialFlow(t *testing.T) {
 	svc, _, manager, project := newTestAIScenarioCompositionService(t)
 	partialDSL := model.RawJSON(`{
@@ -976,6 +1201,12 @@ func TestCompileAtomicActionTable(t *testing.T) {
 			action:        "wait_for",
 			params:        `{"selector":"#result","timeout_ms":3000}`,
 			wantFragments: []string{".waitFor({ state: 'visible', timeout: Number(inputs.timeout_ms || 5000) })", "{ waited: true }"},
+		},
+		{
+			name:          "Playwright 表达式选择器不降级为 CSS",
+			action:        "click",
+			params:        `{"selector":"getByRole('button', { name: '确定' })"}`,
+			wantFragments: []string{"await page.getByRole('button', { name: '确定' }).click()", "{ clicked: true }"},
 		},
 		{
 			name:    "wait_for 缺少 selector 报错",

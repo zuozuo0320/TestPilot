@@ -168,6 +168,41 @@ func TestAIFlowAssetServicePublishFromTaskSuccess(t *testing.T) {
 	}
 }
 
+func TestAIFlowAssetServicePublishFromTaskBuildsDSLFromTraces(t *testing.T) {
+	svc, flowRepo, aiScriptRepo, manager, project := newTestAIFlowAssetService(t)
+	task := createPublishableTask(t, aiScriptRepo, project.ID, manager.ID, 4102, model.AIValidationStatusPassed)
+
+	version, err := aiScriptRepo.GetCurrentScriptVersion(t.Context(), task.ID)
+	if err != nil {
+		t.Fatalf("get current version: %v", err)
+	}
+	if err := aiScriptRepo.UpdateScriptVersionFields(t.Context(), version.ID, map[string]interface{}{
+		"step_model_json": nil,
+	}); err != nil {
+		t.Fatalf("clear step model: %v", err)
+	}
+	if err := aiScriptRepo.BatchCreateTraces(t.Context(), []model.AIScriptTrace{
+		{TaskID: task.ID, TraceNo: 1, ActionType: "NAVIGATE", PageURL: "https://example.com/workbench"},
+		{TaskID: task.ID, TraceNo: 2, ActionType: "CLICK", LocatorUsed: "getByRole('button', { name: '新建任务' })"},
+	}); err != nil {
+		t.Fatalf("create traces: %v", err)
+	}
+
+	result, err := svc.PublishFromTask(t.Context(), manager.ID, task.ID, validPublishInput(project.ID, "trace_flow"))
+	if err != nil {
+		t.Fatalf("publish flow asset from traces: %v", err)
+	}
+	flow, err := flowRepo.GetByID(t.Context(), result.FlowID)
+	if err != nil {
+		t.Fatalf("query flow: %v", err)
+	}
+	if !strings.Contains(string(flow.DSLJSON), "generation_steps") ||
+		!strings.Contains(string(flow.DSLJSON), "https://example.com/workbench") ||
+		!strings.Contains(string(flow.DSLJSON), "新建任务") {
+		t.Fatalf("expected generated DSL from traces, got %s", string(flow.DSLJSON))
+	}
+}
+
 func TestAIFlowAssetServicePublishRejectsUnvalidatedScript(t *testing.T) {
 	svc, _, aiScriptRepo, manager, project := newTestAIFlowAssetService(t)
 	task := createPublishableTask(t, aiScriptRepo, project.ID, manager.ID, 4201, model.AIValidationStatusFailed)
@@ -344,6 +379,13 @@ func TestAIFlowAssetServicePublishCompileGate(t *testing.T) {
 			wantErr:     true,
 			wantReasons: []string{"步骤 1", "缺少跳转 URL", "步骤 2", "缺少输入选择器"},
 		},
+		{
+			name:        "空步骤拒绝发布",
+			flowKey:     "gate_empty",
+			dsl:         json.RawMessage(`{"schema_version":"1.0","steps":[]}`),
+			wantErr:     true,
+			wantReasons: []string{"缺少可编译步骤"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -383,8 +425,8 @@ func TestAIFlowAssetServicePublishCompileGate(t *testing.T) {
 			if !ok || len(failures) == 0 {
 				t.Fatalf("expected compile_failures in data, got %+v", data)
 			}
-			if failures[0].StepNo == 0 || failures[0].Reason == "" {
-				t.Fatalf("expected populated failure fields, got %+v", failures[0])
+			if failures[0].Reason == "" {
+				t.Fatalf("expected populated failure reason, got %+v", failures[0])
 			}
 		})
 	}

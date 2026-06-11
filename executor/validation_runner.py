@@ -49,6 +49,7 @@ def _ensure_playwright_project():
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_node_subprocess_env(),
             timeout=120,
         )
 
@@ -121,6 +122,7 @@ def run_validation(
     start_url: str,
     project_scope: dict = None,        # V1 多项目工程化：ProjectScope 信息
     spec_relative_path: str = None,    # V1：项目内 spec 相对路径
+    variables: dict | None = None,
 ) -> dict:
     """
     执行 Playwright TypeScript 脚本回放验证
@@ -148,6 +150,7 @@ def run_validation(
                 start_url=start_url,
                 project_scope=project_scope,
                 spec_relative_path=spec_relative_path,
+                variables=variables or {},
                 start_time=start_time,
             )
 
@@ -205,6 +208,7 @@ def run_validation(
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_node_subprocess_env(),
             timeout=180,
         )
 
@@ -325,9 +329,10 @@ def _sanitize_script_for_execution(script_content: str, workspace_root: Path) ->
 
     for line in lines:
         # 匹配 await xxx.methodName( 模式
-        match = _re.search(r'await\s+\w+\.(\w+)\s*\(', line)
+        match = _re.search(r'await\s+(\w+)\.(\w+)\s*\(', line)
         if match:
-            method_name = match.group(1)
+            receiver_name = match.group(1)
+            method_name = match.group(2)
             # 跳过 Playwright 内置方法和 test 框架方法
             builtin_methods = {
                 'click', 'fill', 'type', 'press', 'check', 'uncheck',
@@ -341,6 +346,10 @@ def _sanitize_script_for_execution(script_content: str, workspace_root: Path) ->
                 'getByTestId', 'locator', 'first', 'last', 'nth',
                 'step', 'describe', 'use',
             }
+            builtin_receivers = {'page', 'expect', 'test', 'ctx', 'flows', 'assertions'}
+            if receiver_name in builtin_receivers:
+                cleaned_lines.append(line)
+                continue
             if method_name not in builtin_methods and method_name not in available_methods:
                 logger.warning(
                     f"[v1-validation] 清洗脚本：移除不存在的方法调用 '{method_name}'"
@@ -426,6 +435,73 @@ def _find_matching_spec(workspace_root: Path, script_content: str, task_id: int,
     return spec_path
 
 
+def _inject_validation_variables(script_content: str, variables: dict) -> str:
+    """将后端验证变量注入生成脚本的 ScenarioContext。"""
+    if not variables:
+        return script_content
+    variables_literal = json.dumps(variables, ensure_ascii=False, indent=6)
+    pattern = re.compile(r"variables:\s*\{\s*\},")
+    return pattern.sub(f"variables: {variables_literal},", script_content, count=1)
+
+
+def _inject_final_screenshot(script_content: str, task_id: int, script_version_id: int) -> str:
+    if "validation-final-" in script_content:
+        return script_content
+    final_name = f"validation-final-{task_id}-v{script_version_id}.png"
+    screenshot_block = (
+        "\n  await page.screenshot({ "
+        f"path: 'test-results/{final_name}', "
+        "fullPage: true })\n"
+    )
+    pattern = re.compile(r"\n\s*}\s*\)\s*;?\s*$")
+    match = pattern.search(script_content)
+    if not match:
+        return script_content
+    return script_content[:match.start()] + screenshot_block + script_content[match.start():]
+
+
+def _prepare_requested_v1_spec(
+    workspace_root: Path,
+    spec_relative_path: str,
+    script_content: str,
+    task_id: int,
+    script_version_id: int,
+    variables: dict | None = None,
+) -> Path:
+    """确保后端指定的 V1 spec 文件存在，并同步为当前生成代码。"""
+    relative_path = Path(spec_relative_path)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise ValueError(f"非法 spec 路径: {spec_relative_path}")
+
+    spec_path = workspace_root / relative_path
+    sanitized_content = _inject_final_screenshot(
+        _inject_validation_variables(
+            _sanitize_script_for_execution(script_content, workspace_root),
+            variables or {},
+        ),
+        task_id,
+        script_version_id,
+    )
+    normalized_new = sanitized_content.strip().replace("\r\n", "\n")
+
+    should_write = True
+    if spec_path.exists():
+        try:
+            normalized_existing = spec_path.read_text(encoding="utf-8").strip().replace("\r\n", "\n")
+            should_write = normalized_existing != normalized_new
+        except Exception:
+            should_write = True
+
+    if should_write:
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(sanitized_content, encoding="utf-8")
+        logger.info(f"[v1-validation] spec 已同步: {spec_path.relative_to(workspace_root)}")
+    else:
+        logger.info(f"[v1-validation] 使用已同步 spec: {spec_path.relative_to(workspace_root)}")
+
+    return spec_path
+
+
 def _detect_workspace_preflight_issues(workspace_root: Path) -> list[str]:
     """扫描项目工作区中明显损坏的生成物，提前给出可定位的错误原因。"""
     issues: list[str] = []
@@ -495,6 +571,7 @@ def _run_v1_project_validation(
     start_url: str,
     project_scope: dict,
     spec_relative_path: str | None,
+    variables: dict | None,
     start_time: float,
 ) -> dict:
     """
@@ -544,12 +621,13 @@ def _run_v1_project_validation(
             [_npm_command(), "install"],
             cwd=str(workspace_root),
             capture_output=True,
+            env=_node_subprocess_env(),
             timeout=120,
         )
 
     # 确定 spec 文件路径
     if spec_relative_path:
-        spec_path = workspace_root / spec_relative_path
+        spec_path = _prepare_requested_v1_spec(workspace_root, spec_relative_path, script_content, task_id, script_version_id, variables or {})
     else:
         # V1 回退：在工作区 tests 目录下查找内容匹配的 spec 文件
         spec_path = _find_matching_spec(workspace_root, script_content, task_id, script_version_id)
@@ -608,6 +686,7 @@ def _run_v1_project_validation(
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=_node_subprocess_env(),
         timeout=180,
     )
 
@@ -806,11 +885,45 @@ def _resolve_failure_reason(test_result: dict, stdout: str, stderr: str, default
 
 
 def _npm_command() -> str:
-    return "npm.cmd" if os.name == "nt" else "npm"
+    return _node_tool_command("npm")
 
 
 def _npx_command() -> str:
-    return "npx.cmd" if os.name == "nt" else "npx"
+    return _node_tool_command("npx")
+
+
+def _node_tool_command(tool_name: str) -> str:
+    """解析 npm/npx 可执行路径，兼容以非登录 shell 启动时缺少 nvm PATH 的场景。"""
+    if os.name == "nt":
+        return f"{tool_name}.cmd"
+    resolved = shutil.which(tool_name)
+    if resolved:
+        return resolved
+    nvm_root = Path.home() / ".nvm" / "versions" / "node"
+    if nvm_root.exists():
+        candidates = sorted(nvm_root.glob(f"*/bin/{tool_name}"), reverse=True)
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+    return tool_name
+
+
+def _node_subprocess_env() -> dict:
+    """为 Playwright 子进程补齐 Node.js PATH。"""
+    env = os.environ.copy()
+    if os.name == "nt":
+        return env
+    paths = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
+    nvm_root = Path.home() / ".nvm" / "versions" / "node"
+    if nvm_root.exists():
+        node_bins = sorted(nvm_root.glob("*/bin"), reverse=True)
+        for node_bin in node_bins:
+            node_bin_text = str(node_bin)
+            if node_bin_text not in paths:
+                paths.insert(0, node_bin_text)
+            break
+    env["PATH"] = os.pathsep.join(paths)
+    return env
 
 
 def _update_config_storage_state(project_dir: Path, storage_state_path: str | None):

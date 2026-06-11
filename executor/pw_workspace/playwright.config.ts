@@ -11,7 +11,7 @@ export default defineConfig({
     locale: 'zh-CN',
     ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',
-    storageState: 'D:/ai_project/TestPilot/executor/auth_states/10.10.10.189.json',
+    storageState: '/Users/zuozuo/ai_project/TestPilot/executor/auth_states/foradar.baimaohui.net.json',
   },
   projects: [
     {

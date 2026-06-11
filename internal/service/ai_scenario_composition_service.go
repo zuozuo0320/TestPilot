@@ -25,6 +25,12 @@ const lowConfidenceConfirmThreshold = 0.8
 
 var dslReferencePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
+var selectorSemanticTextPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`getByText\(\s*['"]([^'"]+)['"]`),
+	regexp.MustCompile(`hasText\s*:\s*['"]([^'"]+)['"]`),
+	regexp.MustCompile(`name\s*:\s*['"]([^'"]+)['"]`),
+}
+
 var allowedCompositionEnvKeys = map[string]struct{}{
 	"ADMIN_USER":     {},
 	"ADMIN_PASSWORD": {},
@@ -97,6 +103,26 @@ func NewAIScenarioCompositionService(
 // SetPlanRecorder 注入计划指标记录钩子。
 func (s *AIScenarioCompositionService) SetPlanRecorder(recorder AIPlanRecorder) {
 	s.planRecorder = recorder
+}
+
+// resolveProjectScope 根据项目 ID 解析执行器项目工作区。
+func (s *AIScenarioCompositionService) resolveProjectScope(ctx context.Context, projectID uint) map[string]interface{} {
+	project, err := s.projectRepo.FindByID(ctx, projectID)
+	if err != nil || project == nil {
+		return nil
+	}
+	projectKey := fmt.Sprintf("project_%d", projectID)
+	return map[string]interface{}{
+		"project_id":     projectID,
+		"project_key":    projectKey,
+		"project_name":   project.Name,
+		"workspace_root": fmt.Sprintf("pw_projects/projects/%s", projectKey),
+		"registry_file":  "registry/page-registry.json",
+		"env_file":       ".env",
+		"auth_state_dir": "auth_states",
+		"base_url_env":   "BASE_URL",
+		"auth_strategy":  "storage_state",
+	}
 }
 
 // ScenarioCompositionListInput 表示场景编排列表查询输入。
@@ -243,24 +269,35 @@ type PublishCompositionInput struct {
 	ChangeSummary string
 }
 
+// AIPlanOrderedSourceInput 表示用户在前端编排队列中选择的来源片段。
+type AIPlanOrderedSourceInput struct {
+	Type string `json:"type"`
+	ID   uint   `json:"id"`
+}
+
 // AIPlanFromTaskInput 表示从录制任务生成 AI 编排建议的输入。
 type AIPlanFromTaskInput struct {
-	ProjectID       uint
-	TaskID          uint
-	SourceVersionID uint
-	MaxSteps        int
-	PlannerMode     string
-	OperatorID      uint
+	ProjectID         uint
+	TaskID            uint
+	SourceVersionID   uint
+	PreferredFlowIDs  []uint
+	AdditionalTaskIDs []uint
+	OrderedSources    []AIPlanOrderedSourceInput
+	MaxSteps          int
+	PlannerMode       string
+	OperatorID        uint
 }
 
 // AIPlanStep 表示单个 AI 编排建议步骤。
 type AIPlanStep struct {
 	Type          string                 `json:"type"`
+	StepName      string                 `json:"step_name,omitempty"`
 	FlowID        uint                   `json:"flow_id,omitempty"`
 	FlowVersionID uint                   `json:"flow_version_id,omitempty"`
 	FlowKey       string                 `json:"flow_key,omitempty"`
 	AssertionID   uint                   `json:"assertion_id,omitempty"`
 	AssertionKey  string                 `json:"assertion_key,omitempty"`
+	AtomicAction  string                 `json:"atomic_action,omitempty"`
 	Confidence    float64                `json:"confidence"`
 	Reason        string                 `json:"reason"`
 	Inputs        map[string]interface{} `json:"inputs,omitempty"`
@@ -794,7 +831,7 @@ func (s *AIScenarioCompositionService) SetCodeLock(ctx context.Context, userID, 
 	return s.Get(ctx, input.ProjectID, composition.ID)
 }
 
-// Validate 同步执行编排结构验证，并在执行服务可用时触发 Playwright 回放。
+// Validate 创建异步编排验证任务，并在执行服务可用时后台触发 Playwright 回放。
 func (s *AIScenarioCompositionService) Validate(ctx context.Context, userID, compositionID uint, input ValidateCompositionInput) (*model.AICompositionValidation, error) {
 	composition, err := s.Get(ctx, input.ProjectID, compositionID)
 	if err != nil {
@@ -819,13 +856,54 @@ func (s *AIScenarioCompositionService) Validate(ctx context.Context, userID, com
 	}
 
 	startedAt := time.Now()
+	validation := &model.AICompositionValidation{
+		CompositionID:  composition.ID,
+		ProjectID:      composition.ProjectID,
+		IdempotencyKey: optionalStringPtr(idempotencyKey),
+		Status:         model.AICompositionValidationStatusRunning,
+		ExecutorJobID:  fmt.Sprintf("composition_%d_pending", composition.ID),
+		WorkspaceID:    fmt.Sprintf("project_%d", composition.ProjectID),
+		LogsJSON:       buildCompositionValidationRunningLogs(startedAt, len(composition.Steps)),
+		StartedAt:      &startedAt,
+		CreatedBy:      userID,
+	}
+	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
+		if err := s.scenarioRepo.CreateValidation(ctx, tx, validation); err != nil {
+			return err
+		}
+		return s.scenarioRepo.UpdateFields(ctx, tx, composition.ID, map[string]interface{}{
+			"latest_validation_id":     validation.ID,
+			"latest_validation_status": model.AICompositionValidationStatusRunning,
+			"status":                   model.AIScenarioStatusValidating,
+			"updated_by":               userID,
+		})
+	})
+	if err != nil {
+		if idempotencyKey != "" {
+			existing, idemErr := s.scenarioRepo.GetValidationByIdempotencyKey(ctx, input.ProjectID, compositionID, idempotencyKey)
+			if idemErr == nil {
+				s.fillValidationAssertionResults(ctx, existing)
+				return existing, nil
+			}
+		}
+		return nil, ErrInternal(CodeInternal, err)
+	}
+
+	go s.finishCompositionValidation(context.WithoutCancel(ctx), userID, validation.ID, composition, input, startedAt)
+	return validation, nil
+}
+
+// finishCompositionValidation 在后台完成结构校验与执行器回放，并回写最终验证状态。
+func (s *AIScenarioCompositionService) finishCompositionValidation(ctx context.Context, userID, validationID uint, composition *model.AIScenarioComposition, input ValidateCompositionInput, startedAt time.Time) {
 	failures := s.validateCompositionStructure(ctx, composition)
 
 	var executorResult *ExecutorValidateResponse
+	var err error
 	if len(failures) == 0 && s.executorURL != "" {
 		log := s.logger.With(
 			"composition_id", composition.ID,
 			"project_id", composition.ProjectID,
+			"validation_id", validationID,
 			"action", "composition_validate",
 		)
 		if !s.acquireCompositionWorkspaceLock(ctx, composition.ProjectID, composition.ID, "validate_run") {
@@ -850,6 +928,7 @@ func (s *AIScenarioCompositionService) Validate(ctx context.Context, userID, com
 			durationMs = finishedAt.Sub(startedAt).Milliseconds()
 		}
 		logsJSON = normalizeExecutorLogs(executorResult.Logs, logsJSON)
+		logsJSON = attachCompositionValidationScreenshots(logsJSON, normalizeCompositionScreenshots(executorResult.Screenshots, s.executorPublicURL))
 		if !executorResult.Success {
 			status = model.AICompositionValidationStatusFailed
 			if executorResult.FailReason != "" {
@@ -866,51 +945,39 @@ func (s *AIScenarioCompositionService) Validate(ctx context.Context, userID, com
 	}
 
 	assertionResults := buildCompositionAssertionResults(composition, status, failures, executorResult)
-	validation := &model.AICompositionValidation{
-		CompositionID:  composition.ID,
-		ProjectID:      composition.ProjectID,
-		IdempotencyKey: optionalStringPtr(idempotencyKey),
-		Status:         status,
-		ExecutorJobID:  buildCompositionExecutorJobID(composition.ID, executorResult),
-		WorkspaceID:    fmt.Sprintf("project_%d", composition.ProjectID),
-		LogsJSON:       logsJSON,
-		StartedAt:      &startedAt,
-		FinishedAt:     &finishedAt,
-		DurationMs:     durationMs,
-		CreatedBy:      userID,
-	}
 	err = s.txMgr.WithTx(ctx, func(tx *gorm.DB) error {
-		if err := s.scenarioRepo.CreateValidation(ctx, tx, validation); err != nil {
+		if err := s.scenarioRepo.UpdateValidationFields(ctx, tx, validationID, map[string]interface{}{
+			"status":          status,
+			"executor_job_id": buildCompositionExecutorJobID(composition.ID, executorResult),
+			"workspace_id":    fmt.Sprintf("project_%d", composition.ProjectID),
+			"logs_json":       logsJSON,
+			"finished_at":     &finishedAt,
+			"duration_ms":     durationMs,
+		}); err != nil {
+			return err
+		}
+		if err := s.scenarioRepo.DeleteAssertionResultsByValidation(ctx, tx, validationID); err != nil {
 			return err
 		}
 		for i := range assertionResults {
-			assertionResults[i].ValidationID = validation.ID
+			assertionResults[i].ValidationID = validationID
 		}
 		if err := s.scenarioRepo.CreateAssertionResults(ctx, tx, assertionResults); err != nil {
 			return err
 		}
-		return s.scenarioRepo.UpdateFields(ctx, tx, composition.ID, map[string]interface{}{
-			"latest_validation_id":     validation.ID,
+		return s.scenarioRepo.UpdateFieldsIfLatestValidation(ctx, tx, composition.ID, validationID, map[string]interface{}{
 			"latest_validation_status": status,
 			"status":                   scenarioStatusAfterValidation(status),
 			"updated_by":               userID,
 		})
 	})
 	if err != nil {
-		if idempotencyKey != "" {
-			existing, idemErr := s.scenarioRepo.GetValidationByIdempotencyKey(ctx, input.ProjectID, compositionID, idempotencyKey)
-			if idemErr == nil {
-				s.fillValidationAssertionResults(ctx, existing)
-				return existing, nil
-			}
-		}
-		return nil, ErrInternal(CodeInternal, err)
+		s.logger.Error("finish composition validation failed", "composition_id", composition.ID, "validation_id", validationID, "error", err)
+		return
 	}
 	if s.planRecorder != nil {
 		s.planRecorder.RecordFirstValidation(ctx, composition.ID, status)
 	}
-	validation.AssertionResults = assertionResults
-	return validation, nil
 }
 
 func (s *AIScenarioCompositionService) callCompositionExecutorValidate(
@@ -923,11 +990,15 @@ func (s *AIScenarioCompositionService) callCompositionExecutorValidate(
 	if composition.CurrentVersionID != nil && *composition.CurrentVersionID > 0 {
 		versionID = *composition.CurrentVersionID
 	}
+	variables := ensureCompositionValidationVariables(input.Variables)
 	reqBody := ExecutorValidateRequest{
-		TaskID:          composition.ID,
-		ScriptVersionID: versionID,
-		ScriptContent:   composition.GeneratedCode,
-		StartURL:        s.resolveCompositionStartURL(ctx, composition.ProjectID, input),
+		TaskID:           composition.ID,
+		ScriptVersionID:  versionID,
+		ScriptContent:    composition.GeneratedCode,
+		StartURL:         s.resolveCompositionStartURL(ctx, composition.ProjectID, ValidateCompositionInput{Environment: input.Environment, Variables: json.RawMessage(variables)}),
+		Variables:        rawJSONToStringMap(json.RawMessage(variables)),
+		ProjectScope:     s.resolveProjectScope(ctx, composition.ProjectID),
+		SpecRelativePath: fmt.Sprintf("tests/composition/%s.spec.ts", composition.ScenarioKey),
 	}
 	rawResult, err := s.callCompositionExecutorHTTP(ctx, "/execute/validate", reqBody, log)
 	if err != nil {
@@ -1104,6 +1175,38 @@ func buildCompositionValidationLogs(startedAt, finishedAt time.Time, stepCount i
 	return mustRawJSON(entries)
 }
 
+func buildCompositionValidationRunningLogs(startedAt time.Time, stepCount int) model.RawJSON {
+	return mustRawJSON([]map[string]interface{}{
+		{
+			"level":      "INFO",
+			"message":    "编排验证已开始，正在等待执行结果",
+			"step_count": stepCount,
+			"timestamp":  startedAt.Format(time.RFC3339),
+		},
+	})
+}
+
+func ensureCompositionValidationVariables(variables json.RawMessage) model.RawJSON {
+	values := rawJSONToStringMap(variables)
+	if _, ok := values["taskName"]; !ok {
+		values["taskName"] = "自动化验证任务"
+	}
+	return mustRawJSON(values)
+}
+
+func rawJSONToStringMap(data json.RawMessage) map[string]interface{} {
+	if len(data) == 0 || !json.Valid(data) {
+		return map[string]interface{}{}
+	}
+	values := map[string]interface{}{}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&values); err != nil {
+		return map[string]interface{}{}
+	}
+	return values
+}
+
 func normalizeExecutorLogs(logs json.RawMessage, fallback model.RawJSON) model.RawJSON {
 	if len(logs) == 0 || !json.Valid(logs) || string(logs) == "null" {
 		return fallback
@@ -1129,6 +1232,40 @@ func normalizeExecutorLogs(logs json.RawMessage, fallback model.RawJSON) model.R
 	default:
 		return fallback
 	}
+}
+
+func normalizeCompositionScreenshots(screenshots []ExecutorScreenshotItem, executorPublicURL string) []ExecutorScreenshotItem {
+	if len(screenshots) == 0 {
+		return nil
+	}
+	result := make([]ExecutorScreenshotItem, 0, len(screenshots))
+	for _, screenshot := range screenshots {
+		if screenshot.URL != "" && strings.HasPrefix(screenshot.URL, "/") && executorPublicURL != "" {
+			screenshot.URL = strings.TrimRight(executorPublicURL, "/") + screenshot.URL
+		}
+		result = append(result, screenshot)
+	}
+	return result
+}
+
+func attachCompositionValidationScreenshots(logs model.RawJSON, screenshots []ExecutorScreenshotItem) model.RawJSON {
+	if len(screenshots) == 0 {
+		return logs
+	}
+	var entries []map[string]interface{}
+	if len(logs) > 0 && json.Valid(logs) {
+		_ = json.Unmarshal(logs, &entries)
+	}
+	if len(entries) == 0 {
+		entries = []map[string]interface{}{}
+	}
+	entries = append(entries, map[string]interface{}{
+		"level":       "INFO",
+		"message":     "已保存验证完成截图",
+		"screenshots": screenshots,
+		"timestamp":   time.Now().Format(time.RFC3339),
+	})
+	return mustRawJSON(entries)
 }
 
 func buildCompositionAssertionResults(
@@ -1530,14 +1667,6 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 	if task.ProjectID != input.ProjectID {
 		return nil, ErrForbidden(CodeForbidden, "任务不属于当前项目")
 	}
-	flows, err := s.flowRepo.ListAllByProject(ctx, input.ProjectID, true, true)
-	if err != nil {
-		return nil, ErrInternal(CodeInternal, err)
-	}
-	assertions, err := s.assertionRepo.ListAllByProject(ctx, input.ProjectID, true, true)
-	if err != nil {
-		return nil, ErrInternal(CodeInternal, err)
-	}
 	maxSteps := input.MaxSteps
 	if maxSteps <= 0 || maxSteps > 20 {
 		maxSteps = 20
@@ -1546,13 +1675,55 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureTaskReadyForComposition(task, sourceVersion); err != nil {
+		return nil, err
+	}
+	if len(input.OrderedSources) > 0 {
+		preferredFlowIDs := make([]uint, 0, len(input.OrderedSources))
+		for _, source := range input.OrderedSources {
+			if source.Type == "FLOW" {
+				preferredFlowIDs = append(preferredFlowIDs, source.ID)
+			}
+		}
+		candidates, candidateErr := s.resolveFlowPlanCandidates(ctx, input.ProjectID, task, sourceVersion, preferredFlowIDs)
+		if candidateErr != nil {
+			return nil, candidateErr
+		}
+		result, buildErr := s.buildOrderedFusionPlanResult(ctx, input, task, sourceVersion, candidates, maxSteps)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		s.recordAIPlanOperationLog(ctx, input, plannerModeHeuristic, result, plannerRunMeta{}, 0, len(candidates))
+		if s.planRecorder != nil && result != nil {
+			s.planRecorder.RecordPlanGenerated(ctx, input.ProjectID, input.TaskID, input.OperatorID, result)
+		}
+		return result, nil
+	}
+	additionalSources, err := s.resolveAdditionalCompositionSources(ctx, input.ProjectID, input.TaskID, input.AdditionalTaskIDs)
+	if err != nil {
+		return nil, err
+	}
+	flows, err := s.flowRepo.ListAllByProject(ctx, input.ProjectID, true, true)
+	if err != nil {
+		return nil, ErrInternal(CodeInternal, err)
+	}
+	assertions, err := s.assertionRepo.ListAllByProject(ctx, input.ProjectID, true, true)
+	if err != nil {
+		return nil, ErrInternal(CodeInternal, err)
+	}
 	profile := buildAIPlanSourceProfile(task, sourceVersion)
+	preferredFlowIDs := uintSet(input.PreferredFlowIDs)
 
 	candidates := make([]aiPlanCandidate, 0, len(flows)+len(assertions))
 	for i := range flows {
 		flow := flows[i]
 		if isValidationUnusableForAI(flow.LatestValidationStatus) {
 			continue
+		}
+		if len(preferredFlowIDs) > 0 {
+			if _, ok := preferredFlowIDs[flow.ID]; !ok {
+				continue
+			}
 		}
 		version, versionErr := s.flowRepo.GetLatestPublishedVersion(ctx, flow.ID)
 		if versionErr != nil {
@@ -1574,6 +1745,14 @@ func (s *AIScenarioCompositionService) AIPlanFromTask(ctx context.Context, input
 				Inputs:        inferFlowPlanInputs(flow),
 			},
 		})
+	}
+	if len(preferredFlowIDs) > 0 || len(additionalSources) > 0 {
+		result := buildFlowFusionPlanResult(input.TaskID, sourceVersion, additionalSources, candidates, maxSteps)
+		s.recordAIPlanOperationLog(ctx, input, plannerModeHeuristic, result, plannerRunMeta{}, 0, len(candidates))
+		if s.planRecorder != nil && result != nil {
+			s.planRecorder.RecordPlanGenerated(ctx, input.ProjectID, input.TaskID, input.OperatorID, result)
+		}
+		return result, nil
 	}
 	for i := range assertions {
 		assertion := assertions[i]
@@ -1650,6 +1829,277 @@ func buildHeuristicPlanResult(taskID uint, candidates []aiPlanCandidate, maxStep
 	}
 }
 
+// resolveFlowPlanCandidates 按用户选择的固定场景 ID 解析可复用固定场景候选。
+func (s *AIScenarioCompositionService) resolveFlowPlanCandidates(ctx context.Context, projectID uint, task *model.AIScriptTask, sourceVersion *model.AIScriptVersion, flowIDs []uint) ([]aiPlanCandidate, error) {
+	if len(flowIDs) == 0 {
+		return nil, nil
+	}
+	flows, err := s.flowRepo.ListAllByProject(ctx, projectID, true, true)
+	if err != nil {
+		return nil, ErrInternal(CodeInternal, err)
+	}
+	flowByID := make(map[uint]model.AIFlowAsset, len(flows))
+	for _, flow := range flows {
+		flowByID[flow.ID] = flow
+	}
+	profile := buildAIPlanSourceProfile(task, sourceVersion)
+	candidates := make([]aiPlanCandidate, 0, len(flowIDs))
+	for _, flowID := range flowIDs {
+		if flowID == 0 {
+			continue
+		}
+		flow, ok := flowByID[flowID]
+		if !ok {
+			return nil, ErrNotFound(CodeNotFound, "固定场景片段不存在或未发布")
+		}
+		if flow.LatestValidationStatus != model.AIValidationStatusPassed {
+			return nil, ErrConflict(CodeConflict, "只能选择验证通过的固定场景片段参与场景编排")
+		}
+		version, versionErr := s.flowRepo.GetLatestPublishedVersion(ctx, flow.ID)
+		if versionErr != nil {
+			if errors.Is(versionErr, gorm.ErrRecordNotFound) {
+				return nil, ErrConflict(CodeConflict, "固定场景片段缺少已发布版本")
+			}
+			return nil, ErrInternal(CodeInternal, versionErr)
+		}
+		flowCopy := flow
+		score, matched := scoreFlowPlanCandidate(profile, flow, version)
+		confidence := planConfidence(score, model.AIScenarioStepTypeFlowCall)
+		candidates = append(candidates, aiPlanCandidate{
+			Score:       score,
+			Flow:        &flowCopy,
+			FlowVersion: version,
+			Step: AIPlanStep{
+				Type:          model.AIScenarioStepTypeFlowCall,
+				FlowID:        flow.ID,
+				FlowVersionID: version.ID,
+				FlowKey:       flow.FlowKey,
+				Confidence:    confidence,
+				Reason:        buildAIPlanReason("固定场景", flow.FlowName, matched, confidence),
+				Inputs:        inferFlowPlanInputs(flow),
+			},
+		})
+	}
+	return candidates, nil
+}
+
+// buildOrderedFusionPlanResult 按前端编排队列生成融合计划，固定场景覆盖重合录制步骤。
+func (s *AIScenarioCompositionService) buildOrderedFusionPlanResult(ctx context.Context, input AIPlanFromTaskInput, task *model.AIScriptTask, sourceVersion *model.AIScriptVersion, candidates []aiPlanCandidate, maxSteps int) (*AIPlanResult, error) {
+	if maxSteps <= 0 {
+		maxSteps = 20
+	}
+	taskSources := map[uint]compositionTaskSource{
+		input.TaskID: {
+			Task:    task,
+			Version: sourceVersion,
+		},
+	}
+	candidateByFlowID := make(map[uint]aiPlanCandidate, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Flow != nil {
+			candidateByFlowID[candidate.Flow.ID] = candidate
+		}
+	}
+	coverageByFlowID := make(map[uint]flowCoverageSource, len(candidates))
+	for _, coverage := range buildOrderedFlowCoverages(candidates) {
+		coverageByFlowID[coverage.FlowID] = coverage
+	}
+	activeCoverages := []flowCoverageSource{}
+	steps := make([]AIPlanStep, 0, maxSteps)
+	warnings := []string{}
+	truncated := false
+	taskSourceCount := 0
+	flowSourceCount := 0
+	appendStep := func(step AIPlanStep) bool {
+		if len(steps) >= maxSteps {
+			if !truncated {
+				warnings = append(warnings, fmt.Sprintf("融合计划超过上限 %d，剩余编排片段已截断", maxSteps))
+				truncated = true
+			}
+			return false
+		}
+		steps = append(steps, step)
+		return true
+	}
+
+	for _, orderedSource := range input.OrderedSources {
+		if len(steps) >= maxSteps {
+			break
+		}
+		sourceType := strings.ToUpper(strings.TrimSpace(orderedSource.Type))
+		if orderedSource.ID == 0 {
+			return nil, ErrBadRequest(CodeParamsError, "编排来源 ID 不能为空")
+		}
+		switch sourceType {
+		case "TASK":
+			source, ok := taskSources[orderedSource.ID]
+			if !ok {
+				resolvedSource, err := s.resolveCompositionTaskSourceByID(ctx, input.ProjectID, orderedSource.ID, 0)
+				if err != nil {
+					return nil, err
+				}
+				source = resolvedSource
+				taskSources[orderedSource.ID] = source
+			}
+			taskSourceCount++
+			recordingSteps, resolveWarnings, err := s.resolveCompositionRecordingActions(ctx, source)
+			if err != nil {
+				return nil, err
+			}
+			warnings = append(warnings, resolveWarnings...)
+			if len(recordingSteps) == 0 {
+				warnings = append(warnings, fmt.Sprintf("录制脚本「%s」缺少可融合的 generation_steps，已跳过", source.Task.TaskName))
+				continue
+			}
+			covered := buildTaskFlowCoverageMask(recordingSteps, activeCoverages)
+			for index, action := range recordingSteps {
+				if covered[index] {
+					continue
+				}
+				step, ok := buildAtomicPlanStep(action)
+				if !ok {
+					warnings = append(warnings, fmt.Sprintf("录制脚本「%s」步骤 %d 动作类型 %s 暂不支持自动融合，已跳过", source.Task.TaskName, action.StepNo, action.ActionType))
+					continue
+				}
+				if !appendStep(step) {
+					break
+				}
+			}
+		case "FLOW":
+			candidate, ok := candidateByFlowID[orderedSource.ID]
+			if !ok {
+				return nil, ErrNotFound(CodeNotFound, "固定场景片段不存在或未发布")
+			}
+			flowSourceCount++
+			reason := "按用户编排顺序引用固定场景，重合录制动作以固定场景脚本为准"
+			confidence := 0.9
+			coverage, hasCoverage := coverageByFlowID[orderedSource.ID]
+			if !hasCoverage || len(coverage.Actions) == 0 {
+				reason = "固定场景缺少可识别录制动作，仍按用户编排顺序引用"
+				confidence = 0.78
+			}
+			if appendStep(buildFusionFlowStep(candidate, reason, confidence)) && hasCoverage {
+				activeCoverages = append(activeCoverages, coverage)
+			}
+		default:
+			return nil, ErrBadRequest(CodeParamsError, "编排来源类型只能是 TASK 或 FLOW")
+		}
+	}
+	if len(steps) == 0 {
+		warnings = append(warnings, "未生成可用编排步骤，请确认编排队列中的脚本和固定场景是否有可编译步骤")
+	}
+	return &AIPlanResult{
+		PlanID:      fmt.Sprintf("fusion_plan_%d_%d", input.TaskID, time.Now().Unix()),
+		Confidence:  averagePlanConfidence(steps),
+		Summary:     fmt.Sprintf("按用户编排顺序融合 %d 个录制脚本片段与 %d 个固定场景，生成 %d 个编排步骤", taskSourceCount, flowSourceCount, len(steps)),
+		Steps:       steps,
+		Warnings:    warnings,
+		PlannerUsed: plannerUsedHeuristic,
+	}, nil
+}
+
+func buildFlowFusionPlanResult(taskID uint, sourceVersion *model.AIScriptVersion, additionalSources []compositionTaskSource, candidates []aiPlanCandidate, maxSteps int) *AIPlanResult {
+	recordingSteps := extractCompositionRecordingActions(sourceVersion.StepModelJSON)
+	for _, source := range additionalSources {
+		recordingSteps = append(recordingSteps, extractCompositionRecordingActions(source.Version.StepModelJSON)...)
+	}
+	steps := make([]AIPlanStep, 0, maxSteps)
+	warnings := []string{}
+	if len(recordingSteps) == 0 {
+		warnings = append(warnings, "来源录制任务缺少可融合的 generation_steps，已仅按固定场景生成引用步骤")
+	}
+
+	candidateMatches := make([]flowCandidateMatch, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Flow == nil || candidate.FlowVersion == nil {
+			continue
+		}
+		flowSteps := extractCompositionRecordingActionsFromRaw(candidate.FlowVersion.DSLJSON)
+		if len(flowSteps) == 0 {
+			flowSteps = extractCompositionRecordingActionsFromRaw(candidate.Flow.DSLJSON)
+		}
+		start := findRecordingSubsequence(recordingSteps, flowSteps)
+		candidateMatches = append(candidateMatches, flowCandidateMatch{
+			Candidate: candidate,
+			Actions:   flowSteps,
+			Start:     start,
+		})
+	}
+	sort.SliceStable(candidateMatches, func(i, j int) bool {
+		if candidateMatches[i].Start == candidateMatches[j].Start {
+			return len(candidateMatches[i].Actions) > len(candidateMatches[j].Actions)
+		}
+		if candidateMatches[i].Start < 0 {
+			return false
+		}
+		if candidateMatches[j].Start < 0 {
+			return true
+		}
+		return candidateMatches[i].Start < candidateMatches[j].Start
+	})
+
+	used := make([]bool, len(recordingSteps))
+	for _, match := range candidateMatches {
+		if len(steps) >= maxSteps {
+			break
+		}
+		if match.Start < 0 {
+			steps = append(steps, buildFusionFlowStep(match.Candidate, "未在来源录制步骤中找到连续重合片段，仍按用户选择引用固定场景", 0.78))
+			continue
+		}
+		if hasUsedRecordingRange(used, match.Start, len(match.Actions)) {
+			continue
+		}
+		for len(steps) < maxSteps {
+			nextIndex := nextUnplannedRecordingIndex(used)
+			if nextIndex < 0 || nextIndex >= match.Start {
+				break
+			}
+			if step, ok := buildAtomicPlanStep(recordingSteps[nextIndex]); ok {
+				steps = append(steps, step)
+			} else {
+				warnings = append(warnings, fmt.Sprintf("录制步骤 %d 动作类型 %s 暂不支持自动融合，已跳过", recordingSteps[nextIndex].StepNo, recordingSteps[nextIndex].ActionType))
+			}
+			used[nextIndex] = true
+		}
+		steps = append(steps, buildFusionFlowStep(match.Candidate, fmt.Sprintf("固定场景与来源录制步骤 %d-%d 高度重合，按固定场景脚本融合", match.Start+1, match.Start+len(match.Actions)), 0.9))
+		markRecordingRangeUsed(used, match.Start, len(match.Actions))
+	}
+	for index, action := range recordingSteps {
+		if len(steps) >= maxSteps {
+			warnings = append(warnings, fmt.Sprintf("融合计划超过上限 %d，剩余录制步骤已截断", maxSteps))
+			break
+		}
+		if used[index] {
+			continue
+		}
+		if step, ok := buildAtomicPlanStep(action); ok {
+			steps = append(steps, step)
+		} else {
+			warnings = append(warnings, fmt.Sprintf("录制步骤 %d 动作类型 %s 暂不支持自动融合，已跳过", action.StepNo, action.ActionType))
+		}
+	}
+	if len(steps) == 0 {
+		for _, candidate := range candidates {
+			if len(steps) >= maxSteps {
+				break
+			}
+			steps = append(steps, buildFusionFlowStep(candidate, "来源步骤不可用，按用户选择引用固定场景", 0.78))
+		}
+	}
+	if len(steps) == 0 {
+		warnings = append(warnings, "未生成可用编排步骤，请确认来源任务和固定场景是否有可编译步骤")
+	}
+	return &AIPlanResult{
+		PlanID:      fmt.Sprintf("fusion_plan_%d_%d", taskID, time.Now().Unix()),
+		Confidence:  averagePlanConfidence(steps),
+		Summary:     fmt.Sprintf("基于已确认录制任务、%d 个录制脚本片段与 %d 个固定场景融合生成 %d 个编排步骤", len(additionalSources), len(candidates), len(steps)),
+		Steps:       steps,
+		Warnings:    warnings,
+		PlannerUsed: plannerUsedHeuristic,
+	}
+}
+
 // AISuggestAssertions 为当前编排推荐断言资产。
 func (s *AIScenarioCompositionService) AISuggestAssertions(ctx context.Context, projectID, compositionID uint) (*AIPlanResult, error) {
 	if _, err := s.Get(ctx, projectID, compositionID); err != nil {
@@ -1696,8 +2146,492 @@ type aiPlanCandidate struct {
 	Assertion   *model.AIAssertionAsset
 }
 
+type flowCandidateMatch struct {
+	Candidate aiPlanCandidate
+	Actions   []compositionRecordingAction
+	Start     int
+}
+
+type compositionRecordingAction struct {
+	ActionType  string
+	Selector    string
+	URL         string
+	Value       string
+	Timeout     string
+	StepNo      int
+	FromTrace   bool
+	MaskedValue bool
+}
+
+type compositionTaskSource struct {
+	Task    *model.AIScriptTask
+	Version *model.AIScriptVersion
+}
+
+type flowCoverageSource struct {
+	FlowID  uint
+	Actions []compositionRecordingAction
+}
+
 func isValidationUnusableForAI(status string) bool {
 	return status == model.AIValidationStatusFailed || status == model.AIValidationStatusError
+}
+
+func ensureTaskReadyForComposition(task *model.AIScriptTask, version *model.AIScriptVersion) error {
+	if task.TaskStatus != model.AITaskStatusConfirmed {
+		return ErrConflict(CodeConflict, "只能选择已确认的录制任务生成场景编排")
+	}
+	if task.LatestValidationStatus != model.AIValidationStatusPassed {
+		return ErrConflict(CodeConflict, "只能选择验证通过的录制任务生成场景编排")
+	}
+	if version.ScriptStatus != model.AIScriptStatusConfirmed {
+		return ErrConflict(CodeConflict, "来源脚本版本尚未确认，不能生成场景编排")
+	}
+	if version.ValidationStatus != model.AIValidationStatusPassed {
+		return ErrConflict(CodeConflict, "来源脚本版本尚未验证通过，不能生成场景编排")
+	}
+	return nil
+}
+
+func uintSet(values []uint) map[uint]struct{} {
+	result := make(map[uint]struct{}, len(values))
+	for _, value := range values {
+		if value == 0 {
+			continue
+		}
+		result[value] = struct{}{}
+	}
+	return result
+}
+
+func (s *AIScenarioCompositionService) resolveCompositionTaskSourceByID(ctx context.Context, projectID, taskID, sourceVersionID uint) (compositionTaskSource, error) {
+	task, err := s.aiScriptRepo.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return compositionTaskSource{}, ErrNotFound(CodeNotFound, "录制脚本片段不存在")
+		}
+		return compositionTaskSource{}, ErrInternal(CodeInternal, err)
+	}
+	if task.ProjectID != projectID {
+		return compositionTaskSource{}, ErrForbidden(CodeForbidden, "录制脚本片段不属于当前项目")
+	}
+	version, err := s.resolveAIPlanSourceVersion(ctx, task, sourceVersionID)
+	if err != nil {
+		return compositionTaskSource{}, err
+	}
+	if err := ensureTaskReadyForComposition(task, version); err != nil {
+		return compositionTaskSource{}, err
+	}
+	return compositionTaskSource{
+		Task:    task,
+		Version: version,
+	}, nil
+}
+
+func (s *AIScenarioCompositionService) resolveAdditionalCompositionSources(ctx context.Context, projectID, mainTaskID uint, taskIDs []uint) ([]compositionTaskSource, error) {
+	taskIDSet := uintSet(taskIDs)
+	delete(taskIDSet, 0)
+	delete(taskIDSet, mainTaskID)
+	if len(taskIDSet) == 0 {
+		return nil, nil
+	}
+	sources := make([]compositionTaskSource, 0, len(taskIDSet))
+	ids := make([]uint, 0, len(taskIDSet))
+	for taskID := range taskIDSet {
+		ids = append(ids, taskID)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, taskID := range ids {
+		source, err := s.resolveCompositionTaskSourceByID(ctx, projectID, taskID, 0)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, source)
+	}
+	return sources, nil
+}
+
+func buildOrderedFlowCoverages(candidates []aiPlanCandidate) []flowCoverageSource {
+	coverages := make([]flowCoverageSource, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Flow == nil {
+			continue
+		}
+		actions := []compositionRecordingAction{}
+		if candidate.FlowVersion != nil {
+			actions = extractCompositionRecordingActionsFromRaw(candidate.FlowVersion.DSLJSON)
+		}
+		if len(actions) == 0 {
+			actions = extractCompositionRecordingActionsFromRaw(candidate.Flow.DSLJSON)
+		}
+		coverages = append(coverages, flowCoverageSource{
+			FlowID:  candidate.Flow.ID,
+			Actions: actions,
+		})
+	}
+	return coverages
+}
+
+func buildTaskFlowCoverageMask(recordingSteps []compositionRecordingAction, coverages []flowCoverageSource) []bool {
+	covered := make([]bool, len(recordingSteps))
+	for _, coverage := range coverages {
+		if len(coverage.Actions) == 0 {
+			continue
+		}
+		start := findRecordingSubsequence(recordingSteps, coverage.Actions)
+		if start < 0 {
+			continue
+		}
+		markRecordingRangeUsed(covered, start, len(coverage.Actions))
+	}
+	return covered
+}
+
+// resolveCompositionRecordingActions 优先使用已确认版本的结构化步骤；为空时回退到录制轨迹，避免融合时丢失来源脚本剩余动作。
+func (s *AIScenarioCompositionService) resolveCompositionRecordingActions(ctx context.Context, source compositionTaskSource) ([]compositionRecordingAction, []string, error) {
+	if source.Version != nil {
+		if actions := extractCompositionRecordingActions(source.Version.StepModelJSON); len(actions) > 0 {
+			return actions, nil, nil
+		}
+	}
+	if source.Task == nil {
+		return nil, nil, nil
+	}
+	traces, err := s.aiScriptRepo.ListTraces(ctx, source.Task.ID)
+	if err != nil {
+		return nil, nil, ErrInternal(CodeInternal, err)
+	}
+	if len(traces) == 0 {
+		return nil, nil, nil
+	}
+	warnings := []string{
+		fmt.Sprintf("录制脚本「%s」缺少 generation_steps，已回退使用录制轨迹融合", source.Task.TaskName),
+	}
+	return buildCompositionRecordingActionsFromTraces(traces), warnings, nil
+}
+
+func extractCompositionRecordingActions(stepModel model.JSONMap) []compositionRecordingAction {
+	if stepModel == nil {
+		return nil
+	}
+	steps := dslObjectSlice(stepModel["generation_steps"])
+	if len(steps) == 0 {
+		steps = dslObjectSlice(stepModel["steps"])
+	}
+	return buildCompositionRecordingActions(steps)
+}
+
+func extractCompositionRecordingActionsFromRaw(data model.RawJSON) []compositionRecordingAction {
+	if len(data) == 0 || !json.Valid(data) {
+		return nil
+	}
+	root := map[string]interface{}{}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil {
+		return nil
+	}
+	steps := dslObjectSlice(root["generation_steps"])
+	if len(steps) == 0 {
+		steps = dslObjectSlice(root["steps"])
+	}
+	return buildCompositionRecordingActions(steps)
+}
+
+func buildCompositionRecordingActionsFromTraces(traces []model.AIScriptTrace) []compositionRecordingAction {
+	actions := make([]compositionRecordingAction, 0, len(traces))
+	for _, trace := range traces {
+		actionType := strings.ToUpper(strings.TrimSpace(trace.ActionType))
+		if actionType == "" {
+			continue
+		}
+		stepNo := trace.TraceNo
+		if stepNo == 0 {
+			stepNo = len(actions) + 1
+		}
+		actions = append(actions, compositionRecordingAction{
+			ActionType:  actionType,
+			Selector:    trace.LocatorUsed,
+			URL:         trace.PageURL,
+			Value:       trace.InputValueMasked,
+			StepNo:      stepNo,
+			FromTrace:   true,
+			MaskedValue: trace.InputValueMasked != "",
+		})
+	}
+	return actions
+}
+
+func buildCompositionRecordingActions(steps []map[string]interface{}) []compositionRecordingAction {
+	actions := make([]compositionRecordingAction, 0, len(steps))
+	for index, step := range steps {
+		inputs := objectFromAny(step["inputs"])
+		actionType := strings.ToUpper(firstNonEmptyStringFromObjects([]map[string]interface{}{step, inputs}, "action_type", "actionType", "type", "step_type"))
+		if actionType == model.AIScenarioStepTypeAtomicAction {
+			actionType = strings.ToUpper(firstNonEmptyStringFromObjects([]map[string]interface{}{step, inputs}, "action.type", "atomic_action", "atomicAction"))
+		}
+		if actionType == "" {
+			continue
+		}
+		stepNo := int(firstJSONNumberAsInt(step["step_no"]))
+		if stepNo == 0 {
+			stepNo = index + 1
+		}
+		actions = append(actions, compositionRecordingAction{
+			ActionType: actionType,
+			Selector:   firstNonEmptyStringFromObjects([]map[string]interface{}{inputs, step}, "selector", "locator", "locator_used", "locatorUsed"),
+			URL:        firstNonEmptyStringFromObjects([]map[string]interface{}{inputs, step}, "url", "page_url", "pageUrl"),
+			Value:      firstNonEmptyStringFromObjects([]map[string]interface{}{inputs, step}, "value", "input_value", "inputValue", "text", "key"),
+			Timeout:    firstNonEmptyStringFromObjects([]map[string]interface{}{inputs, step}, "timeout_ms", "timeoutMs", "timeout"),
+			StepNo:     stepNo,
+		})
+	}
+	return actions
+}
+
+func firstJSONNumberAsInt(value interface{}) int64 {
+	switch typed := value.(type) {
+	case json.Number:
+		number, _ := typed.Int64()
+		return number
+	case float64:
+		return int64(typed)
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	default:
+		return 0
+	}
+}
+
+func findRecordingSubsequence(source []compositionRecordingAction, target []compositionRecordingAction) int {
+	if len(source) == 0 || len(target) == 0 || len(target) > len(source) {
+		return -1
+	}
+	for start := 0; start <= len(source)-len(target); start++ {
+		matched := true
+		for offset := range target {
+			if !compositionActionsMatch(source[start+offset], target[offset]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return start
+		}
+	}
+	return -1
+}
+
+func compositionActionsMatch(source, target compositionRecordingAction) bool {
+	if normalizeActionTypeForFusion(source.ActionType) != normalizeActionTypeForFusion(target.ActionType) {
+		return false
+	}
+	if target.Selector != "" && source.Selector != "" {
+		return selectorsMatchForFusion(source.Selector, target.Selector)
+	}
+	if target.URL != "" && source.URL != "" {
+		return normalizeFusionText(sanitizeURLPath(source.URL)) == normalizeFusionText(sanitizeURLPath(target.URL))
+	}
+	if target.Value != "" && source.Value != "" && source.ActionType != "INPUT" && source.ActionType != "FILL" {
+		return normalizeFusionText(source.Value) == normalizeFusionText(target.Value)
+	}
+	return false
+}
+
+func selectorsMatchForFusion(sourceSelector string, targetSelector string) bool {
+	sourceNormalized := normalizeFusionText(sourceSelector)
+	targetNormalized := normalizeFusionText(targetSelector)
+	if sourceNormalized == targetNormalized {
+		return true
+	}
+	sourceTexts := selectorSemanticTexts(sourceSelector)
+	targetTexts := selectorSemanticTexts(targetSelector)
+	for text := range sourceTexts {
+		if _, ok := targetTexts[text]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func selectorSemanticTexts(selector string) map[string]struct{} {
+	result := map[string]struct{}{}
+	for _, pattern := range selectorSemanticTextPatterns {
+		matches := pattern.FindAllStringSubmatch(selector, -1)
+		for _, match := range matches {
+			if len(match) < 2 {
+				continue
+			}
+			text := normalizeFusionText(match[1])
+			if text != "" {
+				result[text] = struct{}{}
+			}
+		}
+	}
+	return result
+}
+
+func normalizeActionTypeForFusion(actionType string) string {
+	switch strings.ToUpper(strings.TrimSpace(actionType)) {
+	case "GOTO":
+		return "NAVIGATE"
+	case "FILL":
+		return "INPUT"
+	default:
+		return strings.ToUpper(strings.TrimSpace(actionType))
+	}
+}
+
+func normalizeFusionText(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+}
+
+func hasUsedRecordingRange(used []bool, start int, length int) bool {
+	if start < 0 || length <= 0 || start+length > len(used) {
+		return true
+	}
+	for index := start; index < start+length; index++ {
+		if used[index] {
+			return true
+		}
+	}
+	return false
+}
+
+func markRecordingRangeUsed(used []bool, start int, length int) {
+	for index := start; index < start+length && index < len(used); index++ {
+		if index >= 0 {
+			used[index] = true
+		}
+	}
+}
+
+func nextUnplannedRecordingIndex(used []bool) int {
+	for index, item := range used {
+		if !item {
+			return index
+		}
+	}
+	return -1
+}
+
+func buildFusionFlowStep(candidate aiPlanCandidate, reason string, confidence float64) AIPlanStep {
+	step := candidate.Step
+	step.StepName = candidate.Step.StepName
+	if step.StepName == "" && candidate.Flow != nil {
+		step.StepName = "引用固定场景：" + candidate.Flow.FlowName
+	}
+	step.Reason = reason
+	step.Confidence = confidence
+	return step
+}
+
+func buildAtomicPlanStep(action compositionRecordingAction) (AIPlanStep, bool) {
+	atomicAction := atomicActionFromRecordingAction(action.ActionType)
+	if atomicAction == "" {
+		return AIPlanStep{}, false
+	}
+	if action.FromTrace && isUnstableTraceAtomicAction(atomicAction, action) {
+		return AIPlanStep{}, false
+	}
+	if !recordingActionHasRequiredInputs(atomicAction, action) {
+		return AIPlanStep{}, false
+	}
+	inputs := map[string]interface{}{}
+	if action.Selector != "" {
+		inputs["selector"] = action.Selector
+	}
+	if action.URL != "" {
+		inputs["url"] = action.URL
+	}
+	if action.Value != "" {
+		if atomicAction == "press" {
+			inputs["key"] = action.Value
+		} else {
+			inputs["value"] = action.Value
+		}
+	}
+	if action.FromTrace && atomicAction == "fill" && action.MaskedValue {
+		inputs["value"] = "自动化验证任务"
+	}
+	if action.Timeout != "" {
+		inputs["timeout_ms"] = action.Timeout
+	}
+	return AIPlanStep{
+		Type:         model.AIScenarioStepTypeAtomicAction,
+		StepName:     fmt.Sprintf("保留录制步骤 %d：%s", action.StepNo, action.ActionType),
+		AtomicAction: atomicAction,
+		Confidence:   0.82,
+		Reason:       "来源录制任务未被固定场景覆盖，保留为编排原子步骤",
+		Inputs:       inputs,
+	}, true
+}
+
+func isUnstableTraceAtomicAction(atomicAction string, action compositionRecordingAction) bool {
+	if action.MaskedValue {
+		if atomicAction == "press" {
+			return true
+		}
+	}
+	return isUnstableSelectorForReplay(action.Selector)
+}
+
+func isUnstableSelectorForReplay(selector string) bool {
+	selector = strings.ToLower(strings.TrimSpace(selector))
+	if selector == "" {
+		return false
+	}
+	unstableSelectorParts := []string{
+		".hover-row",
+		":hover",
+		".is-focus",
+		".is-active",
+		".is-current",
+	}
+	for _, part := range unstableSelectorParts {
+		if strings.Contains(selector, part) {
+			return true
+		}
+	}
+	return false
+}
+
+func recordingActionHasRequiredInputs(atomicAction string, action compositionRecordingAction) bool {
+	switch atomicAction {
+	case "goto":
+		return strings.TrimSpace(action.URL) != ""
+	case "click", "select":
+		return strings.TrimSpace(action.Selector) != ""
+	case "fill":
+		return strings.TrimSpace(action.Selector) != "" && strings.TrimSpace(action.Value) != ""
+	case "press":
+		return strings.TrimSpace(action.Selector) != "" && strings.TrimSpace(action.Value) != ""
+	case "wait":
+		return true
+	default:
+		return false
+	}
+}
+
+func atomicActionFromRecordingAction(actionType string) string {
+	switch normalizeActionTypeForFusion(actionType) {
+	case "NAVIGATE":
+		return "goto"
+	case "CLICK":
+		return "click"
+	case "INPUT":
+		return "fill"
+	case "SELECT":
+		return "select"
+	case "KEY_PRESS":
+		return "press"
+	case "WAIT":
+		return "wait"
+	default:
+		return ""
+	}
 }
 
 func (s *AIScenarioCompositionService) resolveAIPlanSourceVersion(ctx context.Context, task *model.AIScriptTask, sourceVersionID uint) (*model.AIScriptVersion, error) {
@@ -2647,7 +3581,15 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 			fmt.Fprintf(&b, "  // 跳过已禁用步骤：%s\n", step.StepName)
 			continue
 		}
-		inputLiteral := rawJSONToTSLiteral(step.ParamMappingJSON)
+		if step.StepType == model.AIScenarioStepTypeAtomicAction && shouldSkipUnstableAtomicStep(step) {
+			warnings = append(warnings, fmt.Sprintf("已跳过不可稳定回放的原子步骤：%s", step.StepName))
+			continue
+		}
+		paramMappingJSON := step.ParamMappingJSON
+		if step.StepType == model.AIScenarioStepTypeAtomicAction {
+			paramMappingJSON = sanitizeAtomicStepParamMapping(step)
+		}
+		inputLiteral := rawJSONToTSLiteral(paramMappingJSON)
 		outputLiteral := rawJSONToTSLiteral(step.OutputMappingJSON)
 		stepID := scenarioStepStableID(step)
 		switch step.StepType {
@@ -2698,6 +3640,31 @@ func (s *AIScenarioCompositionService) compilePlaywrightSpec(ctx context.Context
 	return b.String(), warnings, confirmedPartialFlows, nil
 }
 
+func shouldSkipUnstableAtomicStep(step model.AIScenarioStep) bool {
+	params := map[string]interface{}{}
+	_ = json.Unmarshal(step.ParamMappingJSON, &params)
+	selector, _ := params["selector"].(string)
+	key, _ := params["key"].(string)
+	action := strings.ToLower(strings.TrimSpace(step.AtomicAction))
+	if action == "press" && strings.Contains(key, "***") {
+		return true
+	}
+	return isUnstableSelectorForReplay(selector)
+}
+
+func sanitizeAtomicStepParamMapping(step model.AIScenarioStep) model.RawJSON {
+	params := map[string]interface{}{}
+	if err := json.Unmarshal(step.ParamMappingJSON, &params); err != nil {
+		return step.ParamMappingJSON
+	}
+	if strings.EqualFold(step.AtomicAction, "fill") {
+		if value, _ := params["value"].(string); strings.Contains(value, "***") {
+			params["value"] = "自动化验证任务"
+		}
+	}
+	return mustRawJSON(params)
+}
+
 func compileAtomicAction(step model.AIScenarioStep, inputLiteral string, outputLiteral string, stepID string) (string, error) {
 	params := map[string]interface{}{}
 	_ = json.Unmarshal(step.ParamMappingJSON, &params)
@@ -2713,19 +3680,19 @@ func compileAtomicAction(step model.AIScenarioStep, inputLiteral string, outputL
 		if selector == "" {
 			return "", ErrBadRequest(CodeParamsError, "click 原子操作需要 selector 参数")
 		}
-		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).click()\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ clicked: true }, " + outputLiteral + " as Record<string, unknown>, { clicked: true })\n  }\n", nil
+		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await " + compileAtomicLocatorExpression(selector) + ".click()\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ clicked: true }, " + outputLiteral + " as Record<string, unknown>, { clicked: true })\n  }\n", nil
 	case "fill":
 		if selector == "" {
 			return "", ErrBadRequest(CodeParamsError, "fill 原子操作需要 selector 参数")
 		}
-		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).fill(String(inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ filled: true }, " + outputLiteral + " as Record<string, unknown>, { filled: true })\n  }\n", nil
+		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await " + compileAtomicLocatorExpression(selector) + ".fill(String(inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ filled: true }, " + outputLiteral + " as Record<string, unknown>, { filled: true })\n  }\n", nil
 	case "wait":
 		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await page.waitForTimeout(Number(inputs.timeout_ms || 1000))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ waited: true }, " + outputLiteral + " as Record<string, unknown>, { waited: true })\n  }\n", nil
 	case "select":
 		if selector == "" {
 			return "", ErrBadRequest(CodeParamsError, "select 原子操作需要 selector 参数")
 		}
-		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).selectOption(String(inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ selected: true }, " + outputLiteral + " as Record<string, unknown>, { selected: true })\n  }\n", nil
+		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await " + compileAtomicLocatorExpression(selector) + ".selectOption(String(inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ selected: true }, " + outputLiteral + " as Record<string, unknown>, { selected: true })\n  }\n", nil
 	case "press":
 		key, _ := params["key"].(string)
 		if key == "" {
@@ -2737,15 +3704,22 @@ func compileAtomicAction(step model.AIScenarioStep, inputLiteral string, outputL
 		if key == "" {
 			return "", ErrBadRequest(CodeParamsError, "press 原子操作需要 key 参数")
 		}
-		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).press(String(inputs.key ?? inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ pressed: true }, " + outputLiteral + " as Record<string, unknown>, { pressed: true })\n  }\n", nil
+		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await " + compileAtomicLocatorExpression(selector) + ".press(String(inputs.key ?? inputs.value ?? ''))\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ pressed: true }, " + outputLiteral + " as Record<string, unknown>, { pressed: true })\n  }\n", nil
 	case "wait_for":
 		if selector == "" {
 			return "", ErrBadRequest(CodeParamsError, "wait_for 原子操作需要 selector 参数")
 		}
-		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await cssLocator(page, inputs.selector).waitFor({ state: 'visible', timeout: Number(inputs.timeout_ms || 5000) })\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ waited: true }, " + outputLiteral + " as Record<string, unknown>, { waited: true })\n  }\n", nil
+		return "  {\n    const inputs = resolveScenarioValue(ctx, " + inputLiteral + ") as any\n    await " + compileAtomicLocatorExpression(selector) + ".waitFor({ state: 'visible', timeout: Number(inputs.timeout_ms || 5000) })\n    ctx.outputs[" + tsString(stepID) + "] = mapStepOutputs({ waited: true }, " + outputLiteral + " as Record<string, unknown>, { waited: true })\n  }\n", nil
 	default:
 		return "", ErrBadRequest(CodeParamsError, "原子操作类型无效，支持："+strings.Join(supportedAtomicActions, "、"))
 	}
+}
+
+func compileAtomicLocatorExpression(selector string) string {
+	if expression, ok := safePlaywrightLocatorExpression(selector); ok {
+		return expression
+	}
+	return "cssLocator(page, inputs.selector)"
 }
 
 // supportedFlowDSLStepTypes 固定场景 DSL 支持的步骤类型清单，与 compileFlowStepStatement 能力保持同一清单。
@@ -2786,6 +3760,9 @@ func compileFlowDSL(data model.RawJSON, indent string, flowKeys map[uint]string)
 	steps := dslObjectSlice(root["generation_steps"])
 	if len(steps) == 0 {
 		steps = dslObjectSlice(root["steps"])
+	}
+	if len(steps) == 0 {
+		return nil, []model.FlowCompileFailure{{Reason: "固定场景 DSL 缺少可编译步骤"}}
 	}
 	lines := make([]string, 0, len(steps)*3)
 	failures := []model.FlowCompileFailure{}

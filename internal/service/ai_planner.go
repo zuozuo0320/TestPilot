@@ -107,11 +107,13 @@ type llmPlanPayload struct {
 
 type llmPlanStep struct {
 	Type          string                 `json:"type"`
+	StepName      string                 `json:"step_name,omitempty"`
 	FlowID        uint                   `json:"flow_id,omitempty"`
 	FlowVersionID uint                   `json:"flow_version_id,omitempty"`
 	FlowKey       string                 `json:"flow_key,omitempty"`
 	AssertionID   uint                   `json:"assertion_id,omitempty"`
 	AssertionKey  string                 `json:"assertion_key,omitempty"`
+	AtomicAction  string                 `json:"atomic_action,omitempty"`
 	Confidence    float64                `json:"confidence"`
 	Reason        string                 `json:"reason"`
 	Inputs        map[string]interface{} `json:"inputs,omitempty"`
@@ -442,6 +444,10 @@ func (s *AIScenarioCompositionService) validateLLMPlan(taskID uint, raw json.Raw
 				warnings = append(warnings, fmt.Sprintf("第 %d 个占位步骤缺少说明，已剔除", index+1))
 				continue
 			}
+			if step.Type == model.AIScenarioStepTypeAtomicAction && strings.TrimSpace(step.AtomicAction) == "" {
+				warnings = append(warnings, fmt.Sprintf("第 %d 个原子步骤缺少 atomic_action，已剔除", index+1))
+				continue
+			}
 		default:
 			warnings = append(warnings, fmt.Sprintf("第 %d 个步骤类型 %q 不受支持，已剔除", index+1, step.Type))
 			continue
@@ -454,11 +460,13 @@ func (s *AIScenarioCompositionService) validateLLMPlan(taskID uint, raw json.Raw
 		heuristicTotal += heuristicConfidence
 		steps = append(steps, AIPlanStep{
 			Type:          step.Type,
+			StepName:      step.StepName,
 			FlowID:        step.FlowID,
 			FlowVersionID: step.FlowVersionID,
 			FlowKey:       step.FlowKey,
 			AssertionID:   step.AssertionID,
 			AssertionKey:  step.AssertionKey,
+			AtomicAction:  step.AtomicAction,
 			Confidence:    weighted,
 			Reason:        step.Reason,
 			Inputs:        step.Inputs,

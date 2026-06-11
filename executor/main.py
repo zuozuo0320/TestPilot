@@ -285,6 +285,7 @@ class ValidateRequest(BaseModel):
     script_content: str
     start_url: str
     callback_url: Optional[str] = None
+    variables: Optional[dict] = None
     project_scope: Optional[dict] = None      # V1 多项目工程化：ProjectScope 信息
     spec_relative_path: Optional[str] = None  # V1：项目内 spec 相对路径
 
@@ -727,6 +728,7 @@ async def execute_validate(req: ValidateRequest):
         req.start_url,
         req.project_scope,          # V1 透传
         req.spec_relative_path,     # V1 透传
+        req.variables or {},
     )
 
     logger.info(

@@ -87,12 +87,20 @@ type rollbackScenarioVersionRequest struct {
 	ChangeSummary      string `json:"change_summary" binding:"max=500"`
 }
 
+type aiPlanOrderedSourceRequest struct {
+	Type string `json:"type" binding:"required,oneof=TASK FLOW"`
+	ID   uint   `json:"id" binding:"required,min=1"`
+}
+
 type aiPlanFromTaskRequest struct {
-	ProjectID       uint   `json:"project_id" binding:"required,min=1"`
-	TaskID          uint   `json:"task_id" binding:"required,min=1"`
-	SourceVersionID uint   `json:"source_version_id"`
-	MaxSteps        int    `json:"max_steps" binding:"omitempty,min=0,max=20"`
-	PlannerMode     string `json:"planner_mode" binding:"omitempty,oneof=auto llm heuristic"`
+	ProjectID         uint                         `json:"project_id" binding:"required,min=1"`
+	TaskID            uint                         `json:"task_id" binding:"required,min=1"`
+	SourceVersionID   uint                         `json:"source_version_id"`
+	PreferredFlowIDs  []uint                       `json:"preferred_flow_ids"`
+	AdditionalTaskIDs []uint                       `json:"additional_task_ids"`
+	OrderedSources    []aiPlanOrderedSourceRequest `json:"ordered_sources"`
+	MaxSteps          int                          `json:"max_steps" binding:"omitempty,min=0,max=20"`
+	PlannerMode       string                       `json:"planner_mode" binding:"omitempty,oneof=auto llm heuristic"`
 }
 
 // listAIScenarioCompositions 获取场景编排列表。
@@ -852,13 +860,23 @@ func (a *API) createAIPlanFromTask(c *gin.Context) {
 	if !a.requireProjectAccess(c, user, req.ProjectID) {
 		return
 	}
+	orderedSources := make([]service.AIPlanOrderedSourceInput, 0, len(req.OrderedSources))
+	for _, source := range req.OrderedSources {
+		orderedSources = append(orderedSources, service.AIPlanOrderedSourceInput{
+			Type: source.Type,
+			ID:   source.ID,
+		})
+	}
 	result, err := a.aiScenarioCompositionSvc.AIPlanFromTask(c.Request.Context(), service.AIPlanFromTaskInput{
-		ProjectID:       req.ProjectID,
-		TaskID:          req.TaskID,
-		SourceVersionID: req.SourceVersionID,
-		MaxSteps:        req.MaxSteps,
-		PlannerMode:     req.PlannerMode,
-		OperatorID:      user.ID,
+		ProjectID:         req.ProjectID,
+		TaskID:            req.TaskID,
+		SourceVersionID:   req.SourceVersionID,
+		PreferredFlowIDs:  req.PreferredFlowIDs,
+		AdditionalTaskIDs: req.AdditionalTaskIDs,
+		OrderedSources:    orderedSources,
+		MaxSteps:          req.MaxSteps,
+		PlannerMode:       req.PlannerMode,
+		OperatorID:        user.ID,
 	})
 	if err != nil {
 		response.HandleError(c, err)

@@ -107,6 +107,14 @@ func (r *AIScenarioCompositionRepo) UpdateFields(ctx context.Context, tx *gorm.D
 		Updates(fields).Error
 }
 
+// UpdateFieldsIfLatestValidation 仅当指定验证记录仍为最新记录时更新编排字段，避免旧异步任务覆盖新状态。
+func (r *AIScenarioCompositionRepo) UpdateFieldsIfLatestValidation(ctx context.Context, tx *gorm.DB, id, validationID uint, fields map[string]interface{}) error {
+	return r.getDB(tx).WithContext(ctx).
+		Model(&model.AIScenarioComposition{}).
+		Where("id = ? AND latest_validation_id = ?", id, validationID).
+		Updates(fields).Error
+}
+
 // Delete 在事务中物理删除场景编排草稿。
 func (r *AIScenarioCompositionRepo) Delete(ctx context.Context, tx *gorm.DB, id uint) error {
 	return r.getDB(tx).WithContext(ctx).Delete(&model.AIScenarioComposition{}, id).Error
@@ -227,6 +235,14 @@ func (r *AIScenarioCompositionRepo) CreateValidation(ctx context.Context, tx *go
 	return r.getDB(tx).WithContext(ctx).Create(validation).Error
 }
 
+// UpdateValidationFields 在事务中更新编排验证记录字段。
+func (r *AIScenarioCompositionRepo) UpdateValidationFields(ctx context.Context, tx *gorm.DB, validationID uint, fields map[string]interface{}) error {
+	return r.getDB(tx).WithContext(ctx).
+		Model(&model.AICompositionValidation{}).
+		Where("id = ?", validationID).
+		Updates(fields).Error
+}
+
 // GetValidationByIdempotencyKey 按幂等键查询已创建的验证记录。
 func (r *AIScenarioCompositionRepo) GetValidationByIdempotencyKey(ctx context.Context, projectID, compositionID uint, key string) (*model.AICompositionValidation, error) {
 	var validation model.AICompositionValidation
@@ -274,4 +290,11 @@ func (r *AIScenarioCompositionRepo) CreateAssertionResults(ctx context.Context, 
 		return nil
 	}
 	return r.getDB(tx).WithContext(ctx).Create(&results).Error
+}
+
+// DeleteAssertionResultsByValidation 在事务中清理指定验证记录的断言结果。
+func (r *AIScenarioCompositionRepo) DeleteAssertionResultsByValidation(ctx context.Context, tx *gorm.DB, validationID uint) error {
+	return r.getDB(tx).WithContext(ctx).
+		Where("validation_id = ?", validationID).
+		Delete(&model.AICompositionAssertionResult{}).Error
 }
